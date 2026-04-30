@@ -239,7 +239,6 @@ function applyTheme(themeSetting) {
 }
 
 async function initVersionCheck() {
-  console.log('Checking for updates…');
   const defaultAppVersion = '0.0.0';
   let appVersion = defaultAppVersion;
   try {
@@ -254,14 +253,6 @@ async function initVersionCheck() {
 
   try {
     const result = await window.electronAPI?.checkForUpdates?.();
-    console.log('Update check result:', {
-      githubRemoteVersion: result?.remoteVersion ?? null,
-      updaterVersion: result?.updateInfo?.version ?? null,
-      githubError: result?.githubError ?? null,
-      noReleases: !!result?.noReleases,
-      error: !!result?.error,
-      message: result?.message ?? null,
-    });
 
     if (result?.noReleases) {
       console.log('Update check: no published GitHub releases available.');
@@ -285,8 +276,6 @@ async function initVersionCheck() {
       updateBtn.classList.toggle('active', isUpdateAvailable);
     }
 
-    console.log('Current local app version:', appVersion);
-    console.log('Remote update version:', remoteVersion || 'none');
     return { local: appVersion, updateAvailable: isUpdateAvailable, remoteVersion };
   } catch (err) {
     console.error('Failed to check updates:', err);
@@ -294,6 +283,15 @@ async function initVersionCheck() {
     console.log('Remote update version: none');
     return { local: appVersion, updateAvailable: false, remoteVersion: null };
   }
+}
+
+let currentUpdateProgress = null;
+
+function formatUpdateProgress(info) {
+  if (info && typeof info.percent === 'number') {
+    return `Downloading ${Math.round(info.percent)}%`;
+  }
+  return 'Downloading...';
 }
 
 async function startUpdateRoutine() {
@@ -334,6 +332,19 @@ async function startUpdateRoutine() {
       updateBtn.disabled = false;
     }
   }
+}
+
+if (window.electronAPI?.onUpdateProgress) {
+  window.electronAPI.onUpdateProgress((event, info) => {
+    const loadingDetail = document.getElementById('app-loading-detail');
+    if (!loadingDetail) return;
+    if (info && typeof info.percent === 'number') {
+      currentUpdateProgress = Math.round(info.percent);
+      loadingDetail.textContent = `Downloading ${currentUpdateProgress}%`;
+    } else {
+      loadingDetail.textContent = 'Downloading...';
+    }
+  });
 }
 
 if (updateBtn) {

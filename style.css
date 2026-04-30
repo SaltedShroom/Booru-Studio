@@ -80,10 +80,11 @@ body, html {
   justify-content: space-between;
 }
 
-.nav-brand, .nav-brand-loading {
+.nav-brand {
   position: relative;
   display: inline-flex;
   align-items: center;
+  text-wrap: nowrap;
   gap: 3px;
   font-size: 20px;
   font-weight: 700;
@@ -98,6 +99,8 @@ body, html {
   background: linear-gradient(135deg, var(--accent), var(--accent-secondary));
   -webkit-background-clip: text;
   -webkit-text-fill-color: transparent;
+  text-wrap: nowrap;
+  margin: 0;
 }
 
 .nav-brand::after {
@@ -4163,7 +4166,6 @@ textarea.settings-input {
 
 .booru-source-card:hover {
   border-color: var(--accent);
-  box-shadow: 0 4px 12px rgba(233, 69, 96, 0.15);
 }
 
 .booru-source-card-header {
@@ -4867,7 +4869,9 @@ textarea.settings-input {
   border: 2px solid var(--accent-hover);
   color: var(--text-primary);
   outline: none;
-  font-size: 12px;
+  font-size: 13px;
+  text-wrap: nowrap;
+  height: 24px;
 }
 .version-container button.active {
   display: block;

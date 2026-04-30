@@ -61,11 +61,17 @@
 </div>
 <div id="app">
   <nav class="navbar">
-    <div style="display: flex; align-items: center; gap: 32px; flex: 1;">
+    <div style="display: flex; align-items: center; gap: 24px; flex: 1;">
       <div class="nav-brand" onclick="window.location.reload()">
         <img src="favicon/android-chrome-192x192.png" alt="SD Studio Logo" />
         <p>ooru Studio</p>
         <span id="app-version"><i class="fa-solid fa-code-branch"></i> v0.0.0</span>
+      </div>
+      <div class="version-container">
+        <button id="update-btn" class="update-btn" title="Update the App">
+          <i class="fas fa-download"></i>
+          Update now
+        </button>
       </div>
       <div class="nav-tabs">
         <button class="nav-tab" data-tab="generator" style="display:none">Generator</button>
@@ -75,12 +81,6 @@
       </div>
     </div>
     <div style="display: flex; align-items: center; gap: 20px;">
-      <div class="version-container">
-        <button id="update-btn" class="update-btn" title="Update the App">
-          <i class="fas fa-download"></i>
-          Update now
-        </button>
-      </div>
       <div class="window-zoom-controls">
         <p>100%</p>
         <div class="window-zoom-buttons">
@@ -912,14 +912,29 @@
           <div class="booru-form-section">
             <h4><i class="fas fa-user"></i> Artist Configuration</h4>
             <div class="form-group">
-              <label>Artist Page URL Pattern</label>
-              <input type="text" id="source-artist-urlPattern" placeholder="e.g., /index.php?page=post&s=list&tags={artist}" />
-              <small>URL pattern for artist pages (use {artist} placeholder)</small>
+              <label>Artist Tag API URL</label>
+              <input type="text" id="source-artist-tagApiUrl" placeholder="e.g., /index.php?page=dapi&s=tag&q=index&json=1&names={tags}" />
+              <small>URL used to resolve tags. Use {tags} to insert the current post tags.</small>
             </div>
             <div class="form-group">
-              <label>Artist Selector</label>
-              <input type="text" id="source-artist-selector" placeholder="e.g., a[href*='tags='][title^='Search for']" />
-              <small>CSS selector to find artist links in DOM</small>
+              <label>Artist Tag Type Key Path</label>
+              <input type="text" id="source-artist-tagTypeKeyPath" placeholder="e.g., type" />
+              <small>JSON field path that identifies the tag type inside each API response item.</small>
+            </div>
+            <div class="form-group">
+              <label>Artist Tag Type Value</label>
+              <input type="text" id="source-artist-artistTypeValue" placeholder="e.g., 1" />
+              <small>Value that marks a tag as an artist tag in the API response.</small>
+            </div>
+            <div class="form-group">
+              <label>Tag Separator</label>
+              <input type="text" id="source-artist-tagSeparator" placeholder="e.g.,  " value=" " />
+              <small>Character used to join tag names when building the API request.</small>
+            </div>
+            <div class="form-group">
+              <label>Post Page URL Pattern</label>
+              <input type="text" id="source-artist-postUrlPattern" placeholder="e.g., /index.php?page=post&s=view&id={id}" />
+              <small>URL pattern for opening the source post when middle-clicking preview.</small>
             </div>
           </div>
 

@@ -6,4 +6,5 @@ contextBridge.exposeInMainWorld('electronAPI', {
   getUserDataOutputPath: () => ipcRenderer.invoke('get-user-data-output-path'),
   checkForUpdates: () => ipcRenderer.invoke('check-for-updates'),
   downloadUpdate: () => ipcRenderer.invoke('download-update'),
+  onUpdateProgress: (callback) => ipcRenderer.on('update-progress', callback),
 });

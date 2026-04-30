@@ -961,7 +961,9 @@ async function showDownloadsGallery(forceReload = false) {
           }
           // Filter by tags or artist
           const tags = post.tags || [];
-          const artist = (post.artist || '').toLowerCase();
+          const artist = Array.isArray(post.artist)
+            ? post.artist.join(' ').toLowerCase()
+            : (post.artist || '').toLowerCase();
           if (!tokens.length) {
             return true;
           }
@@ -1604,8 +1606,10 @@ function initBooruBrowser() {
                   const postId = post.id;
                   const postSource = post.source;
                   try {
-                    const artistName = await fetchArtistForPost(postId, postSource);
-                    post.artist = [artistName || 'Unknown'];
+                    const fetchedArtists = await fetchArtistForPost(postId, postSource, post.tags);
+                    post.artist = Array.isArray(fetchedArtists)
+                      ? (fetchedArtists.length ? fetchedArtists : ['Unknown'])
+                      : [fetchedArtists || 'Unknown'];
                   } catch (err) {
                     console.error('Error fetching artist for download:', err);
                     showToast('Error fetching artist info: ' + (err.message || err), 'error');
@@ -1858,16 +1862,21 @@ function initBooruBrowser() {
                       authorTag.classList.add('loading');
                       
                       try {
-                        const fetchedArtist = await fetchArtistForPost(postId, postSource);
-                        authorTag.textContent = fetchedArtist || 'Unknown';
+                        const fetchedArtists = await fetchArtistForPost(postId, postSource, post.tags);
+                        const artistText = Array.isArray(fetchedArtists)
+                          ? fetchedArtists.join(', ')
+                          : (fetchedArtists || 'Unknown');
+                        authorTag.textContent = artistText;
                         authorTag.classList.remove('loading');
-                        post.artist = fetchedArtist || 'Unknown';
+                        post.artist = Array.isArray(fetchedArtists)
+                          ? (fetchedArtists.length ? fetchedArtists : ['Unknown'])
+                          : [fetchedArtists || 'Unknown'];
                       } catch (err) {
                         console.error('Error fetching artist:', err);
                         showToast('Error fetching artist info: ' + (err.message || err), 'error');
                         authorTag.textContent = 'Unknown';
                         authorTag.classList.remove('loading');
-                        post.artist = 'Unknown';
+                        post.artist = ['Unknown'];
                       }
                     } else {
                       // Author is already loaded, open new tab with this artist
@@ -1896,14 +1905,19 @@ function initBooruBrowser() {
                       authorTag.classList.add('loading');
                       
                       try {
-                        const fetchedArtist = await fetchArtistForPost(postId, postSource);
-                        authorTag.textContent = fetchedArtist || 'Unknown';
+                        const fetchedArtists = await fetchArtistForPost(postId, postSource, post.tags);
+                        const artistText = Array.isArray(fetchedArtists)
+                          ? fetchedArtists.join(', ')
+                          : (fetchedArtists || 'Unknown');
+                        authorTag.textContent = artistText;
                         authorTag.classList.remove('loading');
-                        post.artist = fetchedArtist || 'Unknown';
+                        post.artist = Array.isArray(fetchedArtists)
+                          ? (fetchedArtists.length ? fetchedArtists : ['Unknown'])
+                          : [fetchedArtists || 'Unknown'];
                         
                         // Now open new tab with the found artist
-                        if (fetchedArtist && fetchedArtist !== 'Unknown' && typeof createNewBooruTab === 'function') {
-                          createNewBooruTab(fetchedArtist, false, fetchedArtist);
+                        if (artistText && artistText !== 'Unknown' && typeof createNewBooruTab === 'function') {
+                          createNewBooruTab(artistText, false, artistText);
                         }
                       } catch (err) {
                         console.error('Error fetching artist:', err);
@@ -3061,68 +3075,65 @@ async function loadRedditBooru(append) {
  * Fetch artist for a post using source configuration
  * Handles safe mode automatically based on config
  */
-async function fetchArtistForPost(postId, sourceId) {
+async function fetchArtistForPost(postId, sourceId, tags) {
   try {
-    // Get source configuration
     const sourceConfig = booruSourcesManager.getSource(sourceId);
-    if (!sourceConfig || !sourceConfig.artist.urlPattern) {
-      console.warn(`No artist config for source: ${sourceId}`);
-      return 'Unknown';
+    if (!sourceConfig || !sourceConfig.artist?.tagApiUrl) {
+      console.warn(`No artist tag API configured for source: ${sourceId}`);
+      return [];
     }
-    
-    // Build post URL (always use baseUrl for web pages, not apiUrl)
-    const postUrl = sourceConfig.artist.urlPattern.startsWith('http') 
-      ? sourceConfig.artist.urlPattern.replace('{id}', postId)
-      : sourceConfig.baseUrl + sourceConfig.artist.urlPattern.replace('{id}', postId);
-    
-    // Handle safe mode if required
-    if (sourceConfig.safeMode && sourceConfig.safeMode.required) {
-      const safeModeProxyUrl = `http://localhost:3001/proxy-booru?url=${encodeURIComponent(sourceConfig.safeMode.url)}`;
-      await fetch(safeModeProxyUrl); // Set cookie
-      await new Promise(resolve => setTimeout(resolve, sourceConfig.safeMode.delay || 500));
+
+    let tagList = [];
+    if (Array.isArray(tags)) {
+      tagList = tags.filter(t => typeof t === 'string' && t.trim().length > 0);
+    } else if (typeof tags === 'string' && tags.trim().length > 0) {
+      tagList = tags.trim().split(/\s+/).filter(t => t.length > 0);
+    } else if (window.booruPosts) {
+      const post = window.booruPosts.find(p => String(p.id) === String(postId) && p.source === sourceId)
+        || window.booruPosts.find(p => String(p.id) === String(postId));
+      if (post) {
+        if (Array.isArray(post.tags)) {
+          tagList = post.tags.filter(t => typeof t === 'string' && t.trim().length > 0);
+        } else if (typeof post.tags === 'string' && post.tags.trim().length > 0) {
+          tagList = post.tags.trim().split(/\s+/).filter(t => t.length > 0);
+        }
+      }
     }
-    
-    // Fetch post page HTML
-    const proxyUrl = `http://localhost:3001/proxy-booru?url=${encodeURIComponent(postUrl)}`;
-    const response = await fetch(proxyUrl);
+
+    if (tagList.length === 0) {
+      console.warn(`No tags available to resolve artist for post ${postId}`);
+      return [];
+    }
+
+    const userId = userIdInput ? userIdInput.value.trim() : '';
+    const apiKey = apiKeyInput ? apiKeyInput.value.trim() : '';
+
+    const response = await fetch('http://localhost:3001/api/booru/artist-tags', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        sourceId,
+        tags: tagList,
+        userId,
+        apiKey
+      })
+    });
 
     if (!response.ok) {
-      let errBody;
-      try { errBody = await response.json(); } catch (e) { errBody = { message: await response.text() }; }
-      if (errBody && errBody.error === 'captcha') {
-        // showToast(`${sourceConfig.name} blocked by CAPTCHA — open the site in a browser to solve it`, 'error');
-        return 'Unknown';
-      }
-      throw new Error(errBody?.message || `Failed to fetch ${sourceConfig.name} page (${response.status})`);
+      let errorBody;
+      try { errorBody = await response.json(); } catch (e) { errorBody = { message: await response.text() }; }
+      throw new Error(errorBody?.message || `Artist tag lookup failed (${response.status})`);
     }
 
-    const html = await response.text();
-    if (isCaptchaPage(html)) {
-      // showToast(`${sourceConfig.name} blocked by CAPTCHA — page requires manual CAPTCHA solve`, 'error');
-      return 'Unknown';
+    const result = await response.json();
+    if (!result || !Array.isArray(result.artists)) {
+      return [];
     }
-    
-    // Parse HTML to find artist
-    const parser = new DOMParser();
-    const doc = parser.parseFromString(html, 'text/html');
-    
-    // Use artist selector from config (default to li.tag-type-artist if not specified)
-    const selector = sourceConfig.artist.selector || 'li.tag-type-artist';
-    const artistContainer = doc.querySelector(selector);
-    
-    if (artistContainer) {
-      const artistLinks = artistContainer.querySelectorAll('a');
-      if (artistLinks.length >= 2) {
-        const artistName = artistLinks[1].textContent.trim().replaceAll(" ", "_");
-        return artistName;
-      }
-    }
-    
-    return 'Unknown';
+    return result.artists;
   } catch (err) {
     console.error(`Error fetching artist for post ${postId} from ${sourceId}:`, err);
     showToast(`Error fetching artist info: ${err.message || err}`, 'error');
-    return 'Unknown';
+    return [];
   }
 }
 
@@ -3833,7 +3844,7 @@ function createBooruImageElement(post, maxHeight = null, imageWidth = null) {
   link.className = 'booru-image-item';
   link.dataset.score = post.score || 0;
   link.dataset.tags = post.tags ? post.tags.join(' ') : '';
-  link.dataset.artist = post.artist ?? (post.artists ? post.artists.join(', ') : 'Unknown');
+  link.dataset.artist = Array.isArray(post.artist) ? post.artist.join(', ') : (post.artist || (post.artists ? post.artists.join(', ') : 'Unknown'));
   link.dataset.postId = post.id;
   link.dataset.postSource = post.source;
   const aspectRatio = post.aspectRatio || 1;
@@ -3889,7 +3900,7 @@ function createBooruImageElement(post, maxHeight = null, imageWidth = null) {
     mediaElement.dataset.imageUrl = post.imageUrl;
     mediaElement.dataset.thumbnailUrl = post.thumbnailUrl;
     mediaElement.dataset.tags = post.tags.join(' ');
-    mediaElement.dataset.author = post.artist || post.author || 'Unknown';
+    mediaElement.dataset.author = Array.isArray(post.artist) ? post.artist.join(', ') : (post.artist || post.author || 'Unknown');
     mediaElement.dataset.title = post.title || '';
     mediaElement.dataset.createdAt = post.createdAt || '';
     if (typeof dataIndex !== 'undefined') {
@@ -3957,16 +3968,13 @@ function createBooruImageElement(post, maxHeight = null, imageWidth = null) {
       mediaElement.dataset.sampleUrl = post.sampleUrl;  // Store sample/medium quality URL if available
     }
     mediaElement.dataset.tags = post.tags.join(' ');
+    mediaElement.dataset.author = Array.isArray(post.artist) ? post.artist.join(', ') : (post.artist || post.author || 'Unknown');
 
-    // if gallery is already high quality, mark it so preview uses HQ immediately
     if (useHighQuality) {
       mediaElement.dataset.currentQualityUrl = getImageUrl(post.imageUrl);
     }
-    mediaElement.dataset.author = post.artist || post.author || 'Unknown';
-    mediaElement.dataset.title = post.title || '';
-    mediaElement.dataset.createdAt = post.createdAt || '';
-    if (typeof dataIndex !== 'undefined') {
-      mediaElement.setAttribute('data-index', dataIndex);
+    if (post.sampleUrl) {
+      mediaElement.dataset.sampleUrl = post.sampleUrl;  // Store sample/medium quality URL if available
     }
     if (url.endsWith('.gif') || url.includes('.gif?')) {
       mediaElement.dataset.isGif = 'true';
@@ -4169,8 +4177,10 @@ function createBooruImageElement(post, maxHeight = null, imageWidth = null) {
         const postId = post.id;
         const postSource = post.source;
         try {
-          const artistName = await fetchArtistForPost(postId, postSource);
-          post.artists = [artistName || 'Unknown'];
+          const fetchedArtists = await fetchArtistForPost(postId, postSource, post.tags);
+          post.artists = Array.isArray(fetchedArtists)
+            ? (fetchedArtists.length ? fetchedArtists : ['Unknown'])
+            : [fetchedArtists || 'Unknown'];
         } catch (err) {
           console.error('Error fetching artist for download:', err);
           showToast('Error fetching artist info: ' + (err.message || err), 'error');
@@ -4443,6 +4453,136 @@ const booruPreviewId = booruHoverPreview.querySelector('.booru-hover-preview-id'
 const booruPreviewAuthor = booruHoverPreview.querySelector('.booru-hover-preview-author');
 const booruPreviewDate = booruHoverPreview.querySelector('.booru-hover-preview-date');
 
+const activeArtistRequests = new Set();
+
+function normalizeArtistNames(raw) {
+  if (Array.isArray(raw)) {
+    return raw.map(a => String(a).trim()).filter(a => a.length > 0 && a !== 'Unknown');
+  }
+  if (typeof raw === 'string') {
+    return raw.split(',').map(a => a.trim()).filter(a => a.length > 0 && a !== 'Unknown');
+  }
+  return [];
+}
+
+function setPreviewArtistNames(mediaElement, rawArtists) {
+  const artistNames = normalizeArtistNames(rawArtists);
+  if (artistNames.length === 0) {
+    artistNames.push('?');
+  }
+  const artistText = artistNames.join(', ');
+  mediaElement.dataset.author = artistText;
+  if (mediaElement.parentElement) {
+    mediaElement.parentElement.dataset.artist = artistText;
+  }
+  mediaElement.dataset.authorLoading = 'false';
+  booruPreviewAuthor.innerHTML = '';
+  artistNames.forEach(name => booruPreviewAuthor.appendChild(createPreviewAuthorTag(mediaElement, name)));
+  return artistText;
+}
+
+function createPreviewAuthorTag(mediaElement, artistName) {
+  const authorTag = document.createElement('span');
+  authorTag.className = 'booru-tag author-tag';
+  const isLoading = mediaElement.dataset.authorLoading === 'true';
+  if (isLoading) {
+    authorTag.innerHTML = '<i class="fas fa-circle-notch fa-spin"></i>';
+    authorTag.classList.add('loading');
+  } else {
+    authorTag.textContent = artistName;
+  }
+  authorTag.style.cursor = 'pointer';
+
+  async function fetchAndRender(openAfterFetch = false) {
+    if (authorTag.classList.contains('loading')) return;
+    const postId = mediaElement.closest('.booru-image-item')?.dataset.postId;
+    const postSource = mediaElement.closest('.booru-image-item')?.dataset.postSource;
+    if (!postId || !postSource) return;
+
+    authorTag.innerHTML = '<i class="fas fa-circle-notch fa-spin"></i>';
+    authorTag.classList.add('loading');
+    mediaElement.dataset.authorLoading = 'true';
+
+    try {
+      const item = mediaElement.closest('.booru-image-item');
+      const tagString = item?.dataset?.tags || '';
+      const tags = tagString.trim().length > 0 ? tagString.trim().split(/\s+/) : undefined;
+      const fetchedArtists = await fetchArtistForPost(postId, postSource, tags);
+      const artistText = setPreviewArtistNames(mediaElement, fetchedArtists);
+
+      const postIndex = booruPosts.findIndex(p => p.id == postId);
+      if (postIndex !== -1) {
+        booruPosts[postIndex].author = artistText;
+        booruPosts[postIndex].artist = normalizeArtistNames(fetchedArtists).length
+          ? normalizeArtistNames(fetchedArtists)
+          : ['?'];
+      }
+
+      if (openAfterFetch && artistText !== '?') {
+        if (typeof createNewBooruTab === 'function') {
+          createNewBooruTab(artistText, false, artistText);
+        }
+      }
+    } catch (err) {
+      console.error('Error fetching artist:', err);
+      showToast('Failed to fetch artist: ' + err.message, 'error');
+      setPreviewArtistNames(mediaElement, '?');
+    } finally {
+      mediaElement.dataset.authorLoading = 'false';
+      if (postId && activeArtistRequests.has(postId)) {
+        activeArtistRequests.delete(postId);
+      }
+    }
+  }
+
+  authorTag.addEventListener('click', async (e) => {
+    e.stopPropagation();
+    if (artistName === '?' && !authorTag.classList.contains('loading')) {
+      await fetchAndRender(false);
+    } else if (previewFrozen && searchFilterInput && !authorTag.classList.contains('loading') && artistName !== '?') {
+      toggleTagInSearch(artistName);
+    }
+  });
+
+  authorTag.addEventListener('mousedown', async (e) => {
+    if (e.button !== 1) return;
+    e.preventDefault();
+    e.stopPropagation();
+    const currentName = authorTag.textContent.trim();
+    const currentIsLoading = authorTag.classList.contains('loading');
+    if (currentName === '?' && !currentIsLoading) {
+      await fetchAndRender(true);
+    } else if (currentName !== '?' && currentName !== 'Unknown' && !currentIsLoading) {
+      if (typeof createNewBooruTab === 'function') {
+        createNewBooruTab(currentName, false, currentName);
+      }
+    }
+  });
+
+  return authorTag;
+}
+
+function autoClickUnknownPreviewAuthor(postId) {
+  if (!postId) return;
+  const authorTag = booruPreviewAuthor.querySelector('.author-tag');
+  if (!authorTag) return;
+  if (authorTag.textContent.trim() !== '?') return;
+  authorTag.innerHTML = '<i class="fas fa-circle-notch fa-spin"></i>';
+  if (activeArtistRequests.has(postId)) return;
+
+  activeArtistRequests.add(postId);
+  authorTag.dispatchEvent(new MouseEvent('click', {
+    bubbles: true,
+    cancelable: true,
+    view: window
+  }));
+  authorTag.dispatchEvent(new FocusEvent('blur', {
+    bubbles: true,
+    cancelable: true,
+    view: window
+  }));
+}
+
 // Pause all preview videos — container + cache — to prevent background audio leaks
 function pauseAllPreviewVideos() {
   const containerVideo = booruPreviewMediaContainer.querySelector('video');
@@ -4686,10 +4826,11 @@ function showPreviewForElement(mediaElement, forceVideoLoad = false) {
         // Build post URL from source config
         const sourceConfig = booruSourcesManager?.getSource(postSource);
         let postUrl;
-        if (sourceConfig && sourceConfig.artist && sourceConfig.artist.urlPattern) {
-          postUrl = sourceConfig.artist.urlPattern.startsWith('http')
-            ? sourceConfig.artist.urlPattern.replace('{id}', postId)
-            : sourceConfig.baseUrl + sourceConfig.artist.urlPattern.replace('{id}', postId);
+        if (sourceConfig && sourceConfig.artist && (sourceConfig.artist.postUrlPattern || sourceConfig.artist.urlPattern)) {
+          const urlPattern = sourceConfig.artist.postUrlPattern || sourceConfig.artist.urlPattern;
+          postUrl = urlPattern.startsWith('http')
+            ? urlPattern.replace('{id}', postId)
+            : sourceConfig.baseUrl + urlPattern.replace('{id}', postId);
         } else {
           postUrl = video.src;
         }
@@ -4905,7 +5046,7 @@ function showPreviewForElement(mediaElement, forceVideoLoad = false) {
               const highQualityUrl = mediaElement.dataset.imageUrl;
               const response = await proxyFetch(highQualityUrl, { method: 'HEAD' });
               
-              if (!response.ok) {
+              if (!response.ok && response.status !== 302) {
                 throw new Error(`HTTP error! status: ${response.status}`);
               }
 
@@ -4918,8 +5059,10 @@ function showPreviewForElement(mediaElement, forceVideoLoad = false) {
                 updateHqLoadingCounter(0); // refresh display
               }
               
-              // Store the blob URL for future reuse
-              mediaElement.dataset.highQualityUrl = highQualityUrl;
+              // Store the proxied high-quality URL for future preview reuse.
+              // This avoids reloading the raw source URL again on subsequent hovers.
+              const proxiedHighQualityUrl = getImageUrl(highQualityUrl);
+              mediaElement.dataset.highQualityUrl = proxiedHighQualityUrl;
               mediaElement.dataset.highQualityLoaded = 'true';
               delete mediaElement.dataset.highQualityLoading;
               
@@ -5068,10 +5211,11 @@ function showPreviewForElement(mediaElement, forceVideoLoad = false) {
           // Build post URL from source config
           const sourceConfig = booruSourcesManager?.getSource(postSource);
           let postUrl;
-          if (sourceConfig && sourceConfig.artist && sourceConfig.artist.urlPattern) {
-            postUrl = sourceConfig.artist.urlPattern.startsWith('http')
-              ? sourceConfig.artist.urlPattern.replace('{id}', postId)
-              : sourceConfig.baseUrl + sourceConfig.artist.urlPattern.replace('{id}', postId);
+          if (sourceConfig && sourceConfig.artist && (sourceConfig.artist.postUrlPattern || sourceConfig.artist.urlPattern)) {
+            const urlPattern = sourceConfig.artist.postUrlPattern || sourceConfig.artist.urlPattern;
+            postUrl = urlPattern.startsWith('http')
+              ? urlPattern.replace('{id}', postId)
+              : sourceConfig.baseUrl + urlPattern.replace('{id}', postId);
           } else {
             postUrl = img.src;
           }
@@ -5136,143 +5280,8 @@ function showPreviewForElement(mediaElement, forceVideoLoad = false) {
   });
 
   // Render all Artists as tags
-  
-  mediaElement.dataset.author = mediaElement.parentElement.dataset.artist;
-
-  if (mediaElement.dataset.author) {
-
-    booruPreviewAuthor.innerHTML = '';
-    const artistNames = mediaElement.dataset.author.split(',').map(a => a.trim());
-    for (let artist of artistNames) {
-
-      if (artist === '') artist = '?';
-  
-      // Render author as a tag
-      const authorTag = document.createElement('span');
-      authorTag.className = 'booru-tag author-tag';
-      const authorName = artist;
-      
-      // Check if already loading from a previous hover
-      const isLoading = mediaElement.dataset.authorLoading === 'true';
-      if (isLoading) {
-        authorTag.innerHTML = '<i class="fas fa-circle-notch fa-spin"></i>';
-        authorTag.classList.add('loading');
-      } else {
-        authorTag.textContent = authorName;
-      }
-      authorTag.style.cursor = 'pointer';
-      
-      // Add click handler for author tag
-      authorTag.addEventListener('click', async (e) => {
-        e.stopPropagation();
-        
-        // If author is '?', fetch the artist from the post page
-        if (authorName === '?' && !isLoading) {
-          const postId = mediaElement.closest('.booru-image-item')?.dataset.postId;
-          const postSource = mediaElement.closest('.booru-image-item')?.dataset.postSource;
-          
-          // Check if already loading
-          if (authorTag.classList.contains('loading')) {
-            return; // Prevent multiple simultaneous loads
-          }
-          
-          if (postId && postSource) {
-            // Show spinner and mark as loading
-            authorTag.innerHTML = '<i class="fas fa-circle-notch fa-spin"></i>';
-            authorTag.classList.add('loading');
-            mediaElement.dataset.authorLoading = 'true';
-            
-            try {
-              const artistName = await fetchArtistForPost(postId, postSource);
-              authorTag.textContent = artistName || 'Unknown';
-              authorTag.classList.remove('loading');
-              mediaElement.dataset.author = artistName || 'Unknown';
-              mediaElement.dataset.authorLoading = 'false';
-              
-              // Update the original post data
-              const postIndex = booruPosts.findIndex(p => p.id == postId);
-              if (postIndex !== -1) {
-                booruPosts[postIndex].author = artistName || 'Unknown';
-                booruPosts[postIndex].artist = artistName || 'Unknown';
-              }
-            } catch (err) {
-              console.error('Error fetching artist:', err);
-              showToast('Failed to fetch artist: ' + err.message, 'error');
-              authorTag.textContent = 'Unknown';
-              authorTag.classList.remove('loading');
-              mediaElement.dataset.author = 'Unknown';
-              mediaElement.dataset.authorLoading = 'false';
-            }
-          }
-        } else if (previewFrozen && searchFilterInput && !authorTag.classList.contains('loading') && authorName !== '?') {
-          // If author is already fetched and not loading, allow adding to search
-          toggleTagInSearch(authorName);
-        }
-      });
-      
-      // Add middle mouse button handler to open new tab with this artist
-      authorTag.addEventListener('mousedown', async (e) => {
-        if (e.button !== 1) return; // Only middle mouse button
-        
-        e.preventDefault();
-        e.stopPropagation();
-        
-        const currentAuthorName = authorTag.textContent.trim();
-        const currentIsLoading = authorTag.classList.contains('loading');
-        
-        // If author is '?', fetch it first
-        if (currentAuthorName === '?' && !currentIsLoading) {
-          const postId = mediaElement.closest('.booru-image-item')?.dataset.postId;
-          const postSource = mediaElement.closest('.booru-image-item')?.dataset.postSource;
-          
-          if (postId && postSource) {
-            // Show spinner and mark as loading
-            authorTag.innerHTML = '<i class="fas fa-circle-notch fa-spin"></i>';
-            authorTag.classList.add('loading');
-            mediaElement.dataset.authorLoading = 'true';
-            
-            try {
-              const artistName = await fetchArtistForPost(postId, postSource);
-              authorTag.textContent = artistName || 'Unknown';
-              authorTag.classList.remove('loading');
-              mediaElement.dataset.author = artistName || 'Unknown';
-              mediaElement.dataset.authorLoading = 'false';
-              
-              // Update the original post data
-              const postIndex = booruPosts.findIndex(p => p.id == postId);
-              if (postIndex !== -1) {
-                booruPosts[postIndex].author = artistName || 'Unknown';
-                booruPosts[postIndex].artist = artistName || 'Unknown';
-              }
-              
-              // Now open new tab with the found artist
-              if (artistName && artistName !== 'Unknown' && typeof createNewBooruTab === 'function') {
-                createNewBooruTab(artistName, false, artistName);
-              }
-            } catch (err) {
-              console.error('Error fetching artist:', err);
-              showToast('Failed to fetch artist: ' + err.message, 'error');
-              authorTag.textContent = 'Unknown';
-              authorTag.classList.remove('loading');
-              mediaElement.dataset.author = 'Unknown';
-              mediaElement.dataset.authorLoading = 'false';
-            }
-          }
-        } else if (currentAuthorName !== '?' && currentAuthorName !== 'Unknown' && !currentIsLoading) {
-          // Author is already loaded and valid, open new tab
-          if (typeof createNewBooruTab === 'function') {
-            createNewBooruTab(currentAuthorName, false, currentAuthorName);
-          }
-        }
-      });
-      
-      booruPreviewAuthor.appendChild(authorTag);
-
-    }
-    
-  } else {
-    booruPreviewAuthor.innerHTML = '';
-  }
+  const authorValue = mediaElement.parentElement?.dataset.artist || mediaElement.dataset.author || '?';
+  setPreviewArtistNames(mediaElement, authorValue);
   
   // Display upload date if available
   booruPreviewDate.innerHTML = '';
@@ -5288,6 +5297,8 @@ function showPreviewForElement(mediaElement, forceVideoLoad = false) {
   }
   
   booruHoverPreview.classList.add('active');
+  const previewPostId = mediaElement.closest('.booru-image-item')?.dataset.postId;
+  autoClickUnknownPreviewAuthor(previewPostId);
 }
 
 

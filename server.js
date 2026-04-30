@@ -1536,6 +1536,203 @@ const server = http.createServer((req, res) => {
     return;
   }
 
+  // Backend artist tag lookup for booru sources
+  if (req.method === 'POST' && req.url === '/api/booru/artist-tags') {
+    let body = '';
+    req.on('data', chunk => {
+      body += chunk.toString();
+    });
+
+    req.on('end', async () => {
+      try {
+        const { sourceId, tags, userId, apiKey } = JSON.parse(body);
+        if (!sourceId || !tags) {
+          res.writeHead(400, { 'Content-Type': 'application/json' });
+          res.end(JSON.stringify({ error: 'sourceId and tags are required' }));
+          return;
+        }
+
+        const sources = database.loadSetting('booru-sources') || [];
+        const sourceConfig = sources.find(source => source.id === sourceId);
+        if (!sourceConfig) {
+          res.writeHead(404, { 'Content-Type': 'application/json' });
+          res.end(JSON.stringify({ error: `Source not found: ${sourceId}` }));
+          return;
+        }
+
+        if (!sourceConfig.artist?.tagApiUrl) {
+          res.writeHead(400, { 'Content-Type': 'application/json' });
+          res.end(JSON.stringify({ error: 'Artist tag API not configured for this source' }));
+          return;
+        }
+
+        let tagList = [];
+        if (Array.isArray(tags)) {
+          tagList = tags.filter(t => typeof t === 'string' && t.trim().length > 0);
+        } else if (typeof tags === 'string' && tags.trim().length > 0) {
+          tagList = tags.trim().split(/\s+/).filter(t => t.length > 0);
+        }
+
+        if (tagList.length === 0) {
+          res.writeHead(400, { 'Content-Type': 'application/json' });
+          res.end(JSON.stringify({ error: 'No tags provided for artist lookup' }));
+          return;
+        }
+
+        const tagSeparator = sourceConfig.artist.tagSeparator || ' ';
+        const encodedTags = encodeURIComponent(tagList.join(tagSeparator));
+        let apiUrl = sourceConfig.artist.tagApiUrl;
+        if (apiUrl.includes('{tags}')) {
+          apiUrl = apiUrl.replace('{tags}', encodedTags);
+        } else {
+          apiUrl += apiUrl.includes('?') ? `&names=${encodedTags}` : `?names=${encodedTags}`;
+        }
+
+        if (!/^https?:\/\//i.test(apiUrl)) {
+          const apiBase = sourceConfig.apiUrl || sourceConfig.baseUrl;
+          apiUrl = `${apiBase.replace(/\/$/, '')}/${apiUrl.replace(/^\//, '')}`;
+        }
+
+        const resolvedUserId = userId || sourceConfig.auth?.userId || '';
+        const resolvedApiKey = apiKey || sourceConfig.auth?.apiKey || '';
+        if (sourceConfig.auth?.required) {
+          if (!resolvedUserId || !resolvedApiKey) {
+            res.writeHead(401, { 'Content-Type': 'application/json' });
+            res.end(JSON.stringify({ error: 'API credentials required for this source' }));
+            return;
+          }
+          if (sourceConfig.auth.userIdKey && !new RegExp(`[?&]${sourceConfig.auth.userIdKey}=`).test(apiUrl)) {
+            apiUrl += apiUrl.includes('?') ? `&${sourceConfig.auth.userIdKey}=${encodeURIComponent(resolvedUserId)}` : `?${sourceConfig.auth.userIdKey}=${encodeURIComponent(resolvedUserId)}`;
+          }
+          if (sourceConfig.auth.apiKeyKey && !new RegExp(`[?&]${sourceConfig.auth.apiKeyKey}=`).test(apiUrl)) {
+            apiUrl += apiUrl.includes('?') ? `&${sourceConfig.auth.apiKeyKey}=${encodeURIComponent(resolvedApiKey)}` : `?${sourceConfig.auth.apiKeyKey}=${encodeURIComponent(resolvedApiKey)}`;
+          }
+        }
+
+        if (sourceConfig.safeMode?.required && sourceConfig.safeMode.url) {
+          await new Promise((resolve, reject) => {
+            const safeModeUrl = new URL(sourceConfig.safeMode.url);
+            const protocol = safeModeUrl.protocol === 'http:' ? http : https;
+            const agent = requireProxyAgent(safeModeUrl.protocol === 'http:' ? 'http' : 'https');
+            const options = {
+              hostname: safeModeUrl.hostname,
+              port: safeModeUrl.port || (safeModeUrl.protocol === 'http:' ? 80 : 443),
+              path: safeModeUrl.pathname + safeModeUrl.search,
+              method: 'GET',
+              headers: {
+                'User-Agent': sourceConfig.userAgent || getActiveUA(),
+                'Host': safeModeUrl.host
+              },
+              agent
+            };
+            const safeReq = protocol.request(options, safeRes => {
+              safeRes.on('data', () => {});
+              safeRes.on('end', resolve);
+            });
+            safeReq.on('error', reject);
+            safeReq.end();
+          });
+        }
+
+        const parsedUrl = new URL(apiUrl);
+        const protocol = parsedUrl.protocol === 'http:' ? http : https;
+        const agent = requireProxyAgent(parsedUrl.protocol === 'http:' ? 'http' : 'https');
+        const headers = {
+          'User-Agent': sourceConfig.userAgent || getActiveUA(),
+          'Host': parsedUrl.host
+        };
+        if (sourceConfig.cookies) {
+          headers['Cookie'] = sourceConfig.cookies;
+        }
+
+        const options = {
+          hostname: parsedUrl.hostname,
+          port: parsedUrl.port || (parsedUrl.protocol === 'http:' ? 80 : 443),
+          path: parsedUrl.pathname + parsedUrl.search,
+          method: 'GET',
+          headers,
+          agent
+        };
+
+        const proxyReq = protocol.request(options, (proxyRes) => {
+          const responseChunks = [];
+          proxyRes.on('data', chunk => responseChunks.push(chunk));
+          proxyRes.on('end', () => {
+            const responseBody = Buffer.concat(responseChunks).toString('utf8');
+            if (proxyRes.statusCode < 200 || proxyRes.statusCode >= 300) {
+              res.writeHead(proxyRes.statusCode, {
+                'Content-Type': 'application/json',
+                'Access-Control-Allow-Origin': '*'
+              });
+              res.end(JSON.stringify({ error: 'Artist tag API request failed', message: responseBody }));
+              return;
+            }
+
+            let parsed;
+            try {
+              parsed = JSON.parse(responseBody);
+            } catch (error) {
+              res.writeHead(502, { 'Content-Type': 'application/json' });
+              res.end(JSON.stringify({ error: 'Invalid JSON from artist tag API', message: error.message }));
+              return;
+            }
+
+            const tagObjects = parsed.tag ?? parsed.tags ?? parsed;
+            const normalizeArray = (value) => {
+              if (Array.isArray(value)) return value;
+              if (value && typeof value === 'object') return [value];
+              return [];
+            };
+
+            const items = normalizeArray(tagObjects);
+            const fieldPath = sourceConfig.artist.tagTypeKeyPath || 'type';
+            const artistTypeValues = String(sourceConfig.artist.artistTypeValue || '1').split(',').map(v => v.trim()).filter(v => v.length > 0);
+            const artists = [];
+
+            const resolvePath = (obj, path) => {
+              if (!obj || typeof path !== 'string' || path.trim() === '') return undefined;
+              const parts = path.replace(/\[(\d+)\]/g, '.$1').split('.');
+              let current = obj;
+              for (const part of parts) {
+                if (!current || typeof current !== 'object') return undefined;
+                current = current[part];
+              }
+              return current;
+            };
+
+            for (const tagItem of items) {
+              const rawType = resolvePath(tagItem, fieldPath);
+              const typeValue = rawType != null ? String(rawType) : '';
+              if (artistTypeValues.includes(typeValue)) {
+                const artistName = String(tagItem.name ?? tagItem.tag ?? '').trim();
+                if (artistName.length > 0) {
+                  artists.push(artistName);
+                }
+              }
+            }
+
+            res.writeHead(200, {
+              'Content-Type': 'application/json',
+              'Access-Control-Allow-Origin': '*'
+            });
+            res.end(JSON.stringify({ artists }));
+          });
+        });
+
+        proxyReq.on('error', (error) => {
+          res.writeHead(502, { 'Content-Type': 'application/json' });
+          res.end(JSON.stringify({ error: 'Artist tag lookup failed', message: error.message }));
+        });
+
+        proxyReq.end();
+      } catch (error) {
+        res.writeHead(400, { 'Content-Type': 'application/json' });
+        res.end(JSON.stringify({ error: 'Invalid artist lookup request', message: error.message }));
+      }
+    });
+    return;
+  }
+
   // Proxy requests to Stable Diffusion API - check this first
   if (req.url.startsWith('/api/sd/')) {
     const sdPath = req.url.replace('/api/sd', '');

@@ -44,6 +44,11 @@ autoUpdater.on('update-not-available', () => {
   sendMainWindowEvent('update-not-available');
 });
 
+autoUpdater.on('download-progress', (info) => {
+  console.log(`Update download progress: ${info.percent?.toFixed(2)}%`, info);
+  sendMainWindowEvent('update-progress', info);
+});
+
 autoUpdater.on('update-downloaded', (info) => {
   console.log('Update downloaded:', info.version);
   sendMainWindowEvent('update-downloaded', info);

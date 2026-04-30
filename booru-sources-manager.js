@@ -91,8 +91,11 @@ class BooruSourcesManager {
           delay: 500
         },
         artist: {
-          urlPattern: "/index.php?page=post&s=view&id={id}",
-          selector: "li.tag-type-artist"
+          tagApiUrl: "/index.php?page=dapi&s=tag&q=index&json=1&names={tags}",
+          tagTypeKeyPath: "type",
+          artistTypeValue: "1",
+          tagSeparator: " ",
+          postUrlPattern: "/index.php?page=post&s=view&id={id}"
         },
         ui: {
           defaultSort: "new",
@@ -631,8 +634,11 @@ class BooruSourcesManager {
     }
 
     // Artist Configuration
-    document.getElementById('source-artist-urlPattern').value = source.artist?.urlPattern || '';
-    document.getElementById('source-artist-selector').value = source.artist?.selector || '';
+    document.getElementById('source-artist-tagApiUrl').value = source.artist?.tagApiUrl || '';
+    document.getElementById('source-artist-tagTypeKeyPath').value = source.artist?.tagTypeKeyPath || 'type';
+    document.getElementById('source-artist-artistTypeValue').value = source.artist?.artistTypeValue || '1';
+    document.getElementById('source-artist-tagSeparator').value = source.artist?.tagSeparator || ' ';
+    document.getElementById('source-artist-postUrlPattern').value = source.artist?.postUrlPattern || '';
   }
 
   getFormData() {
@@ -684,8 +690,11 @@ class BooruSourcesManager {
         required: document.getElementById('source-safeMode-required').checked
       },
       artist: {
-        urlPattern: document.getElementById('source-artist-urlPattern').value.trim(),
-        selector: document.getElementById('source-artist-selector').value.trim()
+        tagApiUrl: document.getElementById('source-artist-tagApiUrl').value.trim(),
+        tagTypeKeyPath: document.getElementById('source-artist-tagTypeKeyPath').value.trim() || 'type',
+        artistTypeValue: document.getElementById('source-artist-artistTypeValue').value.trim() || '1',
+        tagSeparator: document.getElementById('source-artist-tagSeparator').value || ' ',
+        postUrlPattern: document.getElementById('source-artist-postUrlPattern').value.trim()
       },
       ui: {
         defaultSort: 'new',
@@ -733,6 +742,21 @@ class BooruSourcesManager {
     }
     if (data.fields.artistTag && typeof data.fields.artistTag !== 'string') {
       errors.push('Artist tag field must be a string');
+    }
+    if (data.artist.tagApiUrl && typeof data.artist.tagApiUrl !== 'string') {
+      errors.push('Artist Tag API URL must be a string');
+    }
+    if (data.artist.tagTypeKeyPath && typeof data.artist.tagTypeKeyPath !== 'string') {
+      errors.push('Artist Tag Type Key Path must be a string');
+    }
+    if (data.artist.artistTypeValue && typeof data.artist.artistTypeValue !== 'string') {
+      errors.push('Artist Tag Type Value must be a string');
+    }
+    if (data.artist.tagSeparator && typeof data.artist.tagSeparator !== 'string') {
+      errors.push('Tag Separator must be a string');
+    }
+    if (data.artist.postUrlPattern && typeof data.artist.postUrlPattern !== 'string') {
+      errors.push('Post Page URL Pattern must be a string');
     }
     if (data.fields.width && typeof data.fields.width !== 'string') {
       errors.push('Width field mapping must be a string');
