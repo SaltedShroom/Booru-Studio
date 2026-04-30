@@ -80,7 +80,7 @@ body, html {
   justify-content: space-between;
 }
 
-.nav-brand {
+.nav-brand, .nav-brand-loading {
   position: relative;
   display: inline-flex;
   align-items: center;
@@ -92,6 +92,12 @@ body, html {
   -webkit-background-clip: text;
   -webkit-text-fill-color: transparent;
   cursor: pointer;
+}
+
+.nav-brand p {
+  background: linear-gradient(135deg, var(--accent), var(--accent-secondary));
+  -webkit-background-clip: text;
+  -webkit-text-fill-color: transparent;
 }
 
 .nav-brand::after {
@@ -4842,10 +4848,18 @@ textarea.settings-input {
   gap: 8px;
   color: var(--text-secondary);
   font-size: 12px;
-  margin-right: 30px;
 }
-.app-version {
-
+#app-version {
+  margin-left: 0px;
+  color: var(--text-secondary) !important;
+  font-size: 12px;
+  font-weight: normal;
+  height: 18px;
+  display: inline-flex;
+  align-items: flex-end;
+}
+#app-version::after {
+  background: transparent !important;
 }
 .version-container button {
   display: none;

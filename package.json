@@ -1,6 +1,6 @@
 {
   "name": "Booru-Studio",
-  "version": "1.0.0",
+  "version": "1.0.1",
   "description": "Booru Studio",
   "author": "SaltedShroom",
   "main": "electron-main.js",
@@ -39,7 +39,7 @@
         "provider": "github",
         "owner": "SaltedShroom",
         "repo": "Booru-Studio",
-        "tagNamePrefix": "v"
+        "tagNamePrefix": ""
       }
     ],
     "win": {
