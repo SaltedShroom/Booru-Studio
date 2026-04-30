@@ -1,0 +1,89 @@
+{
+  "name": "Booru Studio",
+  "version": "1.0.0",
+  "description": "Booru Studio",
+  "author": "SaltedShroom",
+  "main": "electron-main.js",
+  "scripts": {
+    "start": "electron .",
+    "electron": "electron .",
+    "build": "node build.js",
+    "rebuild-native": "electron-rebuild -f -w better-sqlite3",
+    "package": "node prepackage.js && electron-builder",
+    "dist": "electron-builder --dir",
+    "postinstall": "npm run rebuild-native"
+  },
+  "build": {
+    "npmRebuild": false,
+    "appId": "com.boorustudio.app",
+    "productName": "Booru Studio",
+    "asar": false,
+    "directories": {
+      "output": "dist"
+    },
+    "files": [
+      "**/*",
+      "!tests/**",
+      "!data/**",
+      "!output/**",
+      "!dist/**",
+      "!customConfigs/**",
+      "!downloads/**",
+      "!downloads/.gitkeep"
+    ],
+    "releaseInfo": {
+      "releaseName": "Booru Studio ${version}"
+    },
+    "publish": [
+      {
+        "provider": "github",
+        "owner": "SaltedShroom",
+        "repo": "Booru-Studio",
+        "tagNamePrefix": "v"
+      }
+    ],
+    "win": {
+      "target": [
+        "nsis",
+        "portable"
+      ],
+      "icon": "favicon/app.ico"
+    },
+    "linux": {
+      "target": [
+        "AppImage",
+        "deb"
+      ],
+      "icon": "favicon"
+    },
+    "extraFiles": [
+      {
+        "from": "node_modules/electron/dist",
+        "to": "resources/app/node_modules/electron/dist"
+      }
+    ]
+  },
+  "dependencies": {
+    "better-sqlite3": "^12.9.0",
+    "http-proxy-agent": "^7.0.0",
+    "https-proxy-agent": "^7.0.2",
+    "justifiedGallery": "^3.8.1",
+    "odometer": "^0.4.8",
+    "puppeteer": "^24.35.0",
+    "select2": "^4.1.0-rc.0",
+    "serve-handler": "^6.1.5",
+    "socks-proxy-agent": "^8.0.2",
+    "electron-updater": "^6.8.3"
+  },
+  "devDependencies": {
+    "clean-css": "^5.3.2",
+    "electron": "^41.2.0",
+    "electron-builder": "^26.8.1",
+    "electron-rebuild": "^3.2.9",
+    "fs-extra": "^11.1.1",
+    "glob": "^10.4.1",
+    "html-minifier-terser": "^7.0.0",
+    "javascript-obfuscator": "^4.0.0",
+    "terser": "^5.20.1"
+  }
+}

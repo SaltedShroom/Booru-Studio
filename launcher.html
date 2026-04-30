@@ -1,0 +1,125 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<style>
+  * { margin: 0; padding: 0; box-sizing: border-box; }
+
+  html, body {
+    width: 100%; height: 100%;
+    background: #1a1a2e;
+    font-family: 'Segoe UI', -apple-system, sans-serif;
+    color: #e8e8e8;
+    user-select: none;
+    overflow: hidden;
+  }
+
+  /* Draggable title-bar strip so the user can move the window */
+  .drag-bar {
+    -webkit-app-region: drag;
+    height: 28px;
+    background: #10101d;
+    display: flex;
+    align-items: center;
+    padding: 0 10px;
+    gap: 6px;
+  }
+
+  .drag-bar-title {
+    font-size: 11px;
+    color: #555;
+    letter-spacing: 0.5px;
+    flex: 1;
+    text-align: center;
+    margin-left: 20px; /* balance the close button width so title stays centred */
+  }
+
+  .drag-bar-close {
+    -webkit-app-region: no-drag;
+    background: none;
+    border: none;
+    color: #555;
+    font-size: 16px;
+    line-height: 1;
+    cursor: pointer;
+    padding: 0;
+    width: 20px;
+    height: 20px;
+    flex-shrink: 0;
+    font-family: inherit;
+    transition: color 0.15s;
+  }
+  .drag-bar-close:hover  { color: #e94560; }
+  .drag-bar-close:active { color: #a02f44; }
+
+  .buttons {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    justify-content: center;
+    width: 100%;
+    height: calc(100% - 28px);
+    padding: 30px 40px;
+  }
+
+  button {
+    width: 100%;
+    padding: 10px 0;
+    border-radius: 8px;
+    font-size: 16px;
+    font-weight: bold;
+    cursor: pointer;
+    border: none;
+    font-family: inherit;
+    display: block;
+    text-align: center;
+    margin-bottom: 20px;
+    overflow: hidden;
+    transition: background 0.15s, color 0.15s, border-color 0.15s;
+    -webkit-app-region: no-drag;
+  }
+
+  button:last-child { margin-bottom: 0; }
+
+  .btn-primary {
+    background: #e94560;
+    color: #e8e8e8;
+  }
+  .btn-primary:hover  { background: #c23852; }
+  .btn-primary:active { background: #a02f44; }
+
+  .btn-secondary {
+    background: transparent;
+    color: #a0a0a0;
+    border: 2px solid #a0a0a0;
+  }
+  .btn-secondary:hover  { border-color: #e94560; color: #e94560; }
+  .btn-secondary:active { background: rgba(233,69,96,0.08); }
+</style>
+</head>
+<body>
+
+<div class="drag-bar">
+  <span class="drag-bar-title">Booru Studio</span>
+  <button class="drag-bar-close" id="btn-close">&#x2715;</button>
+</div>
+
+<div class="buttons">
+  <button class="btn-primary"   id="btn-electron">Desktop</button>
+  <button class="btn-secondary" id="btn-browser">Browser</button>
+</div>
+
+<script>
+  document.getElementById('btn-close').addEventListener('click', function() {
+    window.launcher.quit();
+  });
+  document.getElementById('btn-electron').addEventListener('click', function() {
+    window.launcher.chooseElectron();
+  });
+  document.getElementById('btn-browser').addEventListener('click', function() {
+    window.launcher.chooseBrowser();
+  });
+</script>
+
+</body>
+</html>

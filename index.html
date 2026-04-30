@@ -1,0 +1,979 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Booru Studio</title>
+<link rel="icon" type="image/x-icon" href="favicon/favicon.ico">
+<link rel="icon" type="image/png" sizes="32x32" href="favicon/favicon-32x32.png">
+<link rel="icon" type="image/png" sizes="16x16" href="favicon/favicon-16x16.png">
+<link rel="apple-touch-icon" sizes="180x180" href="favicon/apple-touch-icon.png">
+<link rel="icon" type="image/png" sizes="192x192" href="favicon/android-chrome-192x192.png">
+<link rel="icon" type="image/png" sizes="512x512" href="favicon/android-chrome-512x512.png">
+<link rel="stylesheet" href="style.css">
+<link rel="stylesheet" href="node_modules/justifiedGallery/dist/css/justifiedGallery.min.css">
+<link rel="stylesheet" href="node_modules/odometer/themes/odometer-theme-minimal.css">
+<link rel="stylesheet" href="node_modules/select2/dist/css/select2.min.css">
+<link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&display=swap" rel="stylesheet">
+<link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.5.1/css/all.min.css">
+<script>
+  // Immediately restore active tab to prevent flash
+  (function() {
+    try {
+      const savedTab = localStorage.getItem('activeTab') || 'booru';
+      // Set initial classes before page renders
+      document.addEventListener('DOMContentLoaded', function() {
+        const navTab = document.querySelector(`[data-tab="${savedTab}"]`);
+        const tabContent = document.getElementById(`${savedTab}-tab`);
+        if (navTab && tabContent) {
+          document.querySelectorAll('.nav-tab').forEach(t => t.classList.remove('active'));
+          document.querySelectorAll('.tab-content').forEach(t => t.classList.remove('active'));
+          navTab.classList.add('active');
+          tabContent.classList.add('active');
+          // Show control bar for booru tab
+          if (savedTab === 'booru') {
+            const controlBar = document.querySelector('header.control-bar.booru-control-bar');
+            if (controlBar) controlBar.style.display = 'flex';
+          }
+        }
+      });
+    } catch(e) {}
+  })();
+</script>
+</head>
+<body>
+<div id="app-loading-overlay">
+  <div class="app-title nav-brand" data-text="ooru Studio"><img src="favicon/android-chrome-512x512.png" alt="SD Studio Logo" />ooru Studio</div>
+  <div class="pl">
+    <div class="pl__ring pl__ring--a"></div>
+    <div class="pl__ring pl__ring--b"></div>
+    <div class="pl__ring pl__ring--c"></div>
+    <div class="pl__ring pl__ring--d"></div>
+  </div>
+  <p id="app-loading-status">Starting up…</p>
+  <p id="app-loading-detail"></p>
+  <div class="app-loading-info">
+
+  </div>
+</div>
+<div class="app-loading-download-container">
+  <div id="app-loading-download-count" class="app-loading-download-count"></div>
+</div>
+<div id="app">
+  <nav class="navbar">
+    <div style="display: flex; align-items: center; gap: 32px; flex: 1;">
+      <div class="nav-brand" onclick="window.location.reload()">
+        <img src="favicon/android-chrome-192x192.png" alt="SD Studio Logo" />
+        ooru Studio
+      </div>
+      <div class="nav-tabs">
+        <button class="nav-tab" data-tab="generator" style="display:none">Generator</button>
+        <button class="nav-tab" data-tab="booru">Booru Browser</button>
+        <button class="nav-tab" data-tab="configs" style="display:none">Config Editor</button>
+        <button class="nav-tab" data-tab="settings">Settings</button>
+      </div>
+    </div>
+    <div style="display: flex; align-items: center; gap: 20px;">
+      <div class="version-container">
+        <button id="update-btn" class="update-btn" title="Update the App">
+          <i class="fas fa-download"></i>
+          Update now
+        </button>
+        <span id="app-version"><i class="fa-solid fa-code-branch"></i> v0.0.0</span>
+      </div>
+      <div class="window-zoom-controls">
+        <p>100%</p>
+        <div class="window-zoom-buttons">
+          <button id="increase-zoom" class="button-zoom"><i class="fa-solid fa-plus"></i></button>
+          <button id="decrease-zoom" class="button-zoom"><i class="fa-solid fa-minus"></i></button>
+        </div>
+      </div>
+      <div class="ref-link-container">
+        <a href="https://buymeacoffee.com/saltedshroom" target="_blank" rel="noopener noreferrer" title="https://buymeacoffee.com/saltedshroom" class="ref-link">
+          <img src="assets/bmac.png" alt="Support me">
+        </a>
+        <a href="https://github.com/SaltedShroom/Booru-Studio" target="_blank" rel="noopener noreferrer" title="https://github.com/SaltedShroom/Booru-Studio" class="ref-link">
+          <img src="assets/github.png" alt="GitHub">
+        </a>
+      </div>
+      <button id="proxy-status-btn" class="proxy-status-btn" title="Toggle Proxy" style="display: none;">
+        <i class="fa-solid fa-shield-halved"></i>
+      </button>
+      <button id="theme-toggle-btn" class="theme-toggle-btn" title="Toggle Theme">
+        <i class="fa-solid fa-circle-half-stroke"></i>
+      </button>
+      <button id="settings-btn" class="settings-btn" title="Settings">
+        <i class="fas fa-cog"></i>
+      </button>
+    </div>
+  </nav>
+
+  <!-- Generator Tab -->
+  <div id="generator-tab" class="tab-content active">
+    <header class="control-bar">
+      <div class="control-group">
+        <label>Generate</label>
+        <div id="toggle-switch" class="switch">
+          <div class="handle"></div>
+        </div>
+      </div>
+      <div class="control-group">
+        <label>Output</label>
+        <input id="output-dir" type="text" placeholder="Loading output folder…">
+      </div>
+      <div class="control-group">
+        <label>Config</label>
+        <select id="json-dropdown"></select>
+      </div>
+    </header>
+
+    <main class="main-container">
+      <aside class="sidebar-left">
+        <!-- Override Settings Panel -->
+        <div class="override-panel">
+          <div class="panel-header">Override Settings</div>
+          <div class="override-content">
+            
+            <div class="override-item">
+              <label class="override-toggle">
+                <input type="checkbox" id="override-checkpoint">
+                <span>Checkpoint</span>
+              </label>
+              <select id="checkpoint-select" disabled>
+              </select>
+            </div>
+
+            <div class="override-item">
+              <label class="override-toggle">
+                <input type="checkbox" id="override-resolution">
+                <span>Resolution</span>
+              </label>
+              <div class="resolution-inputs">
+                <input type="number" id="override-width" placeholder="Width" value="512" disabled>
+                <span>×</span>
+                <input type="number" id="override-height" placeholder="Height" value="512" disabled>
+              </div>
+            </div>
+
+            <div class="override-item">
+              <label class="override-toggle">
+                <input type="checkbox" id="override-steps">
+                <span>Sampling Steps</span>
+              </label>
+              <input type="number" id="steps-input" value="40" min="1" max="150" disabled>
+            </div>
+
+            <div class="override-item">
+              <label class="override-toggle">
+                <input type="checkbox" id="override-cfg">
+                <span>CFG Scale</span>
+              </label>
+              <input type="number" id="cfg-input" value="7" min="1" max="30" step="0.5" disabled>
+            </div>
+
+            <div class="override-item">
+              <label class="override-toggle">
+                <input type="checkbox" id="override-seed">
+                <span>Seed</span>
+              </label>
+              <input type="number" id="seed-input" value="-1" min="-1" disabled>
+            </div>
+
+            <div class="override-item">
+              <label class="override-toggle">
+                <input type="checkbox" id="override-highres">
+                <span>Highres Fix</span>
+              </label>
+              <div class="highres-control">
+                <input type="range" id="highres-slider" min="1" max="2" step="0.1" value="1.5" disabled>
+                <span id="highres-value">1.5x</span>
+              </div>
+            </div>
+
+            <div class="override-item prompt-override">
+              <label class="override-toggle">
+                <input type="checkbox" id="override-prompt">
+                <span>Custom Positive Prompt</span>
+              </label>
+              <textarea id="custom-prompt" placeholder="Enter custom positive prompt..." disabled></textarea>
+            </div>
+
+            <div class="override-item prompt-override">
+              <label class="override-toggle">
+                <input type="checkbox" id="override-negative">
+                <span>Custom Negative Prompt</span>
+              </label>
+              <textarea id="custom-negative" placeholder="Enter custom negative prompt..." disabled></textarea>
+            </div>
+
+          </div>
+        </div>
+
+        <!-- Generation Log -->
+        <div class="log-panel-wrapper">
+          <div class="panel-header">
+            <span>Generation Log</span>
+            <button id="clear-log-btn" class="icon-btn-small" title="Clear Log"><i class="fas fa-trash"></i></button>
+          </div>
+          <div class="log-content" id="log-panel"></div>
+        </div>
+      </aside>
+
+      <section class="image-panel">
+        <div class="image-container" id="image-container">
+          <img id="current-image" src="" />
+          <button class="nav-btn left-arrow"><i class="fas fa-chevron-left"></i></button>
+          <button class="nav-btn right-arrow"><i class="fas fa-chevron-right"></i></button>
+          <button class="nav-btn delete-btn"><i class="fas fa-trash"></i></button>
+        </div>
+        <div class="prompt-panel" id="prompt-panel">
+          <div class="panel-header">Prompt Details</div>
+          <div class="prompt-content"></div>
+        </div>
+      </section>
+    </main>
+  </div>
+
+  <!-- Lightbox Modal -->
+  <div id="lightbox-modal" class="lightbox-modal">
+    <div class="lightbox-background"></div>
+    <img id="lightbox-image-fade" src="" />
+    <div style="position:relative;width:100%;height:100%;pointer-events:none;display:flex;align-items:center;justify-content:center;">
+      <img id="lightbox-image" src="" />
+      <div id="lightbox-loader" class="lightbox-loader" style="position:absolute;top:50%;left:50%;transform:translate(-50%,-50%);pointer-events:none;">
+        <i class="fas fa-circle-notch fa-spin"></i>
+      </div>
+    </div>
+    <button class="nav-btn lightbox-nav-btn left-arrow-lightbox"><i class="fas fa-chevron-left"></i></button>
+    <button class="nav-btn lightbox-nav-btn right-arrow-lightbox"><i class="fas fa-chevron-right"></i></button>
+    <div class="slideshow-controls">
+      <button id="slideshow-play-btn" class="slideshow-btn" title="Play slideshow">
+        <i class="fas fa-play"></i>
+      </button>
+      <input type="number" id="slideshow-interval" min="1" max="60" value="3" step="1" title="Interval (seconds)" />
+      <div class="slideshow-divider"></div>
+      <span class="slideshow-label">Fade</span>
+      <input type="number" id="slideshow-fade-duration" min="0" max="10" value="0.5" step="0.1" title="Crossfade duration (seconds)" />
+      <span class="slideshow-label">s</span>
+    </div>
+  </div>
+
+  <!-- Booru Browser Tab -->
+  <div id="booru-tab" class="tab-content">
+    <!-- Booru Sub-Tabs -->
+    <div class="booru-tabs-bar">
+      <div class="booru-tabs-left-fade" id="booru-tabs-left-fade"></div>
+      <div id="booru-tabs-container" class="booru-tabs-container">
+        <!-- Tabs will be dynamically added here -->
+      </div>
+      <button id="add-booru-tab-btn" class="booru-tab-btn" title="Add new tab">
+        New Tab<i class="fas fa-plus"></i>
+      </button>
+      <button id="show-scroller-btn" class="booru-tab-btn" title="Scroll recommended posts">
+        Scroller<i class="fa-solid fa-arrows-up-down"></i>
+      </button>
+      <button id="show-downloads-gallery-btn" class="booru-tab-btn" title="Show all downloaded images">
+        Downloads<i class="fas fa-download"></i>
+      </button>
+    </div>
+    
+    <header class="control-bar booru-control-bar" style="display: none;">
+      <div class="booru-control-left">
+        <div class="control-section control-section-primary">
+          <button id="reload-booru-btn" class="btn-icon btn-accent" title="Reload Gallery">
+            <i class="fas fa-sync-alt"></i>
+          </button>
+          <button id="ai-filter-toggle" class="btn-icon" title="Toggle AI Filter (Off)">
+            <i class="fas fa-robot"></i>
+          </button>
+          <button id="gallery-quality-toggle" class="btn-icon" title="Show High Quality Images">
+            <i class="fas fa-image"></i>
+          </button>
+        </div>
+
+        <div class="control-section control-section-search" id="search-control">
+          <div class="section-label"><i class="fas fa-search"></i></div>
+          <div class="search-filter-container">
+            <div class="search-container">
+              <input id="search-filter-input" spellcheck="false" type="text" class="input-minimal input-search" placeholder="Search" autocomplete="off" />
+              <input id="search-suggestion" spellcheck="false" class="input-minimal input-search suggestion-field" autocomplete="off" />
+            </div>
+          </div>
+          <div class="search-right-fade"></div>
+        </div>
+        
+        <div class="control-section" id="subreddit-control" style="display: none;">
+          <div class="section-label">Subreddit</div>
+          <div class="subreddit-input-wrapper">
+            <span class="subreddit-prefix">r/</span>
+            <input id="subreddit-input" type="text" class="input-minimal subreddit-input" placeholder="pics" autocomplete="off" />
+            <div id="subreddit-dropdown" class="subreddit-dropdown" style="display: none;"></div>
+          </div>
+        </div>
+        
+        <div class="control-section control-select control-section-sort">
+          <div class="section-label">Sort</div>
+          <select id="booru-sort-select" class="select-minimal">
+            <option value="new">New</option>
+            <option value="hot">Hot</option>
+            <option value="top">Top</option>
+          </select>
+        </div>
+
+        <div class="control-section control-section-limit">
+          <div class="section-label">Limit</div>
+          <input type="number" id="booru-limit-input" class="input-minimal input-narrow" min="10" max="100" value="100" step="10">
+        </div>
+
+        <div class="control-section control-section-slider">
+          <div class="section-label">Size</div>
+          <input type="range" id="image-size-slider" class="slider-minimal" min="120" max="500" value="250" step="10">
+          <span id="image-size-value" class="value-display">250px</span>
+        </div>
+      </div>
+
+      <div class="booru-control-right">
+        <div class="control-section control-select">
+          <div class="section-label">Source</div>
+          <select id="booru-source-select" class="select-minimal">
+            <!-- Options populated dynamically from database -->
+          </select>
+          <button id="booru-settings-btn" class="btn-icon" title="API Settings" style="display: none;">
+            <i class="fas fa-cog"></i>
+          </button>
+        </div>
+        <button id="select-download-folder-btn" class="booru-control-button" title="Select download folder">
+          <i class="fas fa-folder"></i>
+        </button>
+      </div>
+
+    </header>
+    
+    <div id="booru-content" class="booru-content">
+      <h1 id="booru-total-count"></h1>
+      <div class="gallery-wrapper" id="gallery-wrapper">
+        <div id="booru-gallery" class="booru-gallery"></div>
+        <div id="booru-gallery-counter" class="booru-gallery-counter"><span id="booru-counter-current">0</span><br><b>/ <span id="booru-counter-total">0</span></b></div>
+      </div>
+      <div id="booru-loading" class="booru-loading" style="display: none;">
+        <i class="fas fa-circle-notch fa-spin" style="font-size: 48px; color: var(--accent);"></i>
+        <span style="margin-top: 16px;">Loading...</span>
+      </div>
+    </div>
+    
+    <!-- API Settings Modal -->
+    <div id="api-settings-modal" class="modal" style="display: none;">
+      <div class="modal-overlay"></div>
+      <div class="modal-content">
+        <div class="modal-header">
+          <h3 id="api-settings-title"><i class="fas fa-key"></i> API Settings</h3>
+          <button class="modal-close" id="close-api-modal"><i class="fas fa-times"></i></button>
+        </div>
+        <div class="modal-body">
+          <div class="form-group">
+            <label>User ID</label>
+            <input id="user-id-input" type="text" placeholder="Enter your user ID" autocomplete="off" />
+          </div>
+          <div class="form-group">
+            <label>API Key</label>
+            <input id="api-key-input" type="password" placeholder="Enter your API key" autocomplete="off" />
+            <small id="api-settings-help">Get your credentials from your account settings</small>
+          </div>
+        </div>
+        <div class="modal-footer">
+          <button id="save-api-credentials-btn" class="btn-primary">
+            <i class="fas fa-save"></i> Save Credentials
+          </button>
+        </div>
+      </div>
+    </div>
+
+  </div>
+
+  <!-- Config Editor Tab -->
+  <div id="configs-tab" class="tab-content">
+    <div class="config-editor">
+      <aside class="config-list">
+        <div class="panel-header">
+          <span>Configurations</span>
+          <button id="add-config-btn" class="icon-btn">+</button>
+        </div>
+        <div id="config-items"></div>
+      </aside>
+      <section class="editor-panel">
+        <div class="editor-header">
+          <input id="config-name" type="text" placeholder="config-name.json" />
+          <div class="editor-actions">
+            <button id="save-config-btn" class="btn-primary">Save</button>
+            <button id="delete-config-btn" class="btn-danger">Delete</button>
+          </div>
+        </div>
+        <div class="editor-container">
+          <pre id="json-highlight" class="json-highlight"></pre>
+          <textarea id="config-editor-textarea" spellcheck="false"></textarea>
+        </div>
+      </section>
+    </div>
+  </div>
+
+  <!-- Settings Tab -->
+  <div id="settings-tab" class="tab-content">
+    
+    <div class="settings-container">
+      <form class="settings-content">
+
+        <div class="settings-header">
+          <h2>Application Settings</h2>
+        </div>
+
+        <div class="settings-group-container">
+          <h3>General</h3>
+          <div class="settings-group">
+            <label for="theme-select">Theme</label>
+            <select id="theme-select" class="settings-input">
+              <option value="auto">Auto (System preference)</option>
+              <option value="light">Light</option>
+              <option value="dark" selected>Dark</option>
+            </select>
+            <small>Choose your preferred color scheme</small>
+          </div>
+          <div class="settings-group">
+            <label for="download-concurrency-input">Max concurrent downloads</label>
+            <input id="download-concurrency-input" type="number" class="settings-input" min="1" max="10" value="3">
+            <small>How many downloads to run in parallel (change in Settings)</small>
+          </div>
+          <div class="settings-group">
+            <label for="hq-hover-delay-input">HQ image hover delay (ms)</label>
+            <input id="hq-hover-delay-input" type="number" class="settings-input" min="0" max="2000" step="50" value="400">
+            <small>How long you must hover over a gallery image before its high-quality version starts loading</small>
+          </div>
+          <div class="settings-group">
+            <label class="checkbox-label" for="support-toast-enabled">Support reminders</label>
+            <input type="checkbox" id="support-toast-enabled" class="settings-checkbox" checked>
+            <small>Give a support reminder once in a while</small>
+          </div>
+          <div class="settings-group">
+            <label for="blacklist-tags-input">Global blacklisted tags</label>
+            <textarea id="blacklist-tags-input" class="settings-input" placeholder="tag1 tag2 tag3"></textarea>
+            <small>Space-separated tags that will be automatically excluded from all Booru searches</small>
+          </div>
+        </div>
+
+        <div class="settings-divider"></div>
+
+        <div class="settings-group-container">
+          <h3>Proxy Settings</h3>
+          <div class="settings-group">
+            <label class="checkbox-label">Active</label>
+            <input type="checkbox" id="proxy-active" class="settings-checkbox">
+            <small>Enable proxy</small>
+          </div>
+
+          <div class="settings-group">
+            <label for="proxy-type">Type</label>
+            <select id="proxy-type" class="settings-input" disabled>
+              <option value="HTTP">HTTP</option>
+              <option value="SOCKS5" selected>SOCKS v5</option>
+            </select>
+          </div>
+
+          <div class="settings-group">
+            <label for="proxy-host">Host</label>
+            <input type="text" id="proxy-host" class="settings-input" value="localhost" placeholder="localhost" disabled>
+            <small>hostname or IP address</small>
+          </div>
+
+          <div class="settings-group">
+            <label for="proxy-port">Port</label>
+            <input type="number" id="proxy-port" class="settings-input" value="9050" placeholder="9050" disabled min="1" max="65535">
+            <small>server port</small>
+          </div>
+
+          <div class="settings-group">
+            <label for="proxy-user">Username</label>
+            <input type="text" id="proxy-user" class="settings-input" placeholder="optional" disabled>
+            <small>username (optional)</small>
+          </div>
+
+          <div class="settings-group">
+            <label for="proxy-password">Password</label>
+            <input type="password" id="proxy-password" class="settings-input" placeholder="optional" disabled>
+            <small>password (optional)</small>
+          </div>
+
+          <div class="settings-group-container">
+            <h3>Tor Settings</h3>
+
+            <div class="settings-group">
+              <label class="checkbox-label">UA Rotation</label>
+              <input type="checkbox" id="anon-ua-rotation" class="settings-checkbox" checked>
+              <small>Randomise User-Agent header on every request</small>
+            </div>
+
+            <div class="settings-group">
+              <label>Request Jitter (ms)</label>
+              <div style="display:flex;gap:8px;align-items:center;">
+                <input type="number" id="anon-jitter-min" class="settings-input" min="0" max="5000" step="50" value="150" style="width:90px;" title="Min delay">
+                <span style="color:var(--text-secondary);font-size:13px;">–</span>
+                <input type="number" id="anon-jitter-max" class="settings-input" min="0" max="5000" step="50" value="900" style="width:90px;" title="Max delay">
+              </div>
+              <small>Min and max delay before requests (ms). Set both to 0 to disable</small>
+            </div>
+
+            <div class="settings-group">
+              <label for="anon-tor-rotate-count">Rotate circuit every N downloads</label>
+              <input type="number" id="anon-tor-rotate-count" class="settings-input" min="0" max="10000" step="10" value="100" style="width:90px;">
+              <small>Requests a new Tor exit circuit after this many downloads. 0 = disabled</small>
+            </div>
+
+            <div class="settings-group">
+              <label for="anon-tor-rotate-mins">Rotate circuit every N seconds</label>
+              <input type="number" id="anon-tor-rotate-mins" class="settings-input" min="0" max="86400" step="1" value="300" style="width:100px;">
+              <small>Requests a new Tor exit circuit on a timer. 0 = disabled</small>
+            </div>
+
+            <div class="settings-group">
+              <label class="checkbox-label">Rotate Circuit Now</label>
+              <button type="button" id="anon-tor-rotate-now" class="settings-btn">Rotate</button>
+              <small id="anon-tor-rotate-status">Sends SIGNAL NEWNYM to Tor control port 9051</small>
+            </div>
+          </div>
+        </div>
+
+        <div class="settings-divider"></div>
+
+        <div class="settings-group-container">
+          <h3>Booru Sources Management</h3>
+          <small style="display: block; margin-bottom: 16px; opacity: 0.7;">Configure available booru sources and their API settings</small>
+          
+          <div id="booru-sources-list" class="booru-sources-list">
+            <!-- Source cards will be dynamically added here -->
+          </div>
+          
+          <div class="add-booru-button-container" style="display:flex; gap:8px; margin-top:12px;">
+            <button id="add-booru-source-btn" class="btn-primary" type="button">
+              <i class="fas fa-plus"></i> Add New Source
+            </button>
+            <button id="import-booru-source-btn" class="btn-secondary" type="button">
+              <i class="fas fa-file-import"></i> Import Source
+            </button>
+          </div>
+        </div>
+      </form>
+      <div class="server-console">
+        <div class="console-header">Server Console</div>
+        <div class="console-content" id="console-content"></div>
+      </div>
+    </div>
+  </div>
+
+  <!-- Import Source Modal -->
+  <div id="import-source-modal" class="modal" style="display:none;">
+    <div class="modal-overlay"></div>
+    <div class="modal-content" style="max-width:600px;">
+      <div class="modal-header">
+        <h3><i class="fas fa-file-import"></i> Import Source</h3>
+        <button class="modal-close" id="close-import-source-modal"><i class="fas fa-times"></i></button>
+      </div>
+      <div class="modal-body">
+        <p style="margin-bottom:12px; opacity:0.7;">Paste the source JSON below. Required fields: <code>id</code>, <code>name</code>, <code>baseUrl</code>, <code>api.basePath</code>, <code>response.countParser</code>, <code>fields.imageUrl</code>, <code>fields.previewUrl</code>, <code>fields.tags</code>.</p>
+        <textarea id="import-source-json" style="width:100%; box-sizing:border-box; height:280px; font-family:monospace; font-size:0.85rem; resize:vertical;" placeholder='{&#10;  "id": "my-source",&#10;  "name": "My Source",&#10;  "baseUrl": "https://example.com",&#10;  ...&#10;}'></textarea>
+        <div id="import-source-error" style="display:none; color:var(--error, #e74c3c); margin-top:8px; font-size:0.85rem; white-space:pre-wrap;"></div>
+      </div>
+      <div class="modal-footer">
+        <button id="submit-import-source-btn" class="btn-primary"><i class="fas fa-check"></i> Import</button>
+        <button id="cancel-import-source-btn" class="btn-secondary">Cancel</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- Export Source Preview Modal -->
+  <div id="export-source-modal" class="modal" style="display:none;">
+    <div class="modal-overlay"></div>
+    <div class="modal-content" style="max-width:640px;">
+      <div class="modal-header">
+        <h3><i class="fas fa-file-export"></i> Export: <span id="export-source-modal-name"></span></h3>
+        <button class="modal-close" id="close-export-source-modal"><i class="fas fa-times"></i></button>
+      </div>
+      <div class="modal-body">
+        <pre id="export-source-preview" style="background:var(--bg-tertiary, #1a1a2e); border:1px solid var(--border-color, #333); border-radius:6px; padding:14px; overflow:auto; max-height:380px; font-size:0.82rem; white-space:pre; margin:0;"></pre>
+      </div>
+      <div class="modal-footer">
+        <button id="download-export-source-btn" class="btn-primary"><i class="fas fa-download"></i> Download JSON</button>
+        <button id="cancel-export-source-btn" class="btn-secondary">Close</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- Booru Source Editor Modal -->
+  <div id="booru-source-modal" class="modal" style="display: none;">
+    <div class="modal-overlay"></div>
+    <div class="modal-content booru-source-modal-content">
+      <div class="modal-header">
+        <h3 id="booru-source-modal-title"><i class="fas fa-database"></i> Edit Booru Source</h3>
+        <button class="modal-close" id="close-booru-source-modal"><i class="fas fa-times"></i></button>
+      </div>
+      <div class="modal-body booru-source-modal-body">
+        <form id="booru-source-form">
+          
+          <!-- Basic Information -->
+          <div class="booru-form-section">
+            <h4><i class="fas fa-info-circle"></i> Basic Information</h4>
+            <div class="form-row">
+              <div class="form-group">
+                <label>Source ID <span class="required">*</span></label>
+                <input type="text" id="source-id" required placeholder="e.g., rule34" />
+                <small>Unique identifier (lowercase, no spaces)</small>
+              </div>
+              <div class="form-group">
+                <label>Display Name <span class="required">*</span></label>
+                <input type="text" id="source-name" required placeholder="e.g., Rule34.xxx" />
+                <small>Name shown in UI</small>
+              </div>
+            </div>
+            <div class="form-group">
+              <label>Base URL <span class="required">*</span></label>
+              <input type="url" id="source-baseUrl" required placeholder="e.g., https://rule34.xxx" />
+              <small>Main domain for web pages (artist pages, post views)</small>
+            </div>
+            <div class="form-group">
+              <label>API URL</label>
+              <input type="url" id="source-apiUrl" placeholder="e.g., https://api.rule34.xxx" />
+              <small>API endpoint (leave empty if same as Base URL)</small>
+            </div>
+            <div class="form-group">
+              <label>Cookies</label>
+              <textarea id="source-cookies" placeholder="name=value; name2=value2" rows="2"></textarea>
+              <small>Optional cookies to send with every request (semicolon-separated)</small>
+            </div>
+            <div class="form-group">
+              <label>User-Agent</label>
+              <input type="text" id="source-userAgent" placeholder="Custom User-Agent header" />
+              <small>Set a custom User-Agent for requests to this source</small>
+            </div>
+          </div>
+
+          <!-- Authentication -->
+          <div class="booru-form-section">
+            <h4><i class="fas fa-key"></i> Authentication</h4>
+            <div class="form-group checkbox-group">
+              <label class="checkbox-label">
+                <input type="checkbox" id="source-auth-required" />
+                <span>Authentication Required</span>
+              </label>
+            </div>
+            <div id="auth-fields" style="display: none;">
+              <div class="form-row">
+                <div class="form-group">
+                  <label>User ID Key</label>
+                  <input type="text" id="source-auth-userIdKey" placeholder="e.g., user_id" />
+                  <small>API parameter name for user ID</small>
+                </div>
+                <div class="form-group">
+                  <label>API Key Name</label>
+                  <input type="text" id="source-auth-apiKeyKey" placeholder="e.g., api_key" />
+                  <small>API parameter name for API key</small>
+                </div>
+              </div>
+              <div class="form-row">
+                <div class="form-group">
+                  <label>Your User ID</label>
+                  <input type="text" id="source-auth-userId" placeholder="Your account user ID" autocomplete="off" />
+                  <small>Your personal user ID for this source</small>
+                </div>
+                <div class="form-group">
+                  <label>Your API Key</label>
+                  <input type="password" id="source-auth-apiKey" placeholder="Your API key" autocomplete="off" />
+                  <small>Your personal API key for this source</small>
+                </div>
+              </div>
+              <div class="form-group">
+                <label>Help Text</label>
+                <input type="text" id="source-auth-helpText" placeholder="Get your credentials from..." />
+                <small>Instructions for users to obtain credentials</small>
+              </div>
+            </div>
+          </div>
+
+          <!-- API Configuration -->
+          <div class="booru-form-section">
+            <h4><i class="fas fa-server"></i> API Configuration</h4>
+            <div class="form-group">
+              <label>API Base Path <span class="required">*</span></label>
+              <input type="text" id="source-api-basePath" required placeholder="e.g., /index.php?page=dapi&s=post&q=index" />
+              <small>Base path for API requests</small>
+            </div>
+            <div class="form-group">
+              <label>Count Base Path</label>
+              <input type="text" id="source-api-countBasePath" placeholder="e.g., /counts/posts.json" />
+              <small>Override base path for count requests (leave empty to use API Base Path)</small>
+            </div>
+            <div class="form-group checkbox-group">
+              <label class="checkbox-label">
+                <input type="checkbox" id="source-api-jsonSupport" />
+                <span>JSON Format Supported</span>
+              </label>
+              <small>Check if API supports json=1 parameter</small>
+            </div>
+            <div class="form-row">
+              <div class="form-group">
+                <label>Limit Parameter</label>
+                <input type="text" id="source-api-limitParam" placeholder="e.g., limit" value="limit" />
+                <small>Parameter name for result limit</small>
+              </div>
+              <div class="form-group">
+                <label>Page Parameter</label>
+                <input type="text" id="source-api-pageParam" placeholder="e.g., pid" value="pid" />
+                <small>Parameter name for pagination</small>
+              </div>
+              <div class="form-group">
+                <label>Page Start Offset</label>
+                <input type="number" id="source-api-pageStart" placeholder="0" value="0" min="0" />
+                <small>Optional: first page index (use 1 if API is 1‑based)</small>
+              </div>
+            </div>
+            <div class="form-group">
+              <label>Tags Parameter</label>
+              <input type="text" id="source-api-tagsParam" placeholder="e.g., tags" value="tags" />
+              <small>Parameter name for search tags</small>
+            </div>
+          </div>
+
+          <!-- Response Format -->
+          <div class="booru-form-section">
+            <h4><i class="fas fa-code"></i> Response Format</h4>
+            <div class="form-group">
+              <label>Count Parser Type <span class="required">*</span></label>
+              <select id="source-response-countParser" required>
+                <option value="xmlDom">XML (DOM Parser)</option>
+                <option value="xmlRegex">XML (Regex)</option>
+                <option value="json">JSON</option>
+              </select>
+              <small>How to parse the total count from API</small>
+            </div>
+            <div class="form-group">
+              <label>Count Path</label>
+              <input type="text" id="source-response-countPath" placeholder="e.g., @attributes.count" />
+              <small>JSON path or XML attribute for count (e.g., @attributes.count, posts/@count)</small>
+            </div>
+            <div class="form-group">
+              <label>Posts Wrapper</label>
+              <input type="text" id="source-response-wrapper" placeholder="e.g., post" />
+              <small>Object key that wraps posts array (leave empty if direct array)</small>
+            </div>
+          </div>
+
+          <!-- Field Mappings -->
+          <div class="booru-form-section">
+            <h4><i class="fas fa-exchange-alt"></i> Field Mappings</h4>
+            <div class="form-row">
+              <div class="form-group">
+                <label>Image URL Field</label>
+                <input type="text" id="source-fields-imageUrl" placeholder="e.g., file_url" value="file_url" />
+              </div>
+              <div class="form-group">
+                <label>Preview URL Field</label>
+                <input type="text" id="source-fields-previewUrl" placeholder="e.g., preview_url" value="preview_url" />
+              </div>
+            </div>
+            <div class="form-row">
+              <div class="form-group">
+                <label>Sample URL Field</label>
+                <input type="text" id="source-fields-sampleUrl" placeholder="e.g., sample_url" value="sample_url" />
+              </div>
+              <div class="form-group">
+                <label>Tags Field</label>
+                <input type="text" id="source-fields-tags" placeholder="e.g., tags" value="tags" />
+              </div>
+            </div>
+            <div class="form-row">
+              <div class="form-group">
+                <label>Artist Tag Field</label>
+                <input type="text" id="source-fields-artistTag" placeholder="e.g., artist" />
+                <small>JSON key that contains artist name(s) (optional)</small>
+              </div>
+            </div>
+            <div class="form-row">
+              <div class="form-group">
+                <label>Created Date Field</label>
+                <input type="text" id="source-fields-createdAt" placeholder="e.g., created_at or change" value="created_at" />
+              </div>
+              <div class="form-group">
+                <label>Date Type</label>
+                <select id="source-fields-dateType">
+                  <option value="timestamp">Unix Timestamp</option>
+                  <option value="dateString">Date String</option>
+                </select>
+              </div>
+            </div>
+            <div class="form-row">
+              <div class="form-group">
+                <label>Width Field</label>
+                <input type="text" id="source-fields-width" placeholder="e.g., width" />
+                <small>JSON key for image width (optional)</small>
+              </div>
+              <div class="form-group">
+                <label>Height Field</label>
+                <input type="text" id="source-fields-height" placeholder="e.g., height" />
+                <small>JSON key for image height (optional)</small>
+              </div>
+            </div>
+            <div class="form-group">
+              <label>Tags Filter Regex</label>
+              <input type="text" id="source-fields-tagsFilter" placeholder="e.g., \\+ (to remove plus signs)" />
+              <small>Regex pattern to remove from tags (leave empty for none)</small>
+            </div>
+            <div class="form-group checkbox-group">
+              <label class="checkbox-label">
+                <input type="checkbox" id="source-fields-partialUrls" />
+                <span>API Returns Partial URLs (filenames only)</span>
+              </label>
+              <small>Check if API returns just filenames instead of full URLs</small>
+            </div>
+            <div id="urlPrefix-field" style="display: none;">
+              <div class="form-group">
+                <label>URL Prefix / CDN Base URL</label>
+                <input type="url" id="source-fields-urlPrefix" placeholder="e.g., https://cdn.example.com/images/" />
+                <small>This URL will be prepended to all image filenames (e.g., https://cdn.source.com/images/)</small>
+              </div>
+            </div>
+            <div class="form-group checkbox-group">
+              <label class="checkbox-label">
+                <input type="checkbox" id="source-fields-useUrlTemplates" />
+                <span>Use URL Templates (Advanced)</span>
+              </label>
+              <small>Build URLs from templates with placeholders like {directory}/{image}</small>
+            </div>
+            <div id="urlTemplates-fields" style="display: none;">
+              <div class="form-group">
+                <label>Full Image URL Template</label>
+                <input type="text" id="source-fields-imageUrlTemplate" placeholder="e.g., https://site.com/images/{directory}/{image}" />
+                <small>Use {directory}, {image}, {id}, {hash}, etc. Use {image.noext} to strip extension</small>
+              </div>
+              <div class="form-group">
+                <label>Sample Image URL Template</label>
+                <input type="text" id="source-fields-sampleUrlTemplate" placeholder="e.g., https://site.com/samples/{directory}/sample_{image.noext}.jpg?{id}" />
+                <small>Template for sample/preview images</small>
+              </div>
+              <div class="form-group">
+                <label>Thumbnail URL Template</label>
+                <input type="text" id="source-fields-thumbnailUrlTemplate" placeholder="e.g., https://site.com/thumbnails/{directory}/thumb_{image.noext}.jpg" />
+                <small>Template for thumbnail images (often same as sample)</small>
+              </div>
+            </div>
+          </div>
+
+          <!-- Sort Options -->
+          <div class="booru-form-section">
+            <h4><i class="fas fa-sort"></i> Sort Options</h4>
+            <div class="form-group">
+              <label>Score Sort Implementation</label>
+              <select id="source-sort-scoreMethod">
+                <option value="none">Not Supported</option>
+                <option value="tags">Add to Tags (sort:score)</option>
+                <option value="param">Separate Parameter</option>
+              </select>
+              <small>How score-based sorting is implemented</small>
+            </div>
+            <div id="sort-param-field" style="display: none;">
+              <div class="form-group">
+                <label>Sort Parameter Name</label>
+                <input type="text" id="source-sort-paramName" placeholder="e.g., sort" />
+                <small>Parameter name if using separate parameter</small>
+              </div>
+            </div>
+          </div>
+
+          <!-- Safe Mode -->
+          <div class="booru-form-section">
+            <h4><i class="fas fa-shield-alt"></i> Safe Mode</h4>
+            <div class="form-group checkbox-group">
+              <label class="checkbox-label">
+                <input type="checkbox" id="source-safeMode-required" />
+                <span>Safe Mode Required</span>
+              </label>
+              <small>Check if site requires safe mode POST before artist access</small>
+            </div>
+            <div id="safeMode-fields" style="display: none;">
+              <div class="form-group">
+                <label>Safe Mode URL</label>
+                <input type="url" id="source-safeMode-url" placeholder="https://..." />
+                <small>URL to POST for enabling adult content</small>
+              </div>
+              <div class="form-group">
+                <label>Delay (ms)</label>
+                <input type="number" id="source-safeMode-delay" value="1000" min="0" />
+                <small>Delay after POST before fetching (milliseconds)</small>
+              </div>
+            </div>
+          </div>
+
+          <!-- Artist Configuration -->
+          <div class="booru-form-section">
+            <h4><i class="fas fa-user"></i> Artist Configuration</h4>
+            <div class="form-group">
+              <label>Artist Page URL Pattern</label>
+              <input type="text" id="source-artist-urlPattern" placeholder="e.g., /index.php?page=post&s=list&tags={artist}" />
+              <small>URL pattern for artist pages (use {artist} placeholder)</small>
+            </div>
+            <div class="form-group">
+              <label>Artist Selector</label>
+              <input type="text" id="source-artist-selector" placeholder="e.g., a[href*='tags='][title^='Search for']" />
+              <small>CSS selector to find artist links in DOM</small>
+            </div>
+          </div>
+
+        </form>
+      </div>
+      <div class="modal-footer">
+        <button id="save-booru-source-btn" class="btn-primary" type="button">
+          <i class="fas fa-save"></i> Save Source
+        </button>
+        <button id="cancel-booru-source-btn" class="btn-secondary" type="button">
+          Cancel
+        </button>
+      </div>
+    </div>
+  </div>
+  
+  <!-- Toast Notification Container -->
+  <div id="toast-container"></div>
+  <!-- Download toasts (bottom-left) -->
+  <div id="download-toast-container">
+    <p id="loading-toast-counter" class="loading-toast-counter hidden"></p>
+  </div>
+
+  <!-- Stable Diffusion Loading Overlay -->
+  <div id="sd-loading-overlay" class="sd-loading-overlay">
+    <div class="sd-loading-background"></div>
+    <div class="sd-loading-content">
+      <div class="sd-loading-title">Starting Stable Diffusion</div>
+      <div class="sd-loading-status" id="sd-status-text">Initializing...</div>
+      <div class="sd-loading-spinner"></div>
+      <div class="sd-progress-steps" id="sd-progress-steps">
+        <div class="sd-step active" data-step="0"></div>
+        <div class="sd-step" data-step="1"></div>
+        <div class="sd-step" data-step="2"></div>
+        <div class="sd-step" data-step="3"></div>
+        <div class="sd-step" data-step="4"></div>
+        <div class="sd-step" data-step="5"></div>
+      </div>
+      <div class="sd-loading-details">
+        This may take a minute while the model loads
+      </div>
+    </div>
+  </div>
+</div>
+<script src="node_modules/odometer/odometer.min.js" defer></script>
+<script src="https://code.jquery.com/jquery-3.7.1.min.js" defer></script>
+<script src="node_modules/justifiedGallery/dist/js/jquery.justifiedGallery.min.js" defer></script>
+<script src="node_modules/select2/dist/js/select2.min.js" defer></script>
+<script src="cleanup-manager.js" defer></script>
+<script src="db-store.js" defer></script>
+<script src="virtual-gallery.js" defer></script>
+<script src="booru-sources-manager.js" defer></script>
+<script src="index.js" defer></script>
+<script src="booru-browser.js" defer></script>
+<script src="booru-tabs.js" defer></script>
+</body>
+</html>

@@ -1,0 +1,9 @@
+#!/usr/bin/env sh
+# Project-local Node wrapper using Electron's bundled runtime.
+ROOT="$(cd "$(dirname "$0")/.." && pwd)"
+ELECTRON_EXE="$ROOT/node_modules/electron/dist/electron"
+if [ ! -x "$ELECTRON_EXE" ]; then
+  echo "ERROR: Electron runtime not found at $ELECTRON_EXE" >&2
+  exit 1
+fi
+exec "$ELECTRON_EXE" "$@"
