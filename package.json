@@ -1,6 +1,6 @@
 {
   "name": "Booru-Studio",
-  "version": "1.0.0",
+  "version": "1.0.2",
   "description": "Booru Studio",
   "author": "SaltedShroom",
   "main": "electron-main.js",
