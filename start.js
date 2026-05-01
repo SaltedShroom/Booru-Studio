@@ -11,7 +11,9 @@ console.log('Starting Booru Studio...\n');
 
 let sdProcess = null;
 
-// Start Stable Diffusion in the background
+/*
+// Stable Diffusion support is currently disabled.
+// The code below is retained for reference but not executed.
 if (require('fs').existsSync(SD_WEBUI_BAT)) {
   console.log('🚀 Starting Stable Diffusion WebUI...');
   console.log('   Path:', SD_PATH);
@@ -52,11 +54,9 @@ if (require('fs').existsSync(SD_WEBUI_BAT)) {
     }
   });
 } else {
-  console.warn('⚠ Stable Diffusion not found!');
-  console.warn('   Expected at:', SD_WEBUI_BAT);
-  console.warn('   Please check the path.');
-  console.warn('');
+  // Stable Diffusion support is disabled.
 }
+*/
 
 // Start the image save server using Electron's bundled runtime.
 const saveServer = spawn(process.execPath, [path.join(__dirname, 'server.js')], {

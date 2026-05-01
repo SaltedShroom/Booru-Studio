@@ -1733,39 +1733,51 @@ const server = http.createServer((req, res) => {
     return;
   }
 
-  // Proxy requests to Stable Diffusion API - check this first
+  // Stable Diffusion API proxy disabled
   if (req.url.startsWith('/api/sd/')) {
-    const sdPath = req.url.replace('/api/sd', '');
-    const options = {
-      hostname: '127.0.0.1',
-      port: 7860,
-      path: sdPath,
-      method: req.method,
-      headers: {
-        'Content-Type': 'application/json'
-      }
-    };
-
-    const proxyReq = http.request(options, (proxyRes) => {
-      res.writeHead(proxyRes.statusCode, {
-        'Content-Type': 'application/json',
-        'Access-Control-Allow-Origin': '*'
-      });
-      proxyRes.pipe(res);
+    res.writeHead(404, {
+      'Content-Type': 'application/json',
+      'Access-Control-Allow-Origin': '*'
     });
-
-    proxyReq.on('error', (error) => {
-      res.writeHead(502, { 'Content-Type': 'application/json' });
-      res.end(JSON.stringify({ error: 'Failed to connect to Stable Diffusion API', message: error.message }));
-    });
-
-    if (req.method === 'POST') {
-      req.pipe(proxyReq);
-    } else {
-      proxyReq.end();
-    }
+    res.end(JSON.stringify({
+      error: 'Stable Diffusion support is disabled',
+      message: 'The Stable Diffusion API proxy is disabled in this build.'
+    }));
     return;
   }
+
+  /*
+  const sdPath = req.url.replace('/api/sd', '');
+  const options = {
+    hostname: '127.0.0.1',
+    port: 7860,
+    path: sdPath,
+    method: req.method,
+    headers: {
+      'Content-Type': 'application/json'
+    }
+  };
+
+  const proxyReq = http.request(options, (proxyRes) => {
+    res.writeHead(proxyRes.statusCode, {
+      'Content-Type': 'application/json',
+      'Access-Control-Allow-Origin': '*'
+    });
+    proxyRes.pipe(res);
+  });
+
+  proxyReq.on('error', (error) => {
+    res.writeHead(502, { 'Content-Type': 'application/json' });
+    res.end(JSON.stringify({ error: 'Failed to connect to Stable Diffusion API', message: error.message }));
+  });
+
+  if (req.method === 'POST') {
+    req.pipe(proxyReq);
+  } else {
+    proxyReq.end();
+  }
+  return;
+  */
 
   if (req.method === 'POST' && req.url === '/save-image') {
     let body = '';
@@ -1902,6 +1914,14 @@ const server = http.createServer((req, res) => {
         }
       });
   } else if (req.method === 'GET' && req.url === '/check-sd-status') {
+    // Stable Diffusion status checks are disabled
+    res.writeHead(200, {
+      'Content-Type': 'application/json',
+      'Access-Control-Allow-Origin': '*'
+    });
+    res.end(JSON.stringify({ ready: false, status: 'disabled' }));
+  } else if (req.method === 'GET' && req.url.startsWith('/proxy-booru')) {
+  /*
     // Check if Stable Diffusion is responding
     const sdHttp = require('http');
     const sdReq = sdHttp.get('http://localhost:7860', (sdRes) => {
@@ -1915,6 +1935,7 @@ const server = http.createServer((req, res) => {
     });
     
     sdReq.setTimeout(1000);
+  */
   } else if (req.method === 'GET' && req.url.startsWith('/proxy-booru')) {
     // Proxy booru API requests to avoid CORS
     
@@ -2272,6 +2293,167 @@ const server = http.createServer((req, res) => {
     res.setHeader('Access-Control-Allow-Origin', '*');
     res.writeHead(200, { 'Content-Type': 'application/json' });
     res.end(JSON.stringify({ folder: downloadFolder }));
+  } else if (req.method === 'POST' && req.url === '/api/generate-mosaic') {
+    res.setHeader('Access-Control-Allow-Origin', '*');
+    res.setHeader('Access-Control-Allow-Methods', 'POST, OPTIONS');
+    res.setHeader('Access-Control-Allow-Headers', 'Content-Type');
+
+    if (req.method === 'OPTIONS') {
+      res.writeHead(200);
+      res.end();
+      return;
+    }
+
+    let body = '';
+    req.on('data', chunk => body += chunk.toString());
+    req.on('end', async () => {
+      try {
+        const {
+          imageBase64,
+          filename,
+          cellWidth = 50,
+          cellHeight = 50,
+          columns = 100,
+          rows = 100
+        } = JSON.parse(body);
+
+        if (!imageBase64) {
+          throw new Error('Missing image data');
+        }
+        if (!downloadFolder) {
+          throw new Error('Download folder not set');
+        }
+
+        const outputWidth = Number(cellWidth) * Number(columns);
+        const outputHeight = Number(cellHeight) * Number(rows);
+        const maxPixels = 16_000_000;
+        if (outputWidth * outputHeight > maxPixels) {
+          throw new Error(`Requested mosaic is too large (${outputWidth}x${outputHeight} = ${outputWidth * outputHeight} pixels). Reduce columns, rows, or cell size to keep output under ${maxPixels.toLocaleString()} pixels.`);
+        }
+
+        const mosaicModule = require('mosaic-node-generator');
+        const inputDir = path.join(downloadFolder, 'mosaic-test-inputs');
+        const outputsDir = path.join(downloadFolder, 'outputs');
+        const thumbsDir = path.join(downloadFolder, `mosaic-thumbs-${Number(cellWidth)}x${Number(cellHeight)}`);
+        const tilesDir = path.join(downloadFolder, 'mosaic-tiles');
+
+        if (!fs.existsSync(inputDir)) fs.mkdirSync(inputDir, { recursive: true });
+        if (!fs.existsSync(outputsDir)) fs.mkdirSync(outputsDir, { recursive: true });
+        if (!fs.existsSync(thumbsDir)) fs.mkdirSync(thumbsDir, { recursive: true });
+
+        if (fs.existsSync(tilesDir)) {
+          fs.rmSync(tilesDir, { recursive: true, force: true });
+        }
+        fs.mkdirSync(tilesDir, { recursive: true });
+
+        const supportedExts = new Set(['.jpg', '.jpeg', '.png', '.webp', '.gif', '.bmp']);
+        const downloadFiles = fs.readdirSync(downloadFolder);
+        const supportedTiles = [];
+        for (const filenameEntry of downloadFiles) {
+          const sourcePath = path.join(downloadFolder, filenameEntry);
+          const stat = fs.statSync(sourcePath);
+          if (!stat.isFile()) continue;
+          const ext = path.extname(filenameEntry).toLowerCase();
+          if (!supportedExts.has(ext)) continue;
+          supportedTiles.push(filenameEntry);
+        }
+
+        if (supportedTiles.length === 0) {
+          throw new Error('No supported image tiles found in download folder');
+        }
+
+        const maxTiles = 500;
+        let selectedTiles = supportedTiles;
+        if (supportedTiles.length > maxTiles) {
+          console.log(`[mosaic] found ${supportedTiles.length} supported tiles, limiting to ${maxTiles} selected tiles to reduce memory usage`);
+          selectedTiles = supportedTiles.sort(() => 0.5 - Math.random()).slice(0, maxTiles);
+        }
+
+        let tileCount = 0;
+        for (const filenameEntry of selectedTiles) {
+          const sourcePath = path.join(downloadFolder, filenameEntry);
+          const destPath = path.join(tilesDir, filenameEntry);
+          try {
+            fs.linkSync(sourcePath, destPath);
+          } catch (err) {
+            try {
+              fs.copyFileSync(sourcePath, destPath);
+            } catch (copyErr) {
+              console.warn('Failed to link or copy tile file:', sourcePath, copyErr.message || copyErr);
+              continue;
+            }
+          }
+          tileCount++;
+        }
+
+        if (tileCount === 0) {
+          throw new Error('Failed to stage any tile images for mosaic generation');
+        }
+
+        console.log('[mosaic] tilesDir:', tilesDir, 'tileCount:', tileCount);
+        console.log('[mosaic] thumbsDir:', thumbsDir, 'exists:', fs.existsSync(thumbsDir));
+
+        const inputName = filename ? path.basename(filename) : `mosaic-input-${Date.now()}.png`;
+        const inputPath = path.join(inputDir, inputName);
+        let rawData = imageBase64;
+        if (rawData.startsWith('data:')) {
+          rawData = rawData.substring(rawData.indexOf(',') + 1);
+        }
+        const buffer = Buffer.from(rawData, 'base64');
+        fs.writeFileSync(inputPath, buffer);
+
+        let thumbsDirectoryFromRead = null;
+        const thumbsFiles = fs.readdirSync(thumbsDir).filter(file => {
+          const full = path.join(thumbsDir, file);
+          return fs.statSync(full).isFile();
+        });
+        if (thumbsFiles.length > 0) {
+          thumbsDirectoryFromRead = thumbsDir;
+        }
+
+        console.log('[mosaic] thumbsDirectoryFromRead:', thumbsDirectoryFromRead ? thumbsDir : 'none', 'thumbs count:', thumbsFiles.length);
+
+        const sourceJimp = await mosaicModule.JimpImage.read(inputPath);
+        const sourceImage = new mosaicModule.JimpImage(sourceJimp);
+        const mosaicImage = new mosaicModule.MosaicImage(
+          sourceImage,
+          tilesDir,
+          Number(cellWidth),
+          Number(cellHeight),
+          Number(columns),
+          Number(rows),
+          thumbsDirectoryFromRead,
+          thumbsDir,
+          false
+        );
+
+        const originalCwd = process.cwd();
+        process.chdir(downloadFolder);
+        console.log('[mosaic] starting generate, cwd:', process.cwd());
+        await mosaicImage.generate();
+        process.chdir(originalCwd);
+        console.log('[mosaic] generate completed, cwd restored to:', process.cwd());
+
+        const results = fs.readdirSync(outputsDir)
+          .filter(file => /^output_.*\.(jpg|jpeg|png)$/i.test(file))
+          .map(file => ({
+            name: file,
+            mtime: fs.statSync(path.join(outputsDir, file)).mtimeMs
+          }))
+          .sort((a, b) => b.mtime - a.mtime);
+
+        if (results.length === 0) {
+          throw new Error('Mosaic output file not found');
+        }
+
+        res.writeHead(200, { 'Content-Type': 'application/json' });
+        res.end(JSON.stringify({ success: true, filename: `outputs/${results[0].name}` }));
+      } catch (error) {
+        console.error('Mosaic generation failed:', error);
+        res.writeHead(500, { 'Content-Type': 'application/json' });
+        res.end(JSON.stringify({ success: false, error: error.message || String(error) }));
+      }
+    });
   } else if (req.method === 'GET' && req.url.startsWith('/api/list-files')) {
     try {
       const parsedUrl = new URL(req.url, 'http://localhost');
@@ -2513,9 +2695,14 @@ const server = http.createServer((req, res) => {
       return;
     }
     
-    // Sanitize filename to prevent directory traversal
-    const sanitizedFilename = path.basename(filename);
-    const filepath = path.join(downloadFolder, sanitizedFilename);
+    // Sanitize path to prevent directory traversal
+    const safePath = path.normalize(filename).replace(/^([\/]+|\.\.([\/]|$))+/, '');
+    const filepath = path.join(downloadFolder, safePath);
+    if (!filepath.startsWith(downloadFolder + path.sep) && filepath !== downloadFolder) {
+      res.writeHead(400, { 'Content-Type': 'application/json' });
+      res.end(JSON.stringify({ error: 'Invalid file path' }));
+      return;
+    }
     
     if (!fs.existsSync(filepath)) {
       res.writeHead(404, { 'Content-Type': 'application/json' });

@@ -3079,8 +3079,7 @@ async function fetchArtistForPost(postId, sourceId, tags) {
   try {
     const sourceConfig = booruSourcesManager.getSource(sourceId);
     if (!sourceConfig || !sourceConfig.artist?.tagApiUrl) {
-      console.warn(`No artist tag API configured for source: ${sourceId}`);
-      return [];
+      return ['Unknown'];
     }
 
     let tagList = [];
@@ -4562,10 +4561,17 @@ function createPreviewAuthorTag(mediaElement, artistName) {
   return authorTag;
 }
 
-function autoClickUnknownPreviewAuthor(postId) {
+function autoClickUnknownPreviewAuthor(postId, sourceId) {
   if (!postId) return;
   const authorTag = booruPreviewAuthor.querySelector('.author-tag');
   if (!authorTag) return;
+  if (authorTag.textContent.trim() !== '?') return;
+  // check if booru Source has tag API configured before attempting to fetch artist (prevents unnecessary loading indicator for sources without tag API)
+  const sourceConfig = booruSourcesManager.getSource(sourceId || window.currentBooruSource);
+  if (!sourceConfig || !sourceConfig.artist?.tagApiUrl) {
+    authorTag.textContent = 'Unknown';
+    return;
+  }
   if (authorTag.textContent.trim() !== '?') return;
   authorTag.innerHTML = '<i class="fas fa-circle-notch fa-spin"></i>';
   if (activeArtistRequests.has(postId)) return;
@@ -5298,7 +5304,8 @@ function showPreviewForElement(mediaElement, forceVideoLoad = false) {
   
   booruHoverPreview.classList.add('active');
   const previewPostId = mediaElement.closest('.booru-image-item')?.dataset.postId;
-  autoClickUnknownPreviewAuthor(previewPostId);
+  const previewPostSource = mediaElement.closest('.booru-image-item')?.dataset.postSource;
+  autoClickUnknownPreviewAuthor(previewPostId, previewPostSource);
 }
 
 

@@ -77,10 +77,11 @@ function startServer() {
   });
 }
 
-// ─── Stable Diffusion (optional) ───────────────────────────────────────────
-
+// ─── Stable Diffusion support is currently disabled. ─────────────────────────
 
 function startStableDiffusion() {
+  return;
+  /*
   const SD_PATH = path.join(__dirname, '..', 'STABLE DIFFUSION');
   const SD_WEBUI_BAT = path.join(SD_PATH, 'webui-user.bat');
 
@@ -114,6 +115,7 @@ function startStableDiffusion() {
   sdProcess.on('error', (err) => {
     console.error('❌ Failed to start Stable Diffusion:', err.message);
   });
+  */
 }
 
 // ─── Launcher window ────────────────────────────────────────────────────

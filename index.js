@@ -975,6 +975,7 @@ function hideLoadingOverlay() {
 const sdLoadingOverlay = document.getElementById('sd-loading-overlay');
 const sdStatusText = document.getElementById('sd-status-text');
 
+/*
 async function checkSDStatus() {
   try {
     const res = await fetch('http://localhost:3001/check-sd-status');
@@ -1054,6 +1055,27 @@ async function initSDCheck() {
 }
 
 // Start checking SD status
+initSDCheck();
+*/
+
+async function checkSDStatus() {
+  return false;
+}
+
+let sdCheckCount = 0;
+const sdProgressSteps = document.getElementById('sd-progress-steps');
+
+async function pollSDStatus() {
+  // Stable Diffusion polling disabled.
+  return false;
+}
+
+async function initSDCheck() {
+  // Stable Diffusion support is disabled; skip status checks.
+  return false;
+}
+
+// Start checking SD status (disabled)
 initSDCheck();
 
 // Load checkpoints from backend
@@ -2244,6 +2266,12 @@ function deleteImage() {
 
 // Generation loop
 async function startGenerationLoop() {
+  const errorMsg = 'Stable Diffusion support is disabled in this build. Generation is unavailable.';
+  console.error(errorMsg);
+  showToast(errorMsg, 'error');
+  generating = false;
+  return;
+  /*
   while(generating) {
     const cfgFile = jsonDropdown.value;
     try {
@@ -2429,6 +2457,8 @@ async function startGenerationLoop() {
 
     await new Promise(r => setTimeout(r, 1000));
   }
+}
+*/
 }
 
 // Config Editor Functions
