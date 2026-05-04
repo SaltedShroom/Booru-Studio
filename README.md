@@ -6,6 +6,10 @@
 
 Booru Studio is an Electron-based desktop application for browsing and managing booru-style image sources. It is developed and maintained by SaltedShroom.
 
+
+<img width="850" height="463" alt="preview1" src="https://github.com/user-attachments/assets/c13e735d-b019-4c40-81f1-3073233fcf6e" />
+
+
 ## Overview
 
 - Electron app with a local UI for booru browsing, search, and gallery management
@@ -21,6 +25,12 @@ Booru Studio is an Electron-based desktop application for browsing and managing 
 - Proxy support via HTTP/SOCKS agents
 - Fast image handling and dynamic gallery layouts
 - Integrated download management interface & tools
+
+
+
+<img width="850" height="466" alt="preview2" src="https://github.com/user-attachments/assets/937e9ed1-ba12-4456-b088-1d47aba1793b" />
+
+
 
 ## User setup
 
@@ -39,6 +49,12 @@ Booru Studio is an Electron-based desktop application for browsing and managing 
 - Releases are published through GitHub releases
 - The app will display an update button automatically when a newer release is available
 - User data, downloaded files, and custom settings are preserved during updates and will not be overwritten
+
+
+
+<img width="850" height="466" alt="preview3" src="https://github.com/user-attachments/assets/4776bb85-5679-487a-a649-1bae582890f9" />
+
+
 
 ## Notes
 
