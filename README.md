@@ -61,8 +61,8 @@ The goal with Booru Studio is to provide an all-in-one app that simplifies acces
 
 ## Notes
 
-- This is a solo-maintained project by SaltedShroom and will remain as such for the time beeing
-- monetization options may be maintained or be added to make continued development sustainable
+> This is a solo-maintained project by SaltedShroom and will remain as such for the time beeing
+> monetization options may be maintained or be added to make continued development sustainable
 
 ## License
 
