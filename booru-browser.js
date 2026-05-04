@@ -1934,6 +1934,10 @@ function initBooruBrowser() {
                     }
                   });
 
+                  if (authorTag.textContent == 'Unknown') {
+                    authorTag.classList.add('unknown-artist');
+                  }
+
                   authorContainer.appendChild(authorTag);
                 }
               }
@@ -2998,7 +3002,7 @@ async function loadRedditBooru(append) {
   
   // Normalize to booru format
   let normalizedPosts = imagePosts.map(post => ({
-    id: post.data.id,
+    id: normalizePostId(post.data.id),
     imageUrl: post.data.url,
     thumbnailUrl: post.data.thumbnail !== 'default' ? post.data.thumbnail : post.data.url,
     tags: post.data.title ? post.data.title.toLowerCase().split(/\s+/).map(decodeHtmlEntities) : [],
@@ -3161,7 +3165,7 @@ async function loadGenericBooru(sourceId, append) {
     
     if (!userId || !apiKey) {
       booruGallery.innerHTML = `<div style="color: var(--text-secondary); text-align: center; padding: 40px;">Please enter your API key and User ID for ${sourceConfig.name}<br><small>${sourceConfig.auth.helpText || 'Get yours from your account settings'}</small></div>`;
-      showToast(`API key required for ${sourceConfig.name}`, 'error');
+      showToast(`Authentication required for ${sourceConfig.name}: enter User ID and API key`, 'warning');
       return;
     }
   }
@@ -3535,6 +3539,12 @@ function resolveField(obj, path) {
   return path.split('.').reduce((cur, key) => (cur != null && typeof cur === 'object' ? cur[key] : undefined), obj);
 }
 
+function normalizePostId(id) {
+  if (id == null) return '';
+  const normalized = String(id);
+  return normalized.replace(/\.0+$/, '');
+}
+
 /**
  * Parse posts from response based on config
  */
@@ -3684,7 +3694,7 @@ function normalizePosts(posts, sourceConfig) {
     };
 
     return {
-      id: post.id,
+      id: normalizePostId(post.id),
       imageUrl: constructUrl(resolveField(post, sourceConfig.fields.imageUrl), 'image'),  // Full quality
       thumbnailUrl: constructUrl(resolveField(post, sourceConfig.fields.previewUrl) || resolveField(post, sourceConfig.fields.sampleUrl) || resolveField(post, sourceConfig.fields.imageUrl), 'thumbnail'),
       sampleUrl: constructUrl(resolveField(post, sourceConfig.fields.sampleUrl), 'sample'),  // Medium quality
@@ -3717,8 +3727,8 @@ function updateTotalCountDisplay() {
 
 // Render booru gallery using Justified Gallery
 function renderBooruGallery(posts, append = true, addSeparators = true) {
-// Expose globally for use in other scripts
-window.renderBooruGallery = renderBooruGallery;
+  // Expose globally for use in other scripts
+  window.renderBooruGallery = renderBooruGallery;
 
   if (!booruGallery) return;
 
@@ -3844,7 +3854,7 @@ function createBooruImageElement(post, maxHeight = null, imageWidth = null) {
   link.dataset.score = post.score || 0;
   link.dataset.tags = post.tags ? post.tags.join(' ') : '';
   link.dataset.artist = Array.isArray(post.artist) ? post.artist.join(', ') : (post.artist || (post.artists ? post.artists.join(', ') : 'Unknown'));
-  link.dataset.postId = post.id;
+  link.dataset.postId = normalizePostId(post.id);
   link.dataset.postSource = post.source;
   const aspectRatio = post.aspectRatio || 1;
   link.dataset.aspectRatio = aspectRatio;
@@ -3902,6 +3912,7 @@ function createBooruImageElement(post, maxHeight = null, imageWidth = null) {
     mediaElement.dataset.author = Array.isArray(post.artist) ? post.artist.join(', ') : (post.artist || post.author || 'Unknown');
     mediaElement.dataset.title = post.title || '';
     mediaElement.dataset.createdAt = post.createdAt || '';
+
     if (typeof dataIndex !== 'undefined') {
       mediaElement.setAttribute('data-index', dataIndex);
     }
@@ -3968,6 +3979,8 @@ function createBooruImageElement(post, maxHeight = null, imageWidth = null) {
     }
     mediaElement.dataset.tags = post.tags.join(' ');
     mediaElement.dataset.author = Array.isArray(post.artist) ? post.artist.join(', ') : (post.artist || post.author || 'Unknown');
+    mediaElement.dataset.title = post.title || '';
+    mediaElement.dataset.createdAt = post.createdAt || '';
 
     if (useHighQuality) {
       mediaElement.dataset.currentQualityUrl = getImageUrl(post.imageUrl);
@@ -3977,6 +3990,9 @@ function createBooruImageElement(post, maxHeight = null, imageWidth = null) {
     }
     if (url.endsWith('.gif') || url.includes('.gif?')) {
       mediaElement.dataset.isGif = 'true';
+    }
+    if (typeof dataIndex !== 'undefined') {
+      mediaElement.setAttribute('data-index', dataIndex);
     }
     
     mediaElement.addEventListener('load', () => {
@@ -4273,12 +4289,6 @@ function createBooruImageElement(post, maxHeight = null, imageWidth = null) {
   return link;
 }
 
-// Fast version for virtual gallery - accepts custom size
-function createBooruImageElementFast(post) {
-  if (post?.imageUrl === undefined) return; // Skip posts without imageUrl
-  return createBooruImageElement(post, null, null);
-}
-
 function openBooruLightbox(imageUrl) {
   // Build array of all booru image URLs for navigation and autoplay
   redditLightboxImages = (window.booruPosts || []).map(post => getImageUrl(post.imageUrl));
@@ -4558,6 +4568,10 @@ function createPreviewAuthorTag(mediaElement, artistName) {
     }
   });
 
+  if (authorTag.textContent == 'Unknown') {
+    authorTag.classList.add('unknown-artist');
+  }
+
   return authorTag;
 }
 
@@ -4570,6 +4584,7 @@ function autoClickUnknownPreviewAuthor(postId, sourceId) {
   const sourceConfig = booruSourcesManager.getSource(sourceId || window.currentBooruSource);
   if (!sourceConfig || !sourceConfig.artist?.tagApiUrl) {
     authorTag.textContent = 'Unknown';
+    authorTag.classList.add('unknown-artist');
     return;
   }
   if (authorTag.textContent.trim() !== '?') return;

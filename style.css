@@ -27,6 +27,7 @@
   --global-gap: clamp(12px, 1vw, 20px);
   --sidebar-width: clamp(260px, 22vw, 320px);
   --config-panel-width: clamp(240px, 20vw, 300px);
+  --adverts-width: clamp(200px, 25vw, 300px);
 }
 
 :root.light-mode {
@@ -67,7 +68,60 @@ body, html {
   font-size: clamp(13px, 0.9vw, 16px);
 }
 
-#app { height: 100%; display: flex; flex-direction: column; }
+.app-container {
+  height: 100%;
+  width: 100%;
+  display: flex;
+  overflow: hidden;
+}
+#app {
+  position: relative;
+  flex: 1 1 auto;
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+}
+#adverts {
+  position: relative;
+  flex: 0 0 0px;
+  transform: translateX(2px);
+  display: flex;
+  flex-direction: column;
+  background: var(--bg-darkest);
+  border-left: solid 2px var(--border);
+  box-sizing: border-box;
+  padding: 0;
+  transition: flex 1s ease, transform 1s ease, padding 1s ease;
+}
+#adverts.active {
+  flex: 0 0 var(--adverts-width);
+  transform: translateX(0px);
+  padding: 26px;
+}
+#adverts button {
+  position: fixed;
+  cursor: pointer;
+  top: 0;
+  right: 0;
+  font-size: 18px;
+  background-color: var(--bg-dark);
+  color: var(--text-secondary);
+  z-index: 8000;
+  border: solid 1px var(--border);
+  outline: none;
+  margin: 6px;
+  margin-right: 0;
+  box-shadow: 0 0 4px var(--control-bar-shadow);
+  transform: rotate(180deg);
+}
+#adverts button:hover {
+  background-color: var(--bg-medium);
+  color: var(--text-primary);
+}
+#adverts.active button {
+  transform: rotate(0deg);
+}
+
 
 /* Navbar */
 .navbar {
@@ -273,6 +327,7 @@ body, html {
   font-size: 14px;
   font-weight: 500;
   height: 35px;
+  text-wrap: nowrap;
   transition: all 0.2s;
 }
 
@@ -1790,12 +1845,13 @@ body, html {
 /* Scrollbar */
 ::-webkit-scrollbar { width: 8px; height: 8px; }
 ::-webkit-scrollbar-track { background: var(--bg-medium); }
-::-webkit-scrollbar-thumb { background: var(--border); border-radius: 4px; }
-::-webkit-scrollbar-thumb:hover { background: var(--surface-hover); }
+::-webkit-scrollbar-thumb { background: var(--border); }
+::-webkit-scrollbar-thumb:hover { background: var(--border); }
+::-webkit-scrollbar-thumb:active { background: var(--border); }
 
 /* custom console scrollbar */
 .console-content::-webkit-scrollbar-track { background: #0d0d0e; }
-.console-content::-webkit-scrollbar-thumb { background: #444; border-radius: 4px; }
+.console-content::-webkit-scrollbar-thumb { background: #444; }
 .console-content::-webkit-scrollbar-thumb:hover { background: #666; }
 
 /* Lightbox Modal */
@@ -3151,6 +3207,12 @@ body, html {
   justify-content: center;
 }
 
+.booru-tag.unknown-artist {
+  color: var(--text-secondary);
+  background-color: var(--surface-hover);
+  outline-color: var(--text-secondary);
+}
+
 .booru-tag.artist {
   background: #e9459633;
   color: var(--accent);
@@ -3582,7 +3644,7 @@ body, html {
 }
 
 .booru-gallery-counter {
-  position: fixed;
+  position: absolute;
   align-self: flex-end;
   justify-self: flex-end;
   right: 6px;
@@ -4623,17 +4685,17 @@ textarea.settings-input {
 }
 
 .app-title {
-  font-size: 100px;
+  font-size: clamp(60px, 8vw, 100px);
   position: relative;
-  margin-bottom: 160px;
-  margin-top: 100px;
+  margin-bottom: clamp(80px, 12vw, 160px);
+  margin-top: clamp(50px, 8vw, 100px);
 }
 
 .app-title img {
-  min-width: 110px;
-  min-height: 110px;
-  height: 110px;
-  width: 110px;
+  min-width: clamp(70px, 8vw, 110px);
+  min-height: clamp(70px, 8vw, 110px);
+  width: clamp(70px, 8vw, 110px);
+  height: clamp(70px, 8vw, 110px);
   box-shadow: 0 5px 20px var(--control-bar-shadow), 0 5px 0 var(--accent-hover);
   border-radius: 12px;
 }
@@ -4659,6 +4721,7 @@ textarea.settings-input {
   position: relative;
   width: 120px;
   height: 120px;
+  scale: clamp(0.65, 12vw, 1);
 }
 
 .pl__ring {
@@ -4696,7 +4759,7 @@ textarea.settings-input {
 
 #app-loading-status {
   margin: 22px 0 0;
-  font-size: 15px;
+  font-size: clamp(10px, 12vw, 15px);
   color: var(--text-secondary);
   font-family: var(--font);
   letter-spacing: 0.02em;
@@ -4704,7 +4767,7 @@ textarea.settings-input {
 
 #app-loading-detail {
   margin: 5px 0 0;
-  font-size: 12px;
+  font-size: clamp(8px, 12vw, 12px);
   color: var(--text-secondary);
   font-family: var(--font);
   opacity: 0.55;
@@ -4757,13 +4820,14 @@ textarea.settings-input {
   display: flex;
   flex-wrap: nowrap;
   align-items: center;
-  height: 200px;
+  height: clamp(100px, 12vw, 200px);
   transition: height 1.2s ease;
+  transform: translateY(4px);
   transition-delay: 0.5s;
 }
 
 .app-loading-download-count.loaded {
-  height: 100px;
+  height: clamp(60px, 12vw, 100px);
 }
 
 .window-zoom-controls {

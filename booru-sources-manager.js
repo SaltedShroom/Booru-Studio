@@ -66,7 +66,8 @@ class BooruSourcesManager {
           jsonSupport: true,
           limitParam: "limit",
           pageParam: "pid",
-          tagsParam: "tags"
+          tagsParam: "tags",
+          pageStart: 0
         },
         response: {
           countParser: "xmlRegex",
@@ -78,30 +79,211 @@ class BooruSourcesManager {
           previewUrl: "preview_url",
           sampleUrl: "sample_url",
           tags: "tags",
+          artistTag: "",
           createdAt: "change",
           dateType: "timestamp",
-          tagsFilter: ""
+          tagsFilter: "\\+",
+          width: "",
+          height: "",
+          partialUrls: false,
+          useUrlTemplates: false
         },
         sort: {
           scoreMethod: "tags"
         },
         safeMode: {
+          required: false
+        },
+        artist: {
+          tagApiUrl: "",
+          tagTypeKeyPath: "type",
+          artistTypeValue: "1",
+          tagSeparator: " ",
+          postUrlPattern: ""
+        },
+        ui: {
+          defaultSort: "new",
+          defaultLimit: 100,
+          requiresProxy: false
+        },
+        cookies: "",
+        userAgent: ""
+      },
+      {
+        id: "e621",
+        name: "e621.net",
+        baseUrl: "https://e621.net",
+        auth: {
+          required: false
+        },
+        api: {
+          basePath: "/posts.json",
+          jsonSupport: true,
+          limitParam: "limit",
+          pageParam: "page",
+          tagsParam: "tags",
+          pageStart: 1
+        },
+        response: {
+          countParser: "json",
+          countPath: "",
+          wrapper: "posts"
+        },
+        fields: {
+          imageUrl: "file.url",
+          previewUrl: "preview.url",
+          sampleUrl: "sample.url",
+          tags: "tags",
+          artistTag: "tags.artist",
+          createdAt: "created_at",
+          dateType: "dateString",
+          tagsFilter: "",
+          width: "file.width",
+          height: "file.height",
+          partialUrls: false,
+          useUrlTemplates: false
+        },
+        sort: {
+          scoreMethod: "none"
+        },
+        safeMode: {
+          required: false
+        },
+        artist: {
+          tagApiUrl: "",
+          tagTypeKeyPath: "type",
+          artistTypeValue: "1",
+          tagSeparator: " ",
+          postUrlPattern: ""
+        },
+        ui: {
+          defaultSort: "new",
+          defaultLimit: 100,
+          requiresProxy: false
+        },
+        cookies: "",
+        userAgent: ""
+      },
+      {
+        id: "rule34",
+        name: "Rule34.xxx",
+        baseUrl: "https://rule34.xxx",
+        apiUrl: "https://api.rule34.xxx",
+        auth: {
           required: true,
-          url: "https://bbooru.com/index.php?page=account&s=safe_mode&set=adult",
-          delay: 500
+          userIdKey: "user_id",
+          apiKeyKey: "api_key",
+          helpText: "Get your credentials from Rule34 account settings",
+          userId: "",
+          apiKey: ""
+        },
+        api: {
+          basePath: "/index.php?page=dapi&s=post&q=index",
+          jsonSupport: true,
+          limitParam: "limit",
+          pageParam: "pid",
+          tagsParam: "tags",
+          pageStart: 0
+        },
+        response: {
+          countParser: "xmlDom",
+          countPath: "posts/@count",
+          wrapper: ""
+        },
+        fields: {
+          imageUrl: "file_url",
+          previewUrl: "preview_url",
+          sampleUrl: "sample_url",
+          tags: "tags",
+          artistTag: "",
+          createdAt: "change",
+          dateType: "timestamp",
+          tagsFilter: "",
+          width: "",
+          height: "",
+          partialUrls: false,
+          useUrlTemplates: false
+        },
+        sort: {
+          scoreMethod: "tags"
+        },
+        safeMode: {
+          required: false
+        },
+        artist: {
+          tagApiUrl: "",
+          tagTypeKeyPath: "type",
+          artistTypeValue: "1",
+          tagSeparator: " ",
+          postUrlPattern: ""
+        },
+        ui: {
+          defaultSort: "new",
+          defaultLimit: 100,
+          requiresProxy: false
+        },
+        cookies: "",
+        userAgent: ""
+      },
+      {
+        id: "gelbooru",
+        name: "gelbooru.com",
+        baseUrl: "https://gelbooru.com",
+        auth: {
+          required: true,
+          userIdKey: "user_id",
+          apiKeyKey: "api_key",
+          helpText: "Get your credentials from Gelbooru account settings",
+          userId: "",
+          apiKey: ""
+        },
+        api: {
+          basePath: "/index.php?page=dapi&s=post&q=index&json=1",
+          jsonSupport: true,
+          limitParam: "limit",
+          pageParam: "pid",
+          tagsParam: "tags",
+          pageStart: 0
+        },
+        response: {
+          countParser: "json",
+          countPath: "@attributes.count",
+          wrapper: ""
+        },
+        fields: {
+          imageUrl: "file_url",
+          previewUrl: "preview_url",
+          sampleUrl: "sample_url",
+          tags: "tags",
+          artistTag: "tags.artist",
+          createdAt: "change",
+          dateType: "timestamp",
+          tagsFilter: "\\+",
+          width: "",
+          height: "",
+          partialUrls: false,
+          useUrlTemplates: false
+        },
+        sort: {
+          scoreMethod: "tags"
+        },
+        safeMode: {
+          required: false
         },
         artist: {
           tagApiUrl: "/index.php?page=dapi&s=tag&q=index&json=1&names={tags}",
           tagTypeKeyPath: "type",
           artistTypeValue: "1",
           tagSeparator: " ",
-          postUrlPattern: "/index.php?page=post&s=view&id={id}"
+          postUrlPattern: ""
         },
         ui: {
           defaultSort: "new",
           defaultLimit: 100,
           requiresProxy: false
-        }
+        },
+        cookies: "",
+        userAgent: ""
       }
     ];
   }

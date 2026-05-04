@@ -11,6 +11,8 @@ const rightArrow = imageContainer.querySelector('.right-arrow');
 const deleteBtn = imageContainer.querySelector('.delete-btn');
 const appVersionEl = document.getElementById('app-version');
 const updateBtn = document.getElementById('update-btn');
+const advertButton = document.getElementById('toggleAdverts');
+const advertsContainer = document.getElementById('adverts');
 
 // Settings management
 const settingsBtn = document.getElementById('settings-btn');
@@ -238,6 +240,21 @@ function applyTheme(themeSetting) {
   updateThemeToggleIcon(themeSetting);
 }
 
+function compareVersionStrings(a, b) {
+  if (!a || !b) return 0;
+  const partsA = a.split('.').map(Number);
+  const partsB = b.split('.').map(Number);
+  const length = Math.max(partsA.length, partsB.length);
+
+  for (let i = 0; i < length; i++) {
+    const va = Number.isFinite(partsA[i]) ? partsA[i] : 0;
+    const vb = Number.isFinite(partsB[i]) ? partsB[i] : 0;
+    if (va > vb) return 1;
+    if (va < vb) return -1;
+  }
+  return 0;
+}
+
 async function initVersionCheck() {
   const defaultAppVersion = '0.0.0';
   let appVersion = defaultAppVersion;
@@ -271,8 +288,12 @@ async function initVersionCheck() {
     }
 
     const remoteVersion = result?.remoteVersion || result?.updateInfo?.version || null;
-    const isUpdateAvailable = Boolean(remoteVersion && remoteVersion !== appVersion);
+    const versionComparison = remoteVersion ? compareVersionStrings(remoteVersion, appVersion) : 0;
+    const isUpdateAvailable = versionComparison === 1;
     if (updateBtn) {
+      if (isUpdateAvailable && remoteVersion) {
+        updateBtn.innerHTML = updateBtn.innerHTML + ` v${remoteVersion}`;
+      }
       updateBtn.classList.toggle('active', isUpdateAvailable);
     }
 
@@ -769,6 +790,7 @@ function showToast(message, type = 'info') {
 function showSupportToast() {
   if (!supportToastEnabled || !supportToastEnabled.checked) return;
   const container = document.getElementById('toast-container');
+  if (container.querySelector('.toast-support')) return;
   const toast = document.createElement('div');
   toast.className = 'toast toast-info toast-support';
   toast.innerHTML = `
@@ -1441,7 +1463,7 @@ async function loadSession() {
         updateAppLoadingDownloadCount();
         if (success === true && supportToastEnabled && supportToastEnabled.checked) {
           supportToastSuccessCount += 1;
-          if (supportToastSuccessCount >= 100) {
+          if (supportToastSuccessCount >= 50) {
             supportToastSuccessCount = 0;
             showSupportToast();
           }
@@ -1581,6 +1603,10 @@ toggle.addEventListener('click', () => {
   toggle.classList.toggle('active', generating);
   handle.style.left = generating ? '26px' : '2px';
   if (generating) startGenerationLoop();
+});
+
+advertButton.addEventListener('click', () => {
+  advertsContainer?.classList.toggle('active');
 });
 
 // Log helper

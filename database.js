@@ -48,12 +48,9 @@ async function initDatabase() {
       id TEXT PRIMARY KEY,
       image_url TEXT,
       thumbnail_url TEXT,
-      sample_url TEXT,
       tags TEXT,
-      author TEXT,
       artist TEXT,
       score INTEGER,
-      title TEXT,
       source TEXT,
       aspect_ratio REAL,
       created_at INTEGER,
@@ -70,13 +67,68 @@ async function initDatabase() {
       value TEXT
     );
     
+    CREATE TABLE IF NOT EXISTS tag_suggestions (
+      tag TEXT PRIMARY KEY,
+      sources TEXT NOT NULL
+    );
+  `);
+
+  migrateDownloadedPostsSchema();
+  migrateTagSuggestionsSchema();
+
+  db.exec(`
     CREATE INDEX IF NOT EXISTS idx_downloaded_posts_downloaded_at ON downloaded_posts(downloaded_at);
-    CREATE INDEX IF NOT EXISTS idx_downloaded_posts_author ON downloaded_posts(author);
+    CREATE INDEX IF NOT EXISTS idx_downloaded_posts_artist ON downloaded_posts(artist);
     CREATE INDEX IF NOT EXISTS idx_downloaded_posts_source ON downloaded_posts(source);
   `);
   
   console.log('✓ SQLite database initialized at:', DB_PATH);
   return db;
+}
+
+function migrateDownloadedPostsSchema() {
+  const existingColumns = db.prepare('PRAGMA table_info(downloaded_posts)').all().map(col => col.name);
+  const desiredColumns = ['id', 'image_url', 'thumbnail_url', 'tags', 'artist', 'score', 'source', 'aspect_ratio', 'created_at', 'downloaded_at'];
+  const hasOldColumns = existingColumns.includes('title') || existingColumns.includes('sample_url') || existingColumns.includes('author');
+
+  if (!existingColumns.length || !hasOldColumns) {
+    return;
+  }
+
+  const artistExpr = existingColumns.includes('artist')
+    ? existingColumns.includes('author')
+      ? 'COALESCE(NULLIF(artist, \'\'), author) AS artist'
+      : 'artist'
+    : existingColumns.includes('author')
+      ? 'author AS artist'
+      : 'NULL AS artist';
+
+  const selectColumns = `id, image_url, thumbnail_url, tags, ${artistExpr}, score, source, aspect_ratio, created_at, downloaded_at`;
+
+  db.exec(`
+    CREATE TABLE IF NOT EXISTS downloaded_posts_temp (
+      id TEXT PRIMARY KEY,
+      image_url TEXT,
+      thumbnail_url TEXT,
+      tags TEXT,
+      artist TEXT,
+      score INTEGER,
+      source TEXT,
+      aspect_ratio REAL,
+      created_at INTEGER,
+      downloaded_at INTEGER
+    );
+  `);
+
+  db.exec(`
+    INSERT OR REPLACE INTO downloaded_posts_temp (${desiredColumns.join(', ')})
+    SELECT ${selectColumns} FROM downloaded_posts;
+  `);
+
+  db.exec(`
+    DROP TABLE downloaded_posts;
+    ALTER TABLE downloaded_posts_temp RENAME TO downloaded_posts;
+  `);
 }
 
 // Close database connection
@@ -94,20 +146,17 @@ function saveDownloadedPost(post) {
   
   const stmt = db.prepare(`
     INSERT OR REPLACE INTO downloaded_posts 
-    (id, image_url, thumbnail_url, sample_url, tags, author, artist, score, title, source, aspect_ratio, created_at, downloaded_at)
-    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+    (id, image_url, thumbnail_url, tags, artist, score, source, aspect_ratio, created_at, downloaded_at)
+    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
   `);
   
   stmt.run(
     post.id,
     post.imageUrl || null,
     post.thumbnailUrl || null,
-    post.sampleUrl || null,
     JSON.stringify(post.tags || []),
-    post.author || null,
-    post.artist || null,
+    post.artist || post.author || null,
     post.score || null,
-    post.title || null,
     post.source || null,
     post.aspectRatio || null,
     post.createdAt || null,
@@ -147,14 +196,13 @@ function removeDownloadedPost(id) {
 function searchDownloadedPosts(query) {
   if (!db) throw new Error('Database not initialized');
   
-  // Search by tags, author, or title
   const searchTerm = `%${query}%`;
   const stmt = db.prepare(`
     SELECT * FROM downloaded_posts 
-    WHERE tags LIKE ? OR author LIKE ? OR artist LIKE ? OR title LIKE ?
+    WHERE tags LIKE ? OR artist LIKE ?
     ORDER BY downloaded_at DESC
   `);
-  const rows = stmt.all(searchTerm, searchTerm, searchTerm, searchTerm);
+  const rows = stmt.all(searchTerm, searchTerm);
   
   return rows.map(rowToPost);
 }
@@ -164,10 +212,10 @@ function getDownloadedPostsByArtist(artist) {
   
   const stmt = db.prepare(`
     SELECT * FROM downloaded_posts 
-    WHERE author = ? OR artist = ?
+    WHERE artist = ?
     ORDER BY downloaded_at DESC
   `);
-  const rows = stmt.all(artist, artist);
+  const rows = stmt.all(artist);
   
   return rows.map(rowToPost);
 }
@@ -187,8 +235,8 @@ function bulkImportPosts(posts) {
   
   const stmt = db.prepare(`
     INSERT OR REPLACE INTO downloaded_posts 
-    (id, image_url, thumbnail_url, sample_url, tags, author, artist, score, title, source, aspect_ratio, created_at, downloaded_at)
-    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+    (id, image_url, thumbnail_url, tags, artist, score, source, aspect_ratio, created_at, downloaded_at)
+    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
   `);
   
   const insertMany = db.transaction((posts) => {
@@ -198,12 +246,9 @@ function bulkImportPosts(posts) {
         post.id,
         post.imageUrl || null,
         post.thumbnailUrl || null,
-        post.sampleUrl || null,
         JSON.stringify(post.tags || []),
-        post.author || null,
-        post.artist || null,
+        post.artist || post.author || null,
         post.score || null,
-        post.title || null,
         post.source || null,
         post.aspectRatio || null,
         post.createdAt || null,
@@ -298,12 +343,10 @@ function rowToPost(row) {
     id: row.id,
     imageUrl: row.image_url,
     thumbnailUrl: row.thumbnail_url,
-    sampleUrl: row.sample_url,
     tags: JSON.parse(row.tags || '[]'),
-    author: row.author,
+    author: row.artist,
     artist: row.artist,
     score: row.score,
-    title: row.title,
     source: row.source,
     aspectRatio: row.aspect_ratio,
     createdAt: row.created_at,
@@ -348,25 +391,100 @@ function loadSession() {
 
 function saveTagSuggestions(tagData) {
   if (!db) throw new Error('Database not initialized');
+
+  const deleteStmt = db.prepare('DELETE FROM tag_suggestions');
+  const insertStmt = db.prepare('INSERT OR REPLACE INTO tag_suggestions (tag, sources) VALUES (?, ?)');
   
-  const stmt = db.prepare('INSERT OR REPLACE INTO settings (key, value) VALUES (?, ?)');
-  stmt.run('tag_suggestions', JSON.stringify(tagData));
-  
+  const saveAll = db.transaction((data) => {
+    const tagMap = new Map();
+
+    for (const source of Object.keys(data || {})) {
+      const tags = Array.isArray(data[source]) ? data[source] : [];
+      for (const tag of tags) {
+        if (typeof tag !== 'string' || tag.length === 0) continue;
+        if (!tagMap.has(tag)) tagMap.set(tag, new Set());
+        tagMap.get(tag).add(source);
+      }
+    }
+
+    deleteStmt.run();
+    for (const [tag, sources] of tagMap.entries()) {
+      insertStmt.run(tag, JSON.stringify(Array.from(sources).sort()));
+    }
+  });
+
+  saveAll(tagData);
   return true;
 }
 
 function loadTagSuggestions() {
   if (!db) throw new Error('Database not initialized');
   
-  const stmt = db.prepare('SELECT value FROM settings WHERE key = ?');
-  const row = stmt.get('tag_suggestions');
-  
-  if (row) {
-    return JSON.parse(row.value);
+  const rows = db.prepare('SELECT tag, sources FROM tag_suggestions ORDER BY tag').all();
+  const suggestions = {};
+  for (const row of rows) {
+    let sources;
+    try {
+      sources = JSON.parse(row.sources);
+    } catch (err) {
+      sources = [];
+    }
+    if (!Array.isArray(sources)) {
+      sources = [];
+    }
+
+    for (const source of sources) {
+      if (typeof source !== 'string' || source.length === 0) continue;
+      if (!suggestions[source]) suggestions[source] = [];
+      suggestions[source].push(row.tag);
+    }
   }
-  
-  // Return empty object if none exists
-  return {};
+
+  Object.keys(suggestions).forEach(source => {
+    suggestions[source] = Array.from(new Set(suggestions[source])).sort();
+  });
+  return suggestions;
+}
+
+function migrateTagSuggestionsSchema() {
+  if (!db) throw new Error('Database not initialized');
+
+  const existing = db.prepare('SELECT value FROM settings WHERE key = ?').get('tag_suggestions');
+  if (!existing || !existing.value) {
+    return;
+  }
+
+  let suggestions;
+  try {
+    suggestions = JSON.parse(existing.value);
+  } catch (err) {
+    console.warn('Could not parse existing tag_suggestions JSON:', err);
+    return;
+  }
+
+  if (typeof suggestions !== 'object' || suggestions === null) {
+    return;
+  }
+
+  const tagMap = new Map();
+  for (const source of Object.keys(suggestions)) {
+    const tags = Array.isArray(suggestions[source]) ? suggestions[source] : [];
+    for (const tag of tags) {
+      if (typeof tag !== 'string' || tag.length === 0) continue;
+      if (!tagMap.has(tag)) tagMap.set(tag, new Set());
+      tagMap.get(tag).add(source);
+    }
+  }
+
+  const insertStmt = db.prepare('INSERT OR REPLACE INTO tag_suggestions (tag, sources) VALUES (?, ?)');
+  const insertMany = db.transaction((data) => {
+    for (const [tag, sources] of data.entries()) {
+      insertStmt.run(tag, JSON.stringify(Array.from(sources).sort()));
+    }
+  });
+
+  insertMany(tagMap);
+  db.prepare('DELETE FROM settings WHERE key = ?').run('tag_suggestions');
 }
 
 // ============== Download Settings operations ==============
