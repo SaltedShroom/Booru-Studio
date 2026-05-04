@@ -1,12 +1,20 @@
 <img width="1600" height="470" alt="Banner-small" src="https://github.com/user-attachments/assets/6eedf5b6-1312-4306-b8c0-1965269e55d5" />
 
+<div align="center">
 
+<br>
 
 # Booru Studio
+
+<br>
 
 Booru Studio is an Electron-based desktop and web application developed and maintained by SaltedShroom.
 
 The goal with Booru Studio is to provide an all-in-one app that simplifies access to public image databases by offering a clean, easy-to-use desktop interface for searching, browsing, downloading, and managing images across multiple sources. It makes booru browsing faster and more intuitive, while also keeping galleries, downloads, artists, settings, and proxy support organized in one place.
+
+</div>
+
+<br>
 
 ---
 
@@ -57,7 +65,7 @@ The goal with Booru Studio is to provide an all-in-one app that simplifies acces
 
 <img width="850" height="466" alt="preview3" src="https://github.com/user-attachments/assets/4776bb85-5679-487a-a649-1bae582890f9" />
 
-
+<br>
 
 ## Notes
 
