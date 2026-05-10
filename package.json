@@ -1,6 +1,6 @@
 {
   "name": "Booru-Studio",
-  "version": "1.0.4",
+  "version": "1.0.5",
   "description": "Booru Studio",
   "author": "SaltedShroom",
   "main": "electron-main.js",
@@ -66,6 +66,7 @@
   },
   "dependencies": {
     "better-sqlite3": "^12.9.0",
+    "chart.js": "^4.5.1",
     "electron-updater": "^6.8.3",
     "http-proxy-agent": "^7.0.0",
     "https-proxy-agent": "^7.0.2",

@@ -61,7 +61,6 @@
 </div>
 <div class="app-container">
   <div id="app">
-    <div id="booru-gallery-counter" class="booru-gallery-counter"><span id="booru-counter-current">0</span><br><b>/ <span id="booru-counter-total">0</span></b></div>
     <nav class="navbar">
       <div style="display: flex; align-items: center; gap: 24px; flex: 1;">
         <div class="nav-brand" onclick="window.location.reload()">
@@ -329,7 +328,7 @@
 
           <div class="control-section control-section-slider">
             <div class="section-label">Size</div>
-            <input type="range" id="image-size-slider" class="slider-minimal" min="120" max="500" value="250" step="10">
+            <input type="range" id="image-size-slider" class="slider-minimal" min="100" max="500" value="250" step="10">
             <span id="image-size-value" class="value-display">250px</span>
           </div>
         </div>
@@ -351,14 +350,19 @@
 
       </header>
       
-      <div id="booru-content" class="booru-content">
-        <h1 id="booru-total-count"></h1>
-        <div class="gallery-wrapper" id="gallery-wrapper">
-          <div id="booru-gallery" class="booru-gallery"></div>
-        </div>
-        <div id="booru-loading" class="booru-loading" style="display: none;">
-          <i class="fas fa-circle-notch fa-spin" style="font-size: 48px; color: var(--accent);"></i>
-          <span style="margin-top: 16px;">Loading...</span>
+      <div id="app-content" class="app-content">
+        <div class="booru-content-wrapper">
+          <div id="booru-content" class="booru-content">
+            <h1 id="booru-total-count"></h1>
+            <div class="gallery-wrapper" id="gallery-wrapper">
+              <div id="booru-gallery" class="booru-gallery"></div>
+            </div>
+            <div id="booru-loading" class="booru-loading" style="display: none;">
+              <i class="fas fa-circle-notch fa-spin" style="font-size: 48px; color: var(--accent);"></i>
+              <span style="margin-top: 16px;">Loading...</span>
+            </div>
+          </div>
+          <div id="booru-gallery-counter" class="booru-gallery-counter"><span id="booru-counter-current">0</span><br><b>/ <span id="booru-counter-total">0</span></b></div>
         </div>
       </div>
       
@@ -985,6 +989,7 @@
       <i class="fa-solid fa-angle-right"></i>
     </button>
   </div>
+<script src="node_modules/chart.js/dist/chart.umd.min.js" defer></script>
 <script src="node_modules/odometer/odometer.min.js" defer></script>
 <script src="https://code.jquery.com/jquery-3.7.1.min.js" defer></script>
 <script src="node_modules/justifiedGallery/dist/js/jquery.justifiedGallery.min.js" defer></script>

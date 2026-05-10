@@ -62,6 +62,11 @@ function updateBooruGalleryCounter() {
     if (!currentEl._odometer) {
       currentEl._odometer = new window.Odometer({ el: currentEl, value: 0, format: 'd', duration: 500 });
     }
+    if (maxIdx >= 1000) {
+      currentEl.style.fontSize = '9px';
+    } else {
+      currentEl.style.fontSize = '';
+    }
     currentEl._odometer.update(maxIdx);
     totalEl.innerHTML = formatNumber(totalCount);
   } else {
@@ -409,6 +414,62 @@ window.booruPosts = window.booruPosts || [];
 window.hasMoreResults = window.hasMoreResults !== undefined ? window.hasMoreResults : true;
 window.totalResultCount = window.totalResultCount || null;
 
+// Per-tab thumbnail cache to avoid reloading thumbnails when switching between booru tabs
+window._booruThumbnailCache = window._booruThumbnailCache || {};
+function getTabThumbnailCache(tabId) {
+  if (!tabId) return null;
+  window._booruThumbnailCache = window._booruThumbnailCache || {};
+  if (!window._booruThumbnailCache[tabId]) {
+    window._booruThumbnailCache[tabId] = new Map();
+  }
+  return window._booruThumbnailCache[tabId];
+}
+function getCachedThumbnailUrl(tabId, url) {
+  const cache = getTabThumbnailCache(tabId);
+  return cache ? cache.get(url) : null;
+}
+function clearThumbnailCacheForTab(tabId) {
+  const cache = window._booruThumbnailCache?.[tabId];
+  if (!cache) return;
+  for (const objectUrl of cache.values()) {
+    try { URL.revokeObjectURL(objectUrl); } catch (e) {}
+  }
+  delete window._booruThumbnailCache[tabId];
+}
+async function cacheThumbnailBlobForTab(tabId, originalUrl, cacheKey = null) {
+  if (!tabId || !originalUrl) return null;
+  const cache = getTabThumbnailCache(tabId);
+  if (!cache) return null;
+  const key = cacheKey || originalUrl;
+  if (cache.has(key)) return cache.get(key);
+
+  try {
+    const response = await fetch(originalUrl, { cache: 'force-cache' });
+    if (!response.ok) return null;
+    const blob = await response.blob();
+    const objectUrl = URL.createObjectURL(blob);
+    cache.set(key, objectUrl);
+    return objectUrl;
+  } catch (err) {
+    return null;
+  }
+}
+
+function logBooruThumbnailCacheCounts() {
+  const cache = window._booruThumbnailCache || {};
+  const tabIds = Object.keys(cache);
+  let total = 0;
+  const tabCounts = tabIds.map((tabId) => {
+    const count = cache[tabId]?.size || 0;
+    total += count;
+    return { tabId, count };
+  });
+  console.log(`Booru thumbnail cache: ${total} item(s) across ${tabCounts.length} tab(s)`, tabCounts);
+  return { total, tabCounts };
+}
+window.logBooruThumbnailCacheCounts = logBooruThumbnailCacheCounts;
+window.clearThumbnailCacheForTab = clearThumbnailCacheForTab;
+
 // Tag suggestions
 window.tagSuggestions = {};
 
@@ -667,6 +728,540 @@ async function loadDownloadFolder() {
   }
 }
 
+function renderDownloadsSidebar() {
+  const sidebar = document.getElementById('downloads-sidebar');
+  if (!sidebar) return;
+
+  sidebar.innerHTML = '';
+
+  if (localStorage.getItem('downloadsSidebarCollapsed') === 'true') {
+    sidebar.classList.add('collapsed');
+  } else {
+    sidebar.classList.remove('collapsed');
+  }
+
+  const toggleBtn = document.createElement('button');
+  toggleBtn.className = 'sidebar-toggle-btn';
+  toggleBtn.innerHTML = '<i class="fa-solid fa-angles-right"></i>';
+  toggleBtn.title = 'Toggle Analytics';
+  toggleBtn.addEventListener('click', () => {
+    sidebar.classList.toggle('collapsed');
+    try {
+      const collapsed = sidebar.classList.contains('collapsed');
+      localStorage.setItem('downloadsSidebarCollapsed', collapsed ? 'true' : 'false');
+    } catch (e) { /* ignore */ }
+  });
+  sidebar.appendChild(toggleBtn);
+
+  const downloadTitle = document.createElement('h3');
+  downloadTitle.textContent = 'SEARCH ANALYTICS';
+  sidebar.appendChild(downloadTitle);
+
+  const sourceArtistBlock = document.createElement('div');
+  sourceArtistBlock.className = 'stats-wrapper';
+
+  const downloadChartTitle = document.createElement('h1');
+  downloadChartTitle.textContent = 'Sources & Artists';
+  sourceArtistBlock.appendChild(downloadChartTitle);
+
+  const chartWrapper = document.createElement('div');
+  chartWrapper.className = 'downloads-chart-wrapper';
+  chartWrapper.style.height = '160px';
+
+  const chartCanvas = document.createElement('canvas');
+  chartCanvas.id = 'downloads-source-artist-chart';
+  chartCanvas.style.width = '100%';
+  chartWrapper.appendChild(chartCanvas);
+
+  sourceArtistBlock.appendChild(chartWrapper);
+  sidebar.appendChild(sourceArtistBlock);
+  renderDownloadsStatsChart();
+
+  sidebar.appendChild(document.createElement('hr'));
+
+  const fileTypeBlock = document.createElement('div');
+  fileTypeBlock.className = 'stats-wrapper';
+  fileTypeBlock.style.flexGrow = '0';
+
+  const pieTitle = document.createElement('h1');
+  pieTitle.textContent = 'Downloaded File Types';
+  fileTypeBlock.appendChild(pieTitle);
+
+  const pieWrapper = document.createElement('div');
+  pieWrapper.className = 'downloads-chart-wrapper';
+  pieWrapper.style.height = '80px';
+  pieWrapper.style.display = 'flex';
+  pieWrapper.style.flexDirection = 'column';
+
+  const pieCanvas = document.createElement('canvas');
+  pieCanvas.id = 'downloads-filetype-chart';
+  pieCanvas.style.width = '100%';
+  pieWrapper.appendChild(pieCanvas);
+
+  fileTypeBlock.appendChild(pieWrapper);
+  sidebar.appendChild(fileTypeBlock);
+  renderDownloadsFileTypeChart();
+
+  sidebar.appendChild(document.createElement('hr'));
+
+  const mostUsedTags = document.createElement('div');
+  mostUsedTags.className = 'stats-wrapper';
+
+  const mostUsedTagsTitle = document.createElement('h1');
+  mostUsedTagsTitle.textContent = 'Favorite Tags';
+  mostUsedTags.appendChild(mostUsedTagsTitle);
+  const tagsContainer = document.createElement('div');
+  tagsContainer.className = 'tags-container';
+  tagsContainer.id = 'downloads-tags-container';
+  mostUsedTags.appendChild(tagsContainer);
+  sidebar.appendChild(mostUsedTags);
+
+  renderDownloadsTags();
+}
+
+function renderDownloadsStatsChart() {
+  if (typeof Chart === 'undefined') return;
+
+  const canvas = document.getElementById('downloads-source-artist-chart');
+  if (!canvas) return;
+
+  if (window.downloadsSourceArtistChart) {
+    window.downloadsSourceArtistChart.destroy();
+    window.downloadsSourceArtistChart = null;
+  }
+
+  const posts = Array.isArray(window.allDownloadedPosts) ? window.allDownloadedPosts : [];
+  if (!posts.length) {
+    const ctx = canvas.getContext('2d');
+    if (ctx) {
+      ctx.clearRect(0, 0, canvas.width, canvas.height);
+    }
+    return;
+  }
+
+  const sourceArtistCounts = {};
+  posts.forEach(post => {
+    const source = (post.source || 'Unknown Source').toString();
+    const artist = ((post.artist || post.author || 'Unknown Artist') || 'Unknown Artist').toString();
+    sourceArtistCounts[source] = sourceArtistCounts[source] || {};
+    sourceArtistCounts[source][artist] = (sourceArtistCounts[source][artist] || 0) + 1;
+  });
+
+  const sourceEntries = Object.entries(sourceArtistCounts)
+    .map(([source, artists]) => ({
+      source,
+      total: Object.values(artists).reduce((sum, count) => sum + count, 0),
+      artists
+    }))
+    .sort((a, b) => b.total - a.total);
+
+  const sources = sourceEntries.map(entry => entry.source);
+  const artistTotals = {};
+  sourceEntries.forEach(entry => {
+    Object.entries(entry.artists).forEach(([artist, count]) => {
+      artistTotals[artist] = (artistTotals[artist] || 0) + count;
+    });
+  });
+
+  const sortedArtists = Object.keys(artistTotals)
+    .sort((a, b) => artistTotals[b] - artistTotals[a]);
+
+  const palette = [
+    '#ff5a5f', '#ffb400', '#00a699', '#7b0051', '#3b8ea5', '#ff6f61', '#7fc8a9', '#f5a623', '#6f4a8e', '#ef476f',
+    '#06d6a0', '#118ab2', '#ffd166', '#073b4c', '#ff9f1c', '#2ec4b6', '#e71d36', '#3a86ff', '#ffbe0b', '#8ac926'
+  ];
+
+  const datasets = sortedArtists.map((artist, index) => ({
+    label: artist,
+    data: sources.map(source => sourceArtistCounts[source][artist] || 0),
+    backgroundColor: palette[index % palette.length],
+    borderWidth: 0
+  }));
+
+  const chartData = {
+    labels: sources,
+    datasets
+  };
+
+  const chartOptions = {
+    responsive: true,
+    maintainAspectRatio: false,
+    plugins: {
+      legend: {
+        display: false
+      },
+      tooltip: {
+        mode: 'index',
+        intersect: false,
+        filter: (tooltipItem) => {
+          return tooltipItem.parsed?.y > 0;
+        },
+        itemSort: (a, b) => {
+          return (b.parsed?.y || 0) - (a.parsed?.y || 0);
+        }
+      }
+    },
+    scales: {
+      x: {
+        stacked: true
+      },
+      y: {
+        stacked: true,
+        beginAtZero: true,
+        ticks: {
+          precision: 0
+        }
+      }
+    }
+  };
+
+  const ctx = canvas.getContext('2d');
+  window.downloadsSourceArtistChart = new Chart(ctx, {
+    type: 'bar',
+    data: chartData,
+    options: chartOptions
+  });
+}
+
+function renderDownloadsFileTypeChart() {
+  if (typeof Chart === 'undefined') return;
+
+  const canvas = document.getElementById('downloads-filetype-chart');
+  if (!canvas) return;
+
+  if (window.downloadsFileTypeChart) {
+    window.downloadsFileTypeChart.destroy();
+    window.downloadsFileTypeChart = null;
+  }
+
+  const posts = Array.isArray(window.allDownloadedPosts) ? window.allDownloadedPosts : [];
+  if (!posts.length) {
+    const ctx = canvas.getContext('2d');
+    if (ctx) ctx.clearRect(0, 0, canvas.width, canvas.height);
+    return;
+  }
+
+  const typeCounts = {};
+  posts.forEach(post => {
+    const url = post.originalImageUrl || post.imageUrl || '';
+    let ext = '';
+    try {
+      const pathname = new URL(url).pathname;
+      ext = pathname.split('/').pop().split('.').pop().toLowerCase();
+    } catch (e) {
+      ext = url.split('/').pop().split('.').pop().toLowerCase();
+    }
+    if (!ext || ext.length > 6 || ext.includes('/') || ext.includes('?')) {
+      ext = 'unknown';
+    }
+    if (ext === url) {
+      ext = 'unknown';
+    }
+    typeCounts[ext] = (typeCounts[ext] || 0) + 1;
+  });
+
+  const labels = Object.keys(typeCounts).sort((a, b) => typeCounts[b] - typeCounts[a]);
+  const data = labels.map(label => typeCounts[label]);
+  const total = data.reduce((sum, value) => sum + value, 0);
+  const palette = [
+    '#ff5a5f', '#ffb400', '#00a699', '#7b0051', '#3b8ea5', '#ff6f61', '#7fc8a9', '#f5a623', '#6f4a8e', '#ef476f',
+    '#06d6a0', '#118ab2', '#ffd166', '#073b4c', '#ff9f1c', '#2ec4b6', '#e71d36', '#3a86ff', '#ffbe0b', '#8ac926'
+  ];
+
+  const chartData = {
+    labels,
+    datasets: [{
+      data,
+      backgroundColor: labels.map((_, index) => palette[index % palette.length]),
+      borderWidth: 0
+    }]
+  };
+
+  const chartOptions = {
+    responsive: true,
+    maintainAspectRatio: false,
+    plugins: {
+      legend: {
+        position: 'right',
+        labels: {
+          boxWidth: 18,
+          padding: 8,
+          usePointStyle: true
+        }
+      },
+      tooltip: {
+        callbacks: {
+          label: (context) => {
+            const count = context.parsed || 0;
+            const label = context.label || 'unknown';
+            const pct = total ? ((count / total) * 100).toFixed(1) : '0.0';
+            return `${label}: ${count} (${pct}%)`;
+          }
+        }
+      }
+    }
+  };
+
+  const ctx = canvas.getContext('2d');
+  window.downloadsFileTypeChart = new Chart(ctx, {
+    type: 'pie',
+    data: chartData,
+    options: chartOptions
+  });
+}
+
+function renderDownloadsTags() {
+  const container = document.getElementById('downloads-tags-container');
+  if (!container) return;
+
+  const posts = Array.isArray(window.allDownloadedPosts) ? window.allDownloadedPosts : [];
+  const tagCounts = {};
+
+  posts.forEach(post => {
+    let tags = post.tags;
+    if (typeof tags === 'string') {
+      tags = tags.split(/\s+/);
+    }
+    if (!Array.isArray(tags)) return;
+
+    tags.forEach(tag => {
+      const normalizedTag = String(tag || '').trim();
+      if (!normalizedTag) return;
+      tagCounts[normalizedTag] = (tagCounts[normalizedTag] || 0) + 1;
+    });
+  });
+
+  const topTags = Object.entries(tagCounts)
+    .sort((a, b) => b[1] - a[1])
+    .slice(0, 20);
+
+  container.innerHTML = '';
+  topTags.forEach(([tag, count]) => {
+    const p = document.createElement('p');
+    p.className = 'tag';
+    p.textContent = `${tag} `;
+    const countEl = document.createElement('b');
+    countEl.textContent = count;
+    p.appendChild(countEl);
+    container.appendChild(p);
+  });
+}
+
+window.renderDownloadsTags = renderDownloadsTags;
+
+function updateArtistFilter() {
+  const controlBar = document.querySelector('header.control-bar.booru-control-bar');
+  const leftControls = controlBar?.querySelector('.booru-control-left');
+  if (!leftControls) return;
+
+  const searchInput = document.getElementById('search-filter-input');
+  const posts = Array.isArray(window.allDownloadedPosts) ? window.allDownloadedPosts : [];
+  const artistSelect = document.getElementById('downloads-artist-select') || document.createElement('select');
+  artistSelect.id = 'downloads-artist-select';
+  artistSelect.classList.add('js-example-basic-single');
+  artistSelect.style.color = 'var(--text-primary)';
+  artistSelect.style.width = '100%';
+
+  if (typeof $ !== 'undefined' && $.fn.select2 && $(artistSelect).hasClass('select2-hidden-accessible')) {
+    $(artistSelect).select2('destroy');
+  }
+  if (artistSelect._downloadsArtistChangeListener) {
+    artistSelect.removeEventListener('change', artistSelect._downloadsArtistChangeListener);
+    artistSelect._downloadsArtistChangeListener = null;
+  }
+
+  artistSelect.innerHTML = '';
+  const defaultOption = document.createElement('option');
+  defaultOption.value = '';
+  defaultOption.textContent = '-';
+  artistSelect.appendChild(defaultOption);
+
+  const artistCounts = {};
+  posts.forEach(post => {
+    const artist = Array.isArray(post.artist)
+      ? post.artist.join(' ')
+      : post.artist || post.author || 'Unknown';
+    artistCounts[artist] = (artistCounts[artist] || 0) + 1;
+  });
+
+  Object.keys(artistCounts)
+    .sort((a, b) => {
+      const countDiff = artistCounts[b] - artistCounts[a];
+      return countDiff !== 0 ? countDiff : a.localeCompare(b);
+    })
+    .forEach(artist => {
+      const option = document.createElement('option');
+      option.value = artist;
+      option.text = artist;
+      option.dataset.count = artistCounts[artist];
+      artistSelect.appendChild(option);
+    });
+
+  function formatArtistOption(option) {
+    if (!option.id) return option.text;
+    const count = option.element?.dataset?.count;
+    const artist = option.text || '';
+    const countHtml = count ? ` <span class="artist-count">${count}</span>` : '';
+    return `<span class="artist-tag">${artist}</span>${countHtml}`;
+  }
+
+  function formatArtistSelection(option) {
+    if (!option.id) return option.text;
+    return formatArtistOption(option);
+  }
+
+  function handleArtistSelection(selectedArtist) {
+    if (!searchInput) return;
+    searchInput.value = selectedArtist;
+    searchInput.dispatchEvent(new Event('input', { bubbles: true }));
+    searchInput.dispatchEvent(new Event('blur', { bubbles: true }));
+  }
+
+  leftControls.querySelectorAll('.control-section-artist').forEach(el => el.remove());
+  const artistSection = document.createElement('div');
+  artistSection.className = 'control-section control-section-artist control-section';
+  artistSection.appendChild(artistSelect);
+  const searchSection = leftControls.querySelector('.control-section-search');
+  if (searchSection && searchSection.parentNode === leftControls) {
+    leftControls.insertBefore(artistSection, searchSection.nextSibling);
+  } else {
+    leftControls.appendChild(artistSection);
+  }
+
+  if (typeof $ !== 'undefined' && $.fn.select2) {
+    $(artistSelect).select2({
+      width: 'resolve',
+      templateResult: formatArtistOption,
+      templateSelection: formatArtistSelection,
+      escapeMarkup: markup => markup
+    }).on('select2:select', function (e) {
+      const selectedArtist = e.params?.data?.id || $(this).val();
+      handleArtistSelection(selectedArtist);
+    });
+  } else {
+    const artistChangeHandler = () => handleArtistSelection(artistSelect.value);
+    artistSelect.addEventListener('change', artistChangeHandler);
+    artistSelect._downloadsArtistChangeListener = artistChangeHandler;
+  }
+}
+
+
+function updateSourceFilter() {
+  const controlBar = document.querySelector('header.control-bar.booru-control-bar');
+  const leftControls = controlBar?.querySelector('.booru-control-left');
+  if (!leftControls) return;
+
+  const searchInput = document.getElementById('search-filter-input');
+  const posts = Array.isArray(window.allDownloadedPosts) ? window.allDownloadedPosts : [];
+  const sourceCounts = {};
+
+  posts.forEach(post => {
+    const source = (post.source || 'Unknown').toString();
+    sourceCounts[source] = (sourceCounts[source] || 0) + 1;
+  });
+
+  const sources = Object.entries(sourceCounts)
+    .map(([source, count]) => ({ source, count }))
+    .sort((a, b) => {
+      const diff = b.count - a.count;
+      return diff !== 0 ? diff : a.source.localeCompare(b.source);
+    });
+
+  leftControls.querySelectorAll('.control-section-source').forEach(el => el.remove());
+
+  if (!sources.length) return;
+
+  const sourceSelect = document.getElementById('downloads-source-select') || document.createElement('select');
+  sourceSelect.id = 'downloads-source-select';
+  sourceSelect.classList.add('js-example-basic-single');
+  sourceSelect.style.color = 'var(--text-primary)';
+  sourceSelect.style.width = '100%';
+
+  if (typeof $ !== 'undefined' && $.fn.select2 && $(sourceSelect).hasClass('select2-hidden-accessible')) {
+    $(sourceSelect).select2('destroy');
+  }
+  if (sourceSelect._downloadsSourceChangeListener) {
+    sourceSelect.removeEventListener('change', sourceSelect._downloadsSourceChangeListener);
+    sourceSelect._downloadsSourceChangeListener = null;
+  }
+
+  sourceSelect.innerHTML = '';
+  const sourceDefault = document.createElement('option');
+  sourceDefault.value = '';
+  sourceDefault.textContent = '-';
+  sourceSelect.appendChild(sourceDefault);
+
+  sources.forEach(sourceEntry => {
+    const option = document.createElement('option');
+    option.value = sourceEntry.source;
+    option.text = sourceEntry.source;
+    option.dataset.count = sourceEntry.count;
+    sourceSelect.appendChild(option);
+  });
+
+  const currentSource = searchInput?.dataset?.downloadsSource || '';
+  if (currentSource) {
+    sourceSelect.value = currentSource;
+  }
+
+  function formatSourceOption(option) {
+    if (!option.id) return option.text;
+    const count = option.element?.dataset?.count;
+    const sourceName = option.text || '';
+    const countHtml = count ? ` <span class="artist-count">${count}</span>` : '';
+    return `<span class="artist-tag">${sourceName}</span>${countHtml}`;
+  }
+
+  function formatSourceSelection(option) {
+    if (!option.id) return option.text;
+    return formatSourceOption(option);
+  }
+
+  function handleSourceSelection(selectedSource) {
+    if (!searchInput) return;
+    if (selectedSource) {
+      searchInput.dataset.downloadsSource = selectedSource;
+    } else {
+      delete searchInput.dataset.downloadsSource;
+    }
+    searchInput.dispatchEvent(new Event('input', { bubbles: true }));
+  }
+
+  leftControls.querySelectorAll('.control-section-source').forEach(el => el.remove());
+  const sourceSection = document.createElement('div');
+  sourceSection.className = 'control-section control-section-source control-section';
+  sourceSection.appendChild(sourceSelect);
+  const searchSection = leftControls.querySelector('.control-section-search');
+  if (searchSection && searchSection.parentNode === leftControls) {
+    leftControls.insertBefore(sourceSection, searchSection.nextSibling);
+  } else {
+    leftControls.appendChild(sourceSection);
+  }
+
+  if (typeof $ !== 'undefined' && $.fn.select2) {
+    $(sourceSelect).select2({
+      width: 'resolve',
+      templateResult: formatSourceOption,
+      templateSelection: formatSourceSelection,
+      escapeMarkup: markup => markup
+    }).on('select2:select', function (e) {
+      const selected = e.params?.data?.id || $(this).val();
+      handleSourceSelection(selected);
+      document.getElementById('reload-booru-btn')?.dispatchEvent(new Event('click', { bubbles: true }));
+      document.getElementById('reload-booru-btn')?.dispatchEvent(new Event('blur', { bubbles: true }));
+    });
+  } else {
+    const sourceChangeHandler = () => handleSourceSelection(sourceSelect.value);
+    sourceSelect.addEventListener('change', sourceChangeHandler);
+    sourceSelect._downloadsSourceChangeListener = sourceChangeHandler;
+  }
+}
+
+
+// Expose filter helpers globally so they can be called outside showDownloadsGallery.
+window.updateArtistFilter = updateArtistFilter;
+window.updateSourceFilter = updateSourceFilter;
+
 function updateDownloadFolderDisplay() {
   const btn = document.getElementById('select-download-folder-btn');
   if (btn && window.downloadFolder) {
@@ -675,11 +1270,16 @@ function updateDownloadFolderDisplay() {
   }
 }
 
+let searchHandlerTimeout = null;
+
 // Function to show downloads gallery
 async function showDownloadsGallery(forceReload = false) {
+
   if (window.isViewingDownloadsGallery && !forceReload) return; // Already on downloads
 
+  const appContent = document.getElementById('app-content');
   const booruGallery = document.getElementById('booru-gallery');
+  cleanupDownloadsGallery();
   booruGallery.innerHTML = '<i class="fas fa-circle-notch fa-spin image-loader" style="position: relative; color: var(--accent); font-size: 60px; width: 100%; height: 200px; line-height: 200px; text-align: center;"></i>';
   const booruCounter = document.getElementById('booru-total-count');
   booruCounter.innerHTML = ''; // Clear total count
@@ -704,16 +1304,7 @@ async function showDownloadsGallery(forceReload = false) {
     booruContent.style.display = 'block';
   }
 
-  let booruSources = [];
-  // Gather sources from all posts with counts
   let downloadedPosts = await dbStore.getAllDownloadedPosts();
-  const booruSourceCounts = {};
-  downloadedPosts.forEach(post => {
-    if (post.source) {
-      booruSourceCounts[post.source] = (booruSourceCounts[post.source] || 0) + 1;
-    }
-  });
-  booruSources = Object.entries(booruSourceCounts).map(([source, count]) => ({ source, count }));
   
   window.isViewingDownloadsGallery = true;
   window.isViewingScroller = false;
@@ -735,6 +1326,14 @@ async function showDownloadsGallery(forceReload = false) {
       saveCurrentTabState();
     }
   }
+
+  // Restore downloads image size if available
+  const imageSizeSlider = document.getElementById('image-size-slider');
+  if (imageSizeSlider && window.sessionDownloadsImageSize !== undefined) {
+    imageSizeSlider.value = window.sessionDownloadsImageSize;
+    imageSizeSlider.dispatchEvent(new Event('input', { bubbles: true }));
+  }
+
   if (searchInput) {
     searchInput.value = window.downloadsSearchText || '';
   }
@@ -994,185 +1593,20 @@ async function showDownloadsGallery(forceReload = false) {
           booruTotalCount.innerHTML = `DOWNLOADS <b>${filtered.length}</b>`;
         }
       };
-      searchInput.addEventListener('input', downloadsSearchHandler);
+      searchInput.addEventListener('input', () => {
+        if (searchHandlerTimeout) {
+          clearTimeout(searchHandlerTimeout);
+        }
+        searchHandlerTimeout = setTimeout(() => {
+          downloadsSearchHandler();
+        }, 400);
+      });
       // Store the handler for removal later
       searchInput._downloadsSearchHandler = downloadsSearchHandler;
     }
-    
-    // Create artist dropdown
-    const artistSelect = document.createElement('select');
-    artistSelect.id = 'downloads-artist-select';
-    artistSelect.classList.add('js-example-basic-single');
-    artistSelect.style.color = 'var(--text-primary)';
-    artistSelect.style.width = '100%';
-    
-    const defaultOption = document.createElement('option');
-    defaultOption.value = '';
-    defaultOption.textContent = '-';
-    artistSelect.appendChild(defaultOption);
-    
-    const artistCounts = {};
-    downloadedPosts.forEach(p => {
-      const artist = p.artist || p.author || 'Unknown';
-      artistCounts[artist] = (artistCounts[artist] || 0) + 1;
-    });
-    
-    Object.keys(artistCounts)
-      .sort((a, b) => {
-        const countDiff = artistCounts[b] - artistCounts[a];
-        if (countDiff !== 0) return countDiff;
-        return a.localeCompare(b);
-      })
-      .forEach(artist => {
-        const option = document.createElement('option');
-        option.value = artist;
-        option.text = artist;
-        option.dataset.count = artistCounts[artist];
-        artistSelect.appendChild(option);
-      });
-    
-    function formatArtistOption(option) {
-      if (!option.id) {
-        return option.text;
-      }
-      const count = option.element?.dataset?.count;
-      const artist = option.text || '';
-      const countHtml = count ? ` <span class="artist-count">${count}</span>` : '';
-      return `<span class="artist-tag">${artist}</span>${countHtml}`;
-    }
 
-    function formatArtistSelection(option) {
-      if (!option.id) {
-        return option.text;
-      }
-      return formatArtistOption(option);
-    }
-
-    function handleArtistSelection(selectedArtist) {
-      if (!searchInput) return;
-
-      searchInput.value = selectedArtist;
-      document.getElementById('search-filter-input')?.dispatchEvent(new Event('input', { bubbles: true }));
-      document.getElementById('search-filter-input')?.dispatchEvent(new Event('blur', { bubbles: true }));
-    }
-
-    // Use Select2 event if available, otherwise fall back to native change.
-    if (typeof $ !== 'undefined' && $.fn.select2) {
-      // Initialization is done when the dropdown is added to the DOM below.
-      // The Select2 event handler is attached after init in the control bar section.
-    } else {
-      artistSelect.addEventListener('change', () => {
-        handleArtistSelection(artistSelect.value);
-      });
-    }
-    
-    // Add to control bar
-    const controlBar2 = document.querySelector('header.control-bar.booru-control-bar');
-    if (controlBar2) {
-      const leftControls = controlBar2.querySelector('.booru-control-left');
-      if (leftControls) {
-        // Remove any existing artist/source sections
-        leftControls.querySelectorAll('.control-section-artist, .control-section-source').forEach(el => el.remove());
-        
-        const artistSection = document.createElement('div');
-        artistSection.className = 'control-section control-section-artist control-section';
-        artistSection.appendChild(artistSelect);
-
-        if (booruSources.length > 0) {
-          const sourceSelect = document.createElement('select');
-          sourceSelect.id = 'downloads-source-select';
-          sourceSelect.classList.add('js-example-basic-single');
-          sourceSelect.style.color = 'var(--text-primary)';
-          sourceSelect.style.width = '100%';
-
-          const sourceDefault = document.createElement('option');
-          sourceDefault.value = '';
-          sourceDefault.textContent = '-';
-          sourceSelect.appendChild(sourceDefault);
-
-          booruSources.slice().sort((a, b) => {
-            const diff = b.count - a.count;
-            return diff !== 0 ? diff : a.source.localeCompare(b.source);
-          }).forEach(sourceEntry => {
-            const option = document.createElement('option');
-            option.value = sourceEntry.source;
-            option.text = sourceEntry.source;
-            option.dataset.count = sourceEntry.count;
-            sourceSelect.appendChild(option);
-          });
-
-          function formatSourceOption(option) {
-            if (!option.id) return option.text;
-            const count = option.element?.dataset?.count;
-            const sourceName = option.text || '';
-            const countHtml = count ? ` <span class="artist-count">${count}</span>` : '';
-            return `<span class="artist-tag">${sourceName}</span>${countHtml}`;
-          }
-
-          function formatSourceSelection(option) {
-            if (!option.id) return option.text;
-            return formatSourceOption(option);
-          }
-
-          function handleSourceSelection(selectedSource) {
-            if (!searchInput) return;
-            if (selectedSource) {
-              searchInput.dataset.downloadsSource = selectedSource;
-            } else {
-              delete searchInput.dataset.downloadsSource;
-            }
-            searchInput.dispatchEvent(new Event('input', { bubbles: true }));
-          }
-
-          sourceSelect.addEventListener('change', () => {
-            handleSourceSelection(sourceSelect.value);
-          });
-
-          const searchSection = leftControls.querySelector('.control-section-search');
-
-          const sourceSection = document.createElement('div');
-          sourceSection.className = 'control-section control-section-source control-section';
-          sourceSection.appendChild(sourceSelect);
-          if (searchSection && searchSection.parentNode === leftControls) {
-            leftControls.insertBefore(sourceSection, searchSection.nextSibling);
-          } else {
-            leftControls.appendChild(sourceSection);
-          }
-
-          if (typeof $ !== 'undefined' && $.fn.select2) {
-            $(sourceSelect).select2({
-              width: 'resolve',
-              templateResult: formatSourceOption,
-              templateSelection: formatSourceSelection,
-              escapeMarkup: markup => markup
-            }).on('select2:select', function (e) {
-              document.getElementById('reload-booru-btn')?.dispatchEvent(new Event('click', { bubbles: true }));
-              document.getElementById('reload-booru-btn')?.dispatchEvent(new Event('blur', { bubbles: true }));
-            });
-          }
-
-          if (searchSection && sourceSection.parentNode === leftControls) {
-            leftControls.insertBefore(artistSection, sourceSection.nextSibling);
-          } else {
-            leftControls.appendChild(artistSection);
-          }
-        } else {
-          leftControls.appendChild(artistSection);
-        }
-
-        if (typeof $ !== 'undefined' && $.fn.select2) {
-          $(artistSelect).select2({
-            width: 'resolve',
-            templateResult: formatArtistOption,
-            templateSelection: formatArtistSelection,
-            escapeMarkup: markup => markup
-          }).on('select2:select', function (e) {
-            const selectedArtist = e.params?.data?.id || $(this).val();
-            handleArtistSelection(selectedArtist);
-          });
-        }
-      }
-    }
+    updateSourceFilter();
+    updateArtistFilter();
     
     const endMessage = document.querySelector('.booru-end-message');
     if (endMessage) endMessage.style.display = 'none';
@@ -1185,6 +1619,19 @@ async function showDownloadsGallery(forceReload = false) {
     document.getElementById('search-filter-input')?.dispatchEvent(new Event('input', { bubbles: true }));
     document.getElementById('search-filter-input')?.dispatchEvent(new Event('blur', { bubbles: true }));
   }
+
+  if (appContent) {
+    const existingSidebar = document.getElementById('downloads-sidebar');
+    if (existingSidebar) {
+      existingSidebar.remove();
+    }
+    const downloadsSidebar = document.createElement('div');
+    downloadsSidebar.id = 'downloads-sidebar';
+    downloadsSidebar.className = 'downloads-sidebar';
+    appContent.appendChild(downloadsSidebar);
+    renderDownloadsSidebar();
+  }
+
   // Save the state
   if (window.debouncedSave) window.debouncedSave();
 }
@@ -1192,11 +1639,53 @@ async function showDownloadsGallery(forceReload = false) {
 // Make it global
 window.showDownloadsGallery = showDownloadsGallery;
 
+function cleanupDownloadsGallery() {
+  const galleryWrapper = document.getElementById('gallery-wrapper');
+  if (!galleryWrapper) return;
+
+  galleryWrapper.querySelectorAll('.booru-gallery:not(#booru-gallery)').forEach(gallery => {
+    if (typeof cleanupGallery !== 'undefined') {
+      cleanupGallery(gallery);
+    }
+    gallery.remove();
+  });
+  galleryWrapper.querySelectorAll('.artist-separator').forEach(sep => sep.remove());
+
+  const booruGallery = document.getElementById('booru-gallery');
+  if (!booruGallery) return;
+
+  if (typeof $ !== 'undefined' && typeof $.fn.justifiedGallery !== 'undefined') {
+    try {
+      $(booruGallery).find('img').off('load error');
+      $(booruGallery).justifiedGallery('destroy');
+    } catch (e) {
+      console.warn('Failed to destroy justifiedGallery during downloads cleanup:', e);
+    }
+  }
+
+  if (typeof cleanupGallery !== 'undefined') {
+    cleanupGallery(booruGallery);
+  } else {
+    booruGallery.innerHTML = '';
+  }
+  booruGallery.style.height = '300px';
+}
+
+if (!window._booruPreviewFreezeMousedownListenerInstalled) {
+  window._booruPreviewFreezeMousedownListenerInstalled = true;
+  document.addEventListener('mousedown', (e) => {
+    if (e.button === 1) {
+      const previewMedia = document.querySelector('.booru-hover-preview-media img, .booru-hover-preview-media video');
+      if (previewFrozen && previewMedia && e.target === previewMedia && typeof window.resetPreviewFrozen === 'function') {
+        window.resetPreviewFrozen();
+      }
+    }
+  });
+}
+
 // Initialize booru browser
 function initBooruBrowser() {
-  // Load tag suggestions
-  loadTagSuggestions();
-  // Track if downloads gallery is active
+  // Tag suggestions are queried on demand to avoid loading the full table on launch.
   window.isViewingDownloadsGallery = false;
   // Add handler for show-downloads-gallery-btn
   const showDownloadsBtn = document.getElementById('show-downloads-gallery-btn');
@@ -1230,6 +1719,10 @@ function initBooruBrowser() {
       if (booruContent) {
         booruContent.style.display = 'none';
       }
+
+      const existingSidebar = document.getElementById('downloads-sidebar');
+      if (existingSidebar)
+        existingSidebar.remove();
 
       const contentParent = booruContent.parentElement;
       
@@ -2266,20 +2759,8 @@ function initBooruBrowser() {
         reloadBooruBtn.disabled = true;
         reloadBooruBtn.innerHTML = '<i class="fas fa-sync-alt fa-spin"></i>';
 
-        // Clear gallery first
-        const galleryWrapper = document.getElementById('gallery-wrapper');
-        galleryWrapper.querySelectorAll('.booru-gallery:not([id])').forEach(gallery => gallery.remove());
-        const artistSeperators = galleryWrapper.querySelectorAll('.artist-separator');
-        artistSeperators.forEach(sep => sep.remove());
-        booruGallery = document.getElementById('booru-gallery');
-        if (booruGallery) {
-          if (typeof $.fn.justifiedGallery !== 'undefined') {
-            $(booruGallery).find('img').off('load error');
-            $(booruGallery).justifiedGallery('destroy');
-          }
-          booruGallery.innerHTML = '';
-          booruGallery.style.height = '300px';
-        }
+        cleanupDownloadsGallery();
+
         const limit = parseInt(document.getElementById('booru-limit-input')?.value) || 100;
         const initialPosts = window.allDownloadedPosts.slice(0, limit);
         const seperateByArtist = document.getElementById('downloads-sort-artist-btn')?.classList.contains('btn-accent');
@@ -2315,13 +2796,32 @@ function initBooruBrowser() {
       }
     });
   }
+
+  let _hqRestoreResizeTimeout = null;
   
   // Image size slider listener
   if (typeof imageSizeSlider !== 'undefined' && imageSizeSlider) {
+    window._lastGalleryType = 'booru'; // 'booru' or 'downloads'
     imageSizeSlider.addEventListener('input', () => {
       currentImageSize = parseInt(imageSizeSlider.value, 10);
+      // Set the CSS variable for image size
+      document.documentElement.style.setProperty('--booru-image-size', `${Math.min(currentImageSize, 300)}px`);
       if (typeof imageSizeValue !== 'undefined' && imageSizeValue) {
         imageSizeValue.textContent = `${currentImageSize}px`;
+      }
+      if (window.isViewingDownloadsGallery) {
+        window.sessionDownloadsImageSize = imageSizeSlider.value;
+        try {
+          localStorage.setItem('downloadsImageSize', imageSizeSlider.value);
+        } catch (e) {}
+        window._lastGalleryType = 'downloads';
+      } else if (window.isViewingDownloadsGallery === false || window.isViewingDownloadsGallery === undefined) {
+        // Only update booruImageSize if NOT in downloads gallery
+        window.sessionBooruImageSize = imageSizeSlider.value;
+        try {
+          localStorage.setItem('booruImageSize', imageSizeSlider.value);
+        } catch (e) {}
+        window._lastGalleryType = 'booru';
       }
       // Update Justified Gallery rowHeight dynamically
       if (booruGallery && booruPosts.length > 0 && typeof $.fn.justifiedGallery !== 'undefined') {
@@ -2334,9 +2834,40 @@ function initBooruBrowser() {
           waitThumbnailsLoad: false,
           border: 0
         });
+        if (_hqRestoreResizeTimeout) {
+          clearTimeout(_hqRestoreResizeTimeout);
+        }
+        _hqRestoreResizeTimeout = setTimeout(() => {
+          restoreHighQualityGalleryImages();
+        }, 120);
       }
     });
+
+    // On load, restore both values
+    try {
+      const downloadsSize = localStorage.getItem('downloadsImageSize');
+      if (downloadsSize !== null) window.sessionDownloadsImageSize = downloadsSize;
+      const booruSize = localStorage.getItem('booruImageSize');
+      if (booruSize !== null) window.sessionBooruImageSize = booruSize;
+    } catch (e) {}
+
+    // When switching to downloads gallery, set last gallery type
+    const _origShowDownloadsGallery = window.showDownloadsGallery;
+    window.showDownloadsGallery = async function (...args) {
+      window._lastGalleryType = 'downloads';
+      return await _origShowDownloadsGallery.apply(this, args);
+    };
   }
+  
+  // Keep HQ previews after browser resize or other layout changes
+  window.addEventListener('resize', () => {
+    if (_hqRestoreResizeTimeout) {
+      clearTimeout(_hqRestoreResizeTimeout);
+    }
+    _hqRestoreResizeTimeout = setTimeout(() => {
+      restoreHighQualityGalleryImages();
+    }, 120);
+  });
   
   // Enter key on search input to execute search
   if (typeof searchFilterInput !== 'undefined' && searchFilterInput) {
@@ -2583,7 +3114,7 @@ function updateGalleryImageQuality() {
         downloadBtn.innerHTML = isDownloaded ? '<i class="fas fa-times"></i>' : '<i class="fas fa-download"></i>';
       }
       
-      const low = getImageUrl(img.dataset.sampleUrl || img.dataset.thumbnailUrl);
+      const low = img.dataset.resolvedThumbnailUrl || getImageUrl(img.dataset.sampleUrl || img.dataset.thumbnailUrl);
       if (img.src !== low) {
         img.src = low; // changing src aborts any previous HQ load
       }
@@ -2620,7 +3151,7 @@ function updateGalleryImageQuality() {
     const timeoutId = setTimeout(() => {
       const high = img.dataset.imageUrl;
       // Prefer sampleUrl if available (better quality than thumbnail), otherwise fall back to thumbnail
-      const low = img.dataset.sampleUrl || img.dataset.thumbnailUrl;
+      const low = img.dataset.resolvedThumbnailUrl || img.dataset.sampleUrl || img.dataset.thumbnailUrl;
       const targetSrc = getImageUrl(showHighQualityGallery ? high : low);
       
       // Only update if the URL is actually different
@@ -2801,6 +3332,17 @@ async function loadTagSuggestions() {
   }
 }
 
+async function queryTagSuggestions(source, prefix = '', limit = 10) {
+  const query = new URL('http://localhost:3001/load-tag-suggestions');
+  query.searchParams.set('source', source);
+  if (prefix) query.searchParams.set('prefix', prefix);
+  query.searchParams.set('limit', String(limit));
+
+  const response = await fetch(query.toString());
+  if (!response.ok) throw new Error('Failed to get tag suggestions');
+  return response.json();
+}
+
 // Debounced save to improve performance
 let saveTagSuggestionsTimeout = null;
 async function debouncedSaveTagSuggestions() {
@@ -2850,12 +3392,7 @@ async function loadBooruImages(append = false) {
     // new gallery load, drop any existing preview cache to avoid stale thumbnails
     if (window._previewCache) window._previewCache.clear();
   }
-  if (isLoadingBooru) {
-    console.log('[LOAD] Already loading, skipping');
-    showToast('Already loading images, please wait...', 'warning');
-    return;
-  }
-  
+
   // Only block infinite scroll, not reload/search/buttons
   booruTotalCount.style.display = 'none';
   ('[LOAD] loadBooruImages called:', { append, isLoadingBooru, hasMore: window.hasMoreResults, source: window.currentBooruSource });
@@ -2887,190 +3424,6 @@ async function loadBooruImages(append = false) {
       isLoadingBooru = false;
     }, 1500);
   }
-}
-
-// Reddit booru loader
-async function loadRedditBooru(append) {
-  if (!subredditInput || !booruGallery) return;
-  
-  const subreddit = subredditInput.value.trim();
-  if (!subreddit) {
-    showToast('Please enter a subreddit name', 'error');
-    return;
-  }
-  
-  const sort = booruSortSelect ? booruSortSelect.value : 'hot';
-  const limit = booruLimitInput ? parseInt(booruLimitInput.value) : 100;
-  const rawSearchTags = searchFilterInput ? searchFilterInput.value.trim() : '';
-  
-  // Parse tags and blacklist
-  const { searchTags, blacklistTags } = parseTagsAndBlacklist(rawSearchTags);
-  
-  if (!append) {
-    showToast('Loading images from r/' + subreddit + '...', 'info');
-    booruGallery.innerHTML = '<i class="fas fa-circle-notch fa-spin image-loader" style="position: relative; color: var(--accent); font-size: 60px; width: 100%; height: 200px; line-height: 200px; text-align: center;"></i>';
-    booruPaginationToken = null;
-    window.booruPosts = [];
-    window.hasMoreResults = true;
-  } else {
-    // Remove end message if it exists
-    const endMessage = booruGallery.querySelector('.booru-end-message');
-    if (endMessage) endMessage.remove();
-    if (booruLoading) booruLoading.style.display = 'flex';
-  }
-  
-  let url;
-  // For Reddit, we can't use API-side blacklist filtering with search
-  // Only use search if there are actual search tags
-  if (searchTags) {
-    // Use search endpoint with actual search terms
-    url = `https://www.reddit.com/r/${subreddit}/search.json?q=${encodeURIComponent(searchTags)}&restrict_sr=1&limit=${limit}&sort=${sort}`;
-    if (sort === 'top') url += '&t=all';
-  } else {
-    // Use regular browse endpoint when no search tags
-    url = `https://www.reddit.com/r/${subreddit}/${sort}.json?limit=${limit}`;
-    if (sort === 'top') url += '&t=all';
-  }
-  
-  if (append && booruPaginationToken) {
-    url += `&after=${booruPaginationToken}`;
-  }
-
-  console.log('Fetching URL:', url);
-  
-  // Fetch through proxy if enabled
-  let response;
-  try {
-    response = await proxyFetch(url, { signal: currentAbortController.signal });
-  } catch (error) {
-    console.error('proxyFetch error:', error);
-    showToast('Error fetching images: ' + (error.message || error), 'error');
-    throw error;
-  }
-  if (!response.ok) {
-    console.error('Response not ok:', response.status, response.statusText);
-    showToast(`Failed to fetch subreddit data: ${response.status} ${response.statusText}`, 'error');
-    throw new Error('Failed to fetch subreddit data');
-  }
-  
-  const data = await response.json();
-  console.log('Reddit API response:', data);
-  const posts = data.data.children;
-  console.log('Total posts:', posts.length);
-  booruPaginationToken = data.data.after;
-  
-  // Reddit doesn't provide total count, but we can show approximate count
-  if (!append && data.data.dist) {
-    window.totalResultCount = null; // Reddit doesn't give us total, so we'll show loaded count
-    updateTotalCountDisplay();
-  }
-  
-  // Check if we've reached the end
-  if (!booruPaginationToken || posts.length === 0) {
-    console.log('[REDDIT] Setting hasMoreResults = false. Token:', booruPaginationToken, 'posts:', posts.length);
-    window.hasMoreResults = false;
-  }
-  
-  // Filter posts that have images
-  let imagePosts = posts.filter(post => {
-    const postData = post.data;
-    return postData.post_hint === 'image' || 
-           (postData.url && (postData.url.match(/\.(jpeg|jpg|gif|png)$/i) || 
-            postData.url.includes('i.redd.it') || 
-            postData.url.includes('i.imgur.com')));
-  });
-  
-  // Client-side tag filtering for Reddit (filters by title words)
-  if (searchTags) {
-    const searchWords = searchTags.toLowerCase().split(/\s+/).filter(w => w.length > 0);
-    imagePosts = imagePosts.filter(post => {
-      const title = (post.data.title || '').toLowerCase();
-      return searchWords.every(word => {
-        const regex = new RegExp('\\b' + word.replace(/[.*+?^${}()|[\]\\]/g, '\\$&') + '\\b');
-        return regex.test(title);
-      });
-    });
-  }
-  
-  if (imagePosts.length === 0 && !append) {
-    totalResultCount = 0;
-    updateTotalCountDisplay();
-    booruGallery.innerHTML = '<div style="color: var(--text-secondary); text-align: center; width: 100%; padding: 40px;">No images found</div>';
-    showToast('No images found', 'error');
-    return;
-  }
-  
-  // Normalize to booru format
-  let normalizedPosts = imagePosts.map(post => ({
-    id: normalizePostId(post.data.id),
-    imageUrl: post.data.url,
-    thumbnailUrl: post.data.thumbnail !== 'default' ? post.data.thumbnail : post.data.url,
-    tags: post.data.title ? post.data.title.toLowerCase().split(/\s+/).map(decodeHtmlEntities) : [],
-    author: post.data.author,
-    score: post.data.score,
-    title: post.data.title,
-    source: 'reddit',
-    aspectRatio: getAspectRatio(post.data),
-    createdAt: post.data.created_utc ? post.data.created_utc * 1000 : null
-  }));
-  
-  // apply global blacklist filter to reddit results as well
-  if (window.globalBlacklistTags && window.globalBlacklistTags.length > 0) {
-    const before = normalizedPosts.length;
-    normalizedPosts = filterBlacklistedPosts(normalizedPosts, window.globalBlacklistTags);
-    const filteredOut = before - normalizedPosts.length;
-    if (filteredOut > 0) {
-      console.log(`[BLACKLIST] filtered out ${filteredOut} reddit posts`);
-      showToast(`Filtered out ${filteredOut} blacklisted posts`, 'info');
-      if (!append && window.totalResultCount != null) {
-        window.totalResultCount = Math.max(0, window.totalResultCount - filteredOut);
-        updateTotalCountDisplay();
-      }
-    }
-  }
-
-  // No client-side filtering needed - Reddit API handles it via NOT operator
-  if (normalizedPosts.length === 0 && !append) {
-    totalResultCount = 0;
-    updateTotalCountDisplay();
-    booruGallery.innerHTML = '<div style="color: var(--text-secondary); text-align: center; width: 100%; padding: 40px;">No images found</div>';
-    if (booruLoading) booruLoading.style.display = 'none';
-    return;
-  }
-  
-  if (append) {
-    window.booruPosts = window.booruPosts.concat(normalizedPosts);
-  } else {
-    window.booruPosts = normalizedPosts;
-  }
-  console.log('[REDDIT] Set window.booruPosts:', window.booruPosts.length, 'posts. hasMore:', window.hasMoreResults, 'token:', booruPaginationToken);
-  
-  booruGallery.classList.remove('downloads-gallery');
-  const artistSection = document.querySelector('.control-section-artist');
-  if (artistSection) artistSection.style.display = 'none';
-  const sourceSection = document.querySelector('.control-section-source');
-  if (sourceSection) sourceSection.style.display = 'none';
-  
-  // Update tag suggestions
-  updateTagSuggestions('reddit', normalizedPosts);
-  
-  renderBooruGallery(normalizedPosts, append);
-  
-  console.log('After render, window.booruPosts length:', window.booruPosts ? window.booruPosts.length : 'undefined');
-  
-  // Save tab state after loading images (immediate)
-  if (typeof saveCurrentTabState === 'function') {
-    saveCurrentTabState(true);
-  }
-  
-  if (booruLoading) booruLoading.style.display = 'none';
-  
-  if (!append) {
-    showToast(`Loaded ${normalizedPosts.length} images from r/${subreddit}`, 'success');
-    addToSubredditHistory(subreddit);
-  }
-  
-  debouncedSettingsSave();
 }
 
 // ============== GENERIC ARTIST FETCHER (Configuration-Driven) ==============
@@ -3170,6 +3523,7 @@ async function loadGenericBooru(sourceId, append) {
     }
   }
   
+  const currentTabId = activeTabId;
   const sort = booruSortSelect ? booruSortSelect.value : 'date';
   const limit = booruLimitInput ? parseInt(booruLimitInput.value) : 100;
   const rawSearchTags = searchFilterInput ? searchFilterInput.value.trim() : '';
@@ -3281,6 +3635,11 @@ async function loadGenericBooru(sourceId, append) {
       }
       window.hasMoreResults = false;
       if (booruLoading) booruLoading.style.display = 'none';
+      return;
+    }
+
+    if (currentTabId !== activeTabId) {
+      showToast('Tab changed during load, discarding results', 'warning');
       return;
     }
     
@@ -3711,6 +4070,21 @@ function normalizePosts(posts, sourceConfig) {
   });
 }
 
+function restoreHighQualityGalleryImages() {
+  const gallery = document.getElementById('booru-gallery');
+  if (!gallery) return;
+  gallery.querySelectorAll('.booru-image-item img[data-high-quality-loaded="true"][data-high-quality-url]').forEach(img => {
+    const highQualityUrl = img.dataset.highQualityUrl;
+    if (!highQualityUrl) return;
+    if (img.src !== highQualityUrl) {
+      img.src = highQualityUrl;
+    }
+    if (!img.dataset.currentQualityUrl) {
+      img.dataset.currentQualityUrl = highQualityUrl;
+    }
+  });
+}
+
 // Update the total count display
 function updateTotalCountDisplay() {
   if (!booruTotalCount) return;
@@ -3740,6 +4114,9 @@ function renderBooruGallery(posts, append = true, addSeparators = true) {
   }
 
   document.querySelector('.booru-end-message')?.remove();
+
+  booruGallery = document.getElementById('booru-gallery'); // Refresh reference in case it was replaced
+  const isDownloadsGallery = booruGallery.classList.contains('downloads-gallery');
   
   // Destroy existing Justified Gallery instance if replacing content
   if (!append && typeof $.fn.justifiedGallery !== 'undefined') {
@@ -3752,6 +4129,11 @@ function renderBooruGallery(posts, append = true, addSeparators = true) {
       cleanupGallery(booruGallery);
     } else {
       booruGallery.innerHTML = '';
+    }
+    if (isDownloadsGallery) {
+      renderDownloadsSidebar();
+      updateArtistFilter();
+      updateSourceFilter();
     }
   }
 
@@ -3771,8 +4153,6 @@ function renderBooruGallery(posts, append = true, addSeparators = true) {
   }
   let lastArtist = null;
 
-  booruGallery = document.getElementById('booru-gallery'); // Refresh reference in case it was replaced
-  const isDownloadsGallery = booruGallery.classList.contains('downloads-gallery');
   if (!isDownloadsGallery) {
     const artistSection = document.querySelector('.control-section-artist');
     if (artistSection)
@@ -3830,6 +4210,8 @@ function renderBooruGallery(posts, append = true, addSeparators = true) {
     waitThumbnailsLoad: false,
     border: 0
   });
+  restoreHighQualityGalleryImages();
+  $(booruGallery).one('jg.complete', restoreHighQualityGalleryImages);
 
   // No post-layout separator logic needed; separators are now real gallery items.
 
@@ -3838,7 +4220,7 @@ function renderBooruGallery(posts, append = true, addSeparators = true) {
     const endMessage = document.createElement('div');
     endMessage.className = 'booru-end-message';
     endMessage.style.cssText = 'text-align: center; padding: 30px; color: var(--text-secondary); font-size: 14px; border-top: 1px solid var(--border); margin-top: 20px;';
-    endMessage.innerHTML = `<p>loaded <b>${totalResultCount}</b></p> <p><i class="fa-solid fa-xmark"></i> No more results available</p><br><h1>Recommended Tags</h1> <div class="booru-end-tags" id="booru-end-tags"></div>`;
+    endMessage.innerHTML = `<p>loaded <b>${totalResultCount ?? 0}</b></p> <p><i class="fa-solid fa-xmark"></i> No more results available</p><br><h1>Recommended Tags</h1> <div class="booru-end-tags" id="booru-end-tags"></div>`;
     const existingEndMessage = booruContent.querySelector('.booru-end-message');
     if (existingEndMessage) existingEndMessage.remove();
     booruContent.appendChild(endMessage);
@@ -3916,11 +4298,6 @@ function createBooruImageElement(post, maxHeight = null, imageWidth = null) {
     if (typeof dataIndex !== 'undefined') {
       mediaElement.setAttribute('data-index', dataIndex);
     }
-    
-    // if gallery is currently set to show high quality, record that immediately
-    if (useHighQuality) {
-      mediaElement.dataset.currentQualityUrl = getImageUrl(post.imageUrl);
-    }
 
     mediaElement.addEventListener('load', () => {
       mediaElement.style.opacity = '1';
@@ -3936,24 +4313,35 @@ function createBooruImageElement(post, maxHeight = null, imageWidth = null) {
     }, { once: true });
     
     mediaElement.loading = 'lazy';
+    const currentTabId = typeof activeTabId !== 'undefined' ? activeTabId : null;
+    const resolvedThumbnailUrl = getImageUrl(thumbnailUrl);
+    mediaElement.dataset.resolvedThumbnailUrl = resolvedThumbnailUrl;
+    const isVideoSource = thumbnailUrl.toLowerCase().endsWith('.mp4') || thumbnailUrl.toLowerCase().endsWith('.webm') || thumbnailUrl.toLowerCase().endsWith('.mov');
+    const cacheKey = isVideoSource ? `video-thumbnail:${thumbnailUrl}` : resolvedThumbnailUrl;
+    const cachedThumbnailUrl = currentTabId ? getCachedThumbnailUrl(currentTabId, cacheKey) : null;
+    const backendThumbnailUrl = isVideoSource && resolvedThumbnailUrl ? `http://localhost:3001/video-thumbnail?url=${encodeURIComponent(resolvedThumbnailUrl)}` : null;
 
-    if (thumbnailUrl.endsWith('.mp4') || thumbnailUrl.endsWith('.webm') || thumbnailUrl.endsWith('.mov')) {
-      const imageURL = getImageUrl(thumbnailUrl);
-      if (imageURL) {
-        try {
-          const backendThumbnailUrl = `http://localhost:3001/video-thumbnail?url=${encodeURIComponent(imageURL)}`;
-          mediaElement.src = backendThumbnailUrl;
-        } catch (e) {
-          console.warn('Failed to generate video thumbnail, using fallback image. Error:', e);
-          mediaElement.src = 'data:image/svg+xml,<svg xmlns="http://www.w3.org/2000/svg" width="400" height="300"><rect width="400" height="300" fill="%23252a3a"/><text x="50%" y="50%" text-anchor="middle" fill="%23a0a0a0" font-size="16">Video</text></svg>';
-        }
+    if (cachedThumbnailUrl) {
+      mediaElement.src = cachedThumbnailUrl;
+    } else if (isVideoSource) {
+      if (backendThumbnailUrl) {
+        mediaElement.src = backendThumbnailUrl;
+        mediaElement.addEventListener('load', () => {
+          if (currentTabId && cacheKey && !getCachedThumbnailUrl(currentTabId, cacheKey)) {
+            cacheThumbnailBlobForTab(currentTabId, backendThumbnailUrl, cacheKey).catch(() => {});
+          }
+        }, { once: true });
       } else {
         console.warn('No valid thumbnail URL for video post:', post);
         mediaElement.src = 'data:image/svg+xml,<svg xmlns="http://www.w3.org/2000/svg" width="400" height="300"><rect width="400" height="300" fill="%23252a3a"/><text x="50%" y="50%" text-anchor="middle" fill="%23a0a0a0" font-size="16">Video</text></svg>';
       }
     } else {
-      // Thumbnail is a normal image - use it directly
-      mediaElement.src = getImageUrl(thumbnailUrl);
+      mediaElement.src = resolvedThumbnailUrl;
+      mediaElement.addEventListener('load', () => {
+        if (currentTabId && cacheKey && !getCachedThumbnailUrl(currentTabId, cacheKey)) {
+          cacheThumbnailBlobForTab(currentTabId, resolvedThumbnailUrl, cacheKey).catch(() => {});
+        }
+      }, { once: true });
     }
     
   } else {
@@ -3982,9 +4370,6 @@ function createBooruImageElement(post, maxHeight = null, imageWidth = null) {
     mediaElement.dataset.title = post.title || '';
     mediaElement.dataset.createdAt = post.createdAt || '';
 
-    if (useHighQuality) {
-      mediaElement.dataset.currentQualityUrl = getImageUrl(post.imageUrl);
-    }
     if (post.sampleUrl) {
       mediaElement.dataset.sampleUrl = post.sampleUrl;  // Store sample/medium quality URL if available
     }
@@ -3995,7 +4380,7 @@ function createBooruImageElement(post, maxHeight = null, imageWidth = null) {
       mediaElement.setAttribute('data-index', dataIndex);
     }
     
-    mediaElement.addEventListener('load', () => {
+    mediaElement.addEventListener('load', async () => {
       mediaElement.style.opacity = '1'; // Fade in on load
       mediaElement.classList.add('loaded');
       loader.style.display = 'none';
@@ -4039,7 +4424,26 @@ function createBooruImageElement(post, maxHeight = null, imageWidth = null) {
     // Use correct image for current gallery quality; lazy-load so off-screen
     // images (and images in hidden tabs) are not fetched until visible
     mediaElement.loading = 'lazy';
-    mediaElement.src = getImageUrl(useHighQuality ? url : (post.thumbnailUrl || url));
+    const resolvedThumbnailUrl = getImageUrl(useHighQuality ? url : (post.thumbnailUrl || url));
+    mediaElement.dataset.resolvedThumbnailUrl = resolvedThumbnailUrl;
+    const currentTabId = typeof activeTabId !== 'undefined' ? activeTabId : null;
+    const isVideoSource = resolvedThumbnailUrl.endsWith('.mp4') || resolvedThumbnailUrl.endsWith('.webm') || resolvedThumbnailUrl.endsWith('.mov');
+    const cacheKey = isVideoSource ? `video-thumbnail:${resolvedThumbnailUrl}` : resolvedThumbnailUrl;
+    const cachedThumbnailUrl = currentTabId && cacheKey ? getCachedThumbnailUrl(currentTabId, cacheKey) : null;
+    if (cachedThumbnailUrl) {
+      mediaElement.src = cachedThumbnailUrl;
+    } else if (isVideoSource) {
+      const backendThumbnailUrl = `http://localhost:3001/video-thumbnail?url=${encodeURIComponent(resolvedThumbnailUrl)}`;
+      mediaElement.src = backendThumbnailUrl;
+      mediaElement.addEventListener('load', () => {
+        if (currentTabId && cacheKey && !getCachedThumbnailUrl(currentTabId, cacheKey)) {
+          cacheThumbnailBlobForTab(currentTabId, backendThumbnailUrl, cacheKey).catch(() => {});
+        }
+      }, { once: true });
+    } else {
+      mediaElement.src = cachedThumbnailUrl || resolvedThumbnailUrl;
+      cacheThumbnailBlobForTab(currentTabId, cachedThumbnailUrl || resolvedThumbnailUrl, cacheKey);
+    }
   }
   
   link.appendChild(mediaElement);
@@ -4056,16 +4460,6 @@ function createBooruImageElement(post, maxHeight = null, imageWidth = null) {
       if (downloadBtn)
         downloadBtn.click();
       return false;
-    }
-  });
-  // Stop preview freeze when middle mouse clicking on preview image
-  document.addEventListener('mousedown', (e) => {
-    if (e.button === 1) {
-      // Check if preview is frozen and mouse is over preview image
-      const previewMedia = document.querySelector('.booru-hover-preview-media img, .booru-hover-preview-media video');
-      if (previewFrozen && previewMedia && e.target === previewMedia) {
-        window.resetPreviewFrozen();
-      }
     }
   });
   
@@ -4090,7 +4484,7 @@ function createBooruImageElement(post, maxHeight = null, imageWidth = null) {
   // Store hover handlers for removal later
   let hoverHandlers = null;
   
-  // Check if this image is already downloaded
+  // Check if this image is already downloaded (exclude videos)
   if (window.downloadFolder) {
     const filename = getFilenameFromUrl(post.imageUrl, post.id);
     fetch('http://localhost:3001/check-downloaded-images', {
@@ -4101,11 +4495,32 @@ function createBooruImageElement(post, maxHeight = null, imageWidth = null) {
     .then(res => res.json())
     .then(data => {
       if (data.downloaded && data.downloaded[filename]) {
+        const localUrl = `http://localhost:3001/serve-local-file/${encodeURIComponent(filename)}`;
         link.dataset.downloaded = 'true';
         downloadBtn.innerHTML = '<i class="fas fa-check"></i>';
         downloadBtn.classList.add('downloaded');
         downloadBtn.title = 'Delete';
-        
+
+        if (!isVideo) {
+          post.imageUrl = localUrl;
+          post.thumbnailUrl = localUrl;
+          if (mediaElement) {
+            mediaElement.dataset.imageUrl = localUrl;
+            mediaElement.dataset.thumbnailUrl = localUrl;
+            mediaElement.dataset.currentQualityUrl = localUrl;
+            mediaElement.dataset.highQualityUrl = localUrl;
+            mediaElement.dataset.highQualityLoaded = 'true';
+            if (mediaElement.src !== localUrl) {
+              mediaElement.src = localUrl;
+            }
+          }
+
+          const previewImg = booruPreviewMediaContainer.querySelector('img');
+          if (previewImg && previewImg.dataset.postId === link.dataset.postId && previewImg.dataset.postSource === link.dataset.postSource) {
+            previewImg.src = localUrl;
+          }
+        }
+
         // Add hover handlers to swap between check and X icons
         const mouseEnterHandler = () => {
           downloadBtn.innerHTML = '<i class="fas fa-times"></i>';
@@ -4114,7 +4529,7 @@ function createBooruImageElement(post, maxHeight = null, imageWidth = null) {
           downloadBtn.innerHTML = '<i class="fas fa-check"></i>';
         };
         hoverHandlers = { mouseEnterHandler, mouseLeaveHandler };
-        
+
         downloadBtn.addEventListener('mouseenter', mouseEnterHandler);
         downloadBtn.addEventListener('mouseleave', mouseLeaveHandler);
       }
@@ -4358,8 +4773,9 @@ document.addEventListener('mousemove', (e) => {
     showPreviewForElement(mediaElement);
   }
 
-  // Track modifier state for Shift
-  window._lastShiftHeld = e.getModifierState && e.getModifierState('Shift');
+  // Track modifier state for Shift and right mouse button down
+  window._lastShiftHeld = (e.getModifierState && e.getModifierState('Shift')) || e.buttons === 2;
+  
 
   // If scrolling, do not trigger preview
   if (isScrolling || scrollBlockPreview) return;
@@ -4408,7 +4824,6 @@ document.addEventListener('keydown', (e) => {
     isShiftHeld = true;
     previewFrozen = true;
     booruHoverPreview.classList.add('frozen');
-    // Prevent text selection while shift is held
     document.body.style.userSelect = 'none';
   }
 });
@@ -4418,21 +4833,46 @@ document.addEventListener('keyup', (e) => {
     isShiftHeld = false;
     previewFrozen = false;
     booruHoverPreview.classList.remove('frozen');
-    // Re-enable text selection
     document.body.style.userSelect = '';
-
-    // Immediately hide preview if it was frozen
-    if (!previewFrozen && !isShiftHeld && booruHoverPreview.classList.contains('active')) {
+    if (booruHoverPreview.classList.contains('active')) {
       booruHoverPreview.classList.remove('active');
       pauseAllPreviewVideos();
     }
-
-    // Reload gallery if tags were changed while frozen
     if (tagsChangedWhileFrozen) {
       tagsChangedWhileFrozen = false;
       loadBooruImages(false);
     }
+    commitPreviewFrozenTagChanges();
+  }
+});
 
+document.addEventListener('mousedown', (e) => {
+  if (e.button === 2) {
+    e.preventDefault();
+    isShiftHeld = true;
+    previewFrozen = true;
+    booruHoverPreview.classList.add('active');
+    booruHoverPreview.classList.add('frozen');
+    document.body.style.userSelect = 'none';
+  }
+});
+
+document.addEventListener('mouseup', (e) => {
+  if (e.button === 2) {
+    e.preventDefault();
+    booruHoverPreview.classList.add('active');
+    isShiftHeld = false;
+    previewFrozen = false;
+    booruHoverPreview.classList.remove('frozen');
+    document.body.style.userSelect = '';
+    if (booruHoverPreview.classList.contains('active')) {
+      booruHoverPreview.classList.remove('active');
+      pauseAllPreviewVideos();
+    }
+    if (tagsChangedWhileFrozen) {
+      tagsChangedWhileFrozen = false;
+      loadBooruImages(false);
+    }
     commitPreviewFrozenTagChanges();
   }
 });
@@ -4448,7 +4888,8 @@ booruHoverPreview.innerHTML = `
       <div class="booru-hover-preview-author"></div>
       <div class="booru-hover-preview-metadata">
         <span class="booru-hover-preview-id booru-tag id-tag" title="Post ID"></span>
-        <div class="booru-hover-preview-date title="Date Created"></div>
+        <span class="booru-hover-preview-source booru-tag source-tag" title="Source"></span>
+        <div class="booru-hover-preview-date" title="Date Created"></div>
       </div>
     </div>
   </div>
@@ -4459,6 +4900,7 @@ const booruPreviewMediaContainer = booruHoverPreview.querySelector('.booru-hover
 const booruPreviewTags = booruHoverPreview.querySelector('.booru-hover-preview-tags');
 const booruPreviewMetadata = booruHoverPreview.querySelector('.booru-hover-preview-metadata');
 const booruPreviewId = booruHoverPreview.querySelector('.booru-hover-preview-id');
+const booruPreviewSource = booruHoverPreview.querySelector('.booru-hover-preview-source');
 const booruPreviewAuthor = booruHoverPreview.querySelector('.booru-hover-preview-author');
 const booruPreviewDate = booruHoverPreview.querySelector('.booru-hover-preview-date');
 
@@ -4624,7 +5066,7 @@ function showPreviewForElement(mediaElement, forceVideoLoad = false) {
     return;
   }
   // Prevent preview if scrolling or scroll-block is active
-  if (typeof isScrolling !== 'undefined' && (isScrolling || scrollBlockPreview)) {
+  if (typeof isScrolling !== 'undefined' && (isScrolling || scrollBlockPreview) && ! isShiftHeld) {
     booruHoverPreview.classList.remove('active', 'frozen');
     pauseAllPreviewVideos()
     previewFrozen = false;
@@ -4645,7 +5087,8 @@ function showPreviewForElement(mediaElement, forceVideoLoad = false) {
       return;
     }
   }
-  if (!mediaElement || !mediaElement.dataset.tags || !mediaElement.classList.contains('loaded')) return;
+  
+  if (!mediaElement || !mediaElement.dataset.tags) return;
   // For legacy/local images, allow preview even if imageUrl is a relative path
   // (the rest of the preview logic will work as long as data attributes are set)
   if (previewFrozen && booruHoverPreview.classList.contains('active')) return;
@@ -4656,11 +5099,21 @@ function showPreviewForElement(mediaElement, forceVideoLoad = false) {
   booruPreviewMediaContainer.parentNode.classList.add('active');
 
   // Set post id in metadata
+  const previewItem = mediaElement.closest('.booru-image-item');
   if (booruPreviewId) {
-    const postId = mediaElement.closest('.booru-image-item')?.dataset.postId || '';
+    const postId = previewItem?.dataset.postId || '';
     booruPreviewId.textContent = postId;
   }
-
+  if (booruPreviewSource) {
+    const sourceName = previewItem?.dataset.postSource || '';
+    const isDownloadsGallery = previewItem?.closest('.booru-gallery')?.classList.contains('downloads-gallery');
+    booruPreviewSource.textContent = isDownloadsGallery ? sourceName : '';
+  }
+  if (booruPreviewSource.textContent === '') {
+    booruPreviewSource.style.display = 'none';
+  } else {
+    booruPreviewSource.style.display = '';
+  }
 
   // Ensure preview cache exists (keep recently previewed media to avoid re-fetch)
   window._previewCache = window._previewCache || new Map();
@@ -4941,10 +5394,11 @@ function showPreviewForElement(mediaElement, forceVideoLoad = false) {
       currentImg.dataset.postId === currentPostId &&
       currentImg.dataset.postSource === currentPostSource;
     if (isSameImage) {
+      const resolvedImageUrl = getImageUrl(mediaElement.dataset.imageUrl);
       const hqPending = mediaElement.dataset.thumbnailUrl &&
         mediaElement.dataset.imageUrl !== mediaElement.dataset.thumbnailUrl &&
         mediaElement.dataset.highQualityLoaded !== 'true' &&
-        !(mediaElement.dataset.currentQualityUrl && mediaElement.dataset.currentQualityUrl === getImageUrl(mediaElement.dataset.imageUrl)) &&
+        !(mediaElement.dataset.currentQualityUrl && mediaElement.dataset.currentQualityUrl === resolvedImageUrl) &&
         mediaElement.dataset.highQualityLoading !== 'true';
       if (!hqPending) {
         // Already showing this image and HQ is done/in-progress, do not add again
@@ -4976,8 +5430,9 @@ function showPreviewForElement(mediaElement, forceVideoLoad = false) {
           img.src = getImageUrl(mediaElement.dataset.imageUrl);
         }, { once: true });
       } else {
-        // Start with thumbnail for instant display
-        img.src = getImageUrl(mediaElement.dataset.thumbnailUrl || mediaElement.dataset.imageUrl);
+        // Start with the already-loaded gallery thumbnail if available.
+        const imageSrc = mediaElement.currentSrc || mediaElement.src || mediaElement.dataset.resolvedThumbnailUrl || getImageUrl(mediaElement.dataset.thumbnailUrl || mediaElement.dataset.imageUrl);
+        img.src = imageSrc;
         img.alt = 'Preview';
         // if gallery image itself is already high quality but we haven't recorded it yet,
         // capture it so subsequent hovers will be instantaneous
@@ -5082,9 +5537,7 @@ function showPreviewForElement(mediaElement, forceVideoLoad = false) {
               
               // Store the proxied high-quality URL for future preview reuse.
               // This avoids reloading the raw source URL again on subsequent hovers.
-              const proxiedHighQualityUrl = getImageUrl(highQualityUrl);
-              mediaElement.dataset.highQualityUrl = proxiedHighQualityUrl;
-              mediaElement.dataset.highQualityLoaded = 'true';
+              mediaElement.dataset.highQualityUrl = getImageUrl(highQualityUrl);
               delete mediaElement.dataset.highQualityLoading;
               
               // Update preview image if it's still showing and hasn't been replaced
@@ -5145,8 +5598,7 @@ function showPreviewForElement(mediaElement, forceVideoLoad = false) {
                 // Append and set src to direct proxy URL (not blob)
                 booruPreviewMediaContainer.appendChild(newImg);
                 // Use the same proxy method that works elsewhere
-                const directUrl = getImageUrl(mediaElement.dataset.imageUrl);
-                newImg.src = directUrl;
+                newImg.src = getImageUrl(mediaElement.dataset.imageUrl);
               }
               
               // Update gallery element using the same approach as updateGalleryImageQuality()
@@ -5176,6 +5628,10 @@ function showPreviewForElement(mediaElement, forceVideoLoad = false) {
                 if (currentDownloadBtn && originalDownloadHTML !== null) {
                   currentDownloadBtn.innerHTML = originalDownloadHTML;
                 }
+                mediaElement.dataset.highQualityLoaded = 'true';
+                if (!mediaElement.dataset.currentQualityUrl) {
+                  mediaElement.dataset.currentQualityUrl = mediaElement.dataset.highQualityUrl || getImageUrl(mediaElement.dataset.imageUrl);
+                }
               }, { once: true });
               
               // Add error handler for gallery element
@@ -5193,7 +5649,7 @@ function showPreviewForElement(mediaElement, forceVideoLoad = false) {
                 }
               }, { once: true });
               
-              // Set the new source using the original imageUrl through getImageUrl
+              // Set the new source using the already-resolved URL if available
               mediaElement.src = getImageUrl(mediaElement.dataset.imageUrl);
             } catch (err) {
               console.error('Error loading high quality image:', err);
@@ -5564,7 +6020,7 @@ if (booruContent) {
           const endMessage = document.createElement('div');
           endMessage.className = 'booru-end-message';
           endMessage.style.cssText = 'text-align: center; padding: 30px; color: var(--text-secondary); font-size: 14px; border-top: 1px solid var(--border); margin-top: 20px;';
-          endMessage.innerHTML = `<p>loaded <b>${window.allDownloadedPosts?.length ?? 0}</b></p> <p><i class="fa-solid fa-xmark"></i> No more results available</p><br><h1>Recommended Tags</h1> <div class="booru-end-tags" id="booru-end-tags"></div>`;
+          endMessage.innerHTML = `<p>loaded <b>${totalResultCount ?? 0}</b></p> <p><i class="fa-solid fa-xmark"></i> No more results available</p><br><h1>Recommended Tags</h1> <div class="booru-end-tags" id="booru-end-tags"></div>`;
           const existingEndMessage = booruContent.querySelector('.booru-end-message');
           if (existingEndMessage) existingEndMessage.remove();
           booruContent.appendChild(endMessage);

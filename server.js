@@ -228,16 +228,13 @@ function getProxyAgent(protocol = 'http') {
     // CRITICAL: Use 'socks5h://' (with 'h') to force REMOTE DNS resolution
     // This prevents DNS leaks - hostname resolution happens through SOCKS proxy
     const proxyUrl = `socks5h://${auth}${proxySettings.host}:${proxySettings.port}`;
-    console.log(`🧭 getProxyAgent: using ${proxyUrl} for ${protocol}`);
     return new SocksProxyAgent(proxyUrl);
   } else {
     // HTTP proxy
     const proxyUrl = `${proxySettings.type.toLowerCase()}://${auth}${proxySettings.host}:${proxySettings.port}`;
     if (protocol === 'https') {
-      console.log(`🧭 getProxyAgent: using ${proxyUrl} for ${protocol}`);
       return new HttpsProxyAgent(proxyUrl);
     } else {
-      console.log(`🧭 getProxyAgent: using ${proxyUrl} for ${protocol}`);
       return new HttpProxyAgent(proxyUrl);
     }
   }
@@ -1201,19 +1198,18 @@ const server = http.createServer((req, res) => {
 
   // Proxy image downloads via GET (for img tags in booru gallery)
   if (req.method === 'GET' && (req.url.startsWith('/proxy-image?') || req.url === '/proxy-image')) {
-    console.log('🖼️ Proxy image GET request received:', req.url);
     (async () => {
     try {
       const urlParams = new URL(req.url, 'http://localhost').searchParams;
       const imageUrl = urlParams.get('url');
 
-      console.log('🖼️ Extracted image URL:', imageUrl);
-
       if (!imageUrl) {
-        console.log('🖼️ ERROR: Missing URL parameter');
+        console.log('GET IMAGE request URL: MISSING - Aborting!');
         res.writeHead(400, { 'Content-Type': 'application/json' });
         res.end(JSON.stringify({ error: 'Missing URL parameter' }));
         return;
+      } else {
+        console.log('GET IMAGE request URL:', imageUrl);
       }
 
       await activeRequestJitter();
@@ -1222,8 +1218,6 @@ const server = http.createServer((req, res) => {
       const protocol = parsedUrl.protocol === 'http:' ? http : https;
       const agent = requireProxyAgent(parsedUrl.protocol === 'http:' ? 'http' : 'https');
       const proxyName = `${proxySettings.type} ${proxySettings.host}:${proxySettings.port}`;
-
-      console.log(`🖼️ Proxying: ${parsedUrl.hostname}${parsedUrl.pathname}${parsedUrl.search ? '?' + parsedUrl.search.slice(1,60) + (parsedUrl.search.length > 61 ? '…' : '') : ''} [proxy: YES ${proxyName}]`);
 
       const headers = buildImageHeaders(parsedUrl.hostname);
       if (!headers.Host && !headers.host) {
@@ -1238,9 +1232,7 @@ const server = http.createServer((req, res) => {
       };
       if (agent) {
         options.agent = agent;
-        console.log('🖼️ Proxy image GET request will use proxy agent');
       } else {
-        console.warn('🖼️ Proxy image GET request has no proxy agent attached');
       }
       // Forward Range header so video seeking (HTTP 206 Partial Content) works
       if (req.headers['range']) {
@@ -1456,7 +1448,7 @@ const server = http.createServer((req, res) => {
         const protocol = parsedUrl.protocol === 'http:' ? http : https;
         const agent = requireProxyAgent(parsedUrl.protocol === 'http:' ? 'http' : 'https');
         const proxyName = `${proxySettings.type} ${proxySettings.host}:${proxySettings.port}`;
-        console.log(`📡 proxy-fetch proxy ${parsedUrl.hostname}${parsedUrl.pathname}${parsedUrl.search || ''} [${proxyName}]`);
+        console.log('GET FETCH request URL:', fetchUrl);
 
         // if no cookie header provided and a source config matches this host, inject configured cookies
         try {

@@ -46,6 +46,7 @@ function showFolderPrompt(defaultValue) {
 let activeTabId = null;
 let tabIdCounter = 0;
 let saveDebounceTimer = null;
+const tagSuggestionCache = {};
 
 // Debounce utility for performance
 function debounce(func, wait) {
@@ -295,30 +296,38 @@ async function initBooruTabs() {
   const searchInput = document.getElementById('search-filter-input');
   const suggestionField = document.getElementById('search-suggestion'); // Assume this exists in the HTML
 
-  function updateSuggestion() {
+  async function updateSuggestion() {
     const source = window.currentBooruSource || 'reddit';
-    const allTags = window.tagSuggestions[source] || [];
-    const userInput = searchInput.value.toLowerCase();
-    const userTag = userInput.split(' ').pop();
+    const userInput = searchInput.value.trim();
+    const tokens = userInput.split(/\s+/);
+    const userTag = tokens[tokens.length - 1]?.toLowerCase() || '';
     if (!userInput || !userTag) {
-      suggestionField.value = ""; // Clear suggestion if input is empty
+      suggestionField.value = "";
       return;
     }
 
-    // Find matching tags (limit to 10 for performance)
-    const matches = allTags
-      .filter(tag => tag.toLowerCase().startsWith(userTag))
-      .sort() // Sort alphabetically
-      .slice(0, 10); // Limit to 10 suggestions
+    const cacheKey = `${source}|${userTag}`;
+    let matches = tagSuggestionCache[cacheKey];
+
+    if (!matches) {
+      try {
+        const response = await fetch(`http://localhost:3001/load-tag-suggestions?source=${encodeURIComponent(source)}&prefix=${encodeURIComponent(userTag)}&limit=10`);
+        if (!response.ok) throw new Error('Failed to fetch tag suggestions');
+        matches = await response.json();
+        if (!Array.isArray(matches)) matches = [];
+        tagSuggestionCache[cacheKey] = matches;
+      } catch (err) {
+        console.error('Tag suggestion lookup failed:', err);
+        matches = [];
+      }
+    }
 
     if (matches.length > 0) {
-      // Use the first match
       const suggestion = matches[0];
-      // Escape special regex characters in userTag
       const escapedUserTag = userTag.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
-      suggestionField.value = userInput.replace(new RegExp(escapedUserTag + '$'), suggestion);
+      suggestionField.value = userInput.replace(new RegExp(`${escapedUserTag}$`, 'i'), suggestion);
     } else {
-      suggestionField.value = ""; // Clear suggestion if no match
+      suggestionField.value = "";
     }
   }
 
@@ -617,6 +626,9 @@ function handleCloseActiveTabShortcut(e) {
 
 // Switch to a specific tab
 function switchToTab(tabId) {
+  const existingSidebar = document.getElementById('downloads-sidebar');
+  if (existingSidebar)
+    existingSidebar.remove();
   const galleryWrapper = document.getElementById('gallery-wrapper');
   galleryWrapper.querySelectorAll('.booru-gallery:not([id])').forEach(gallery => gallery.remove());
   const artistSeperators = galleryWrapper.querySelectorAll('.artist-separator');
@@ -749,6 +761,7 @@ function switchToTab(tabId) {
   // (State already saved above, before cleanupGallery)
   
   activeTabId = tabId;
+  window.activeTabId = activeTabId;
   
   // Show control bar when a tab is active
   const controlBar = document.querySelector('.booru-control-bar');
@@ -804,20 +817,13 @@ function switchToTab(tabId) {
     const content = document.querySelector('.booru-content');
     const gallery = document.getElementById('booru-gallery');
     if (content) {
-      content.style.transition = 'none';
-      content.style.opacity = '0';
+      content.classList.add('hidden');
     }
 
     // Restore scroll position after gallery renders, then reveal the content.
     const revealContent = () => {
       if (content) {
-        content.style.transition = 'opacity 0.15s ease';
-        content.style.opacity = '1';
-        // Clean up inline styles after the transition finishes
-        setTimeout(() => {
-          content.style.transition = '';
-          content.style.opacity = '';
-        }, 160);
+        content.classList.remove('hidden');
       }
     };
 
@@ -908,6 +914,11 @@ function updateTabName(tabId, newName) {
 function closeBooruTab(tabId) {
   const tabIndex = booruTabs.findIndex(t => t.id === tabId);
   if (tabIndex === -1) return;
+  
+  // Clear cached thumbnails for this tab
+  if (window.clearThumbnailCacheForTab) {
+    window.clearThumbnailCacheForTab(tabId);
+  }
   
   // Clean up the tab's data to free memory
   const tab = booruTabs[tabIndex];

@@ -68,8 +68,9 @@ async function initDatabase() {
     );
     
     CREATE TABLE IF NOT EXISTS tag_suggestions (
-      tag TEXT PRIMARY KEY,
-      sources TEXT NOT NULL
+      source TEXT NOT NULL,
+      tag TEXT NOT NULL,
+      PRIMARY KEY (source, tag)
     );
   `);
 
@@ -393,23 +394,19 @@ function saveTagSuggestions(tagData) {
   if (!db) throw new Error('Database not initialized');
 
   const deleteStmt = db.prepare('DELETE FROM tag_suggestions');
-  const insertStmt = db.prepare('INSERT OR REPLACE INTO tag_suggestions (tag, sources) VALUES (?, ?)');
+  const insertStmt = db.prepare('INSERT OR REPLACE INTO tag_suggestions (source, tag) VALUES (?, ?)');
   
   const saveAll = db.transaction((data) => {
-    const tagMap = new Map();
-
+    deleteStmt.run();
     for (const source of Object.keys(data || {})) {
       const tags = Array.isArray(data[source]) ? data[source] : [];
+      const seen = new Set();
       for (const tag of tags) {
         if (typeof tag !== 'string' || tag.length === 0) continue;
-        if (!tagMap.has(tag)) tagMap.set(tag, new Set());
-        tagMap.get(tag).add(source);
+        if (seen.has(tag)) continue;
+        seen.add(tag);
+        insertStmt.run(source, tag);
       }
-    }
-
-    deleteStmt.run();
-    for (const [tag, sources] of tagMap.entries()) {
-      insertStmt.run(tag, JSON.stringify(Array.from(sources).sort()));
     }
   });
 
@@ -420,71 +417,106 @@ function saveTagSuggestions(tagData) {
 function loadTagSuggestions() {
   if (!db) throw new Error('Database not initialized');
   
-  const rows = db.prepare('SELECT tag, sources FROM tag_suggestions ORDER BY tag').all();
+  const rows = db.prepare('SELECT source, tag FROM tag_suggestions ORDER BY source, tag').all();
   const suggestions = {};
   for (const row of rows) {
-    let sources;
-    try {
-      sources = JSON.parse(row.sources);
-    } catch (err) {
-      sources = [];
-    }
-    if (!Array.isArray(sources)) {
-      sources = [];
-    }
-
-    for (const source of sources) {
-      if (typeof source !== 'string' || source.length === 0) continue;
-      if (!suggestions[source]) suggestions[source] = [];
-      suggestions[source].push(row.tag);
-    }
+    if (!suggestions[row.source]) suggestions[row.source] = [];
+    suggestions[row.source].push(row.tag);
   }
-
-  Object.keys(suggestions).forEach(source => {
-    suggestions[source] = Array.from(new Set(suggestions[source])).sort();
-  });
   return suggestions;
+}
+
+function queryTagSuggestions(source, prefix = '', limit = 10) {
+  if (!db) throw new Error('Database not initialized');
+  if (typeof source !== 'string' || source.length === 0) return [];
+  if (typeof prefix !== 'string') prefix = '';
+
+  const sanitizedPrefix = prefix.replace(/[%_]/g, '\\$&');
+  const likePattern = sanitizedPrefix.length ? `${sanitizedPrefix}%` : '%';
+
+  const stmt = db.prepare(`
+    SELECT tag
+    FROM tag_suggestions
+    WHERE source = ?
+      AND tag LIKE ? ESCAPE '\\'
+    ORDER BY tag
+    LIMIT ?
+  `);
+  return stmt.all(source, likePattern, limit).map(row => row.tag);
 }
 
 function migrateTagSuggestionsSchema() {
   if (!db) throw new Error('Database not initialized');
 
+  const tableInfo = db.prepare('PRAGMA table_info(tag_suggestions)').all();
+  const columns = tableInfo.map(col => col.name);
+  const hasSourceColumn = columns.includes('source');
+  const hasTagColumn = columns.includes('tag');
+  const hasSourcesColumn = columns.includes('sources');
+
+  if (hasTagColumn && hasSourcesColumn && !hasSourceColumn) {
+    db.exec(`
+      CREATE TABLE IF NOT EXISTS tag_suggestions_new (
+        source TEXT NOT NULL,
+        tag TEXT NOT NULL,
+        PRIMARY KEY (source, tag)
+      );
+    `);
+
+    const rows = db.prepare('SELECT tag, sources FROM tag_suggestions').all();
+    const insertStmt = db.prepare('INSERT OR IGNORE INTO tag_suggestions_new (source, tag) VALUES (?, ?)');
+    const migrateOld = db.transaction((items) => {
+      for (const row of items) {
+        let sources;
+        try {
+          sources = JSON.parse(row.sources);
+        } catch (err) {
+          sources = [];
+        }
+        if (!Array.isArray(sources)) sources = [];
+        for (const source of sources) {
+          if (typeof source !== 'string' || source.length === 0) continue;
+          insertStmt.run(source, row.tag);
+        }
+      }
+    });
+
+    migrateOld(rows);
+    db.exec('DROP TABLE tag_suggestions;');
+    db.exec('ALTER TABLE tag_suggestions_new RENAME TO tag_suggestions;');
+  }
+
+  db.exec('CREATE INDEX IF NOT EXISTS idx_tag_suggestions_source_tag ON tag_suggestions(source, tag);');
+
   const existing = db.prepare('SELECT value FROM settings WHERE key = ?').get('tag_suggestions');
-  if (!existing || !existing.value) {
-    return;
-  }
-
-  let suggestions;
-  try {
-    suggestions = JSON.parse(existing.value);
-  } catch (err) {
-    console.warn('Could not parse existing tag_suggestions JSON:', err);
-    return;
-  }
-
-  if (typeof suggestions !== 'object' || suggestions === null) {
-    return;
-  }
-
-  const tagMap = new Map();
-  for (const source of Object.keys(suggestions)) {
-    const tags = Array.isArray(suggestions[source]) ? suggestions[source] : [];
-    for (const tag of tags) {
-      if (typeof tag !== 'string' || tag.length === 0) continue;
-      if (!tagMap.has(tag)) tagMap.set(tag, new Set());
-      tagMap.get(tag).add(source);
+  if (existing && existing.value) {
+    let suggestions;
+    try {
+      suggestions = JSON.parse(existing.value);
+    } catch (err) {
+      console.warn('Could not parse existing tag_suggestions JSON:', err);
+      suggestions = null;
     }
-  }
 
-  const insertStmt = db.prepare('INSERT OR REPLACE INTO tag_suggestions (tag, sources) VALUES (?, ?)');
-  const insertMany = db.transaction((data) => {
-    for (const [tag, sources] of data.entries()) {
-      insertStmt.run(tag, JSON.stringify(Array.from(sources).sort()));
+    if (suggestions && typeof suggestions === 'object') {
+      const insertStmt = db.prepare('INSERT OR IGNORE INTO tag_suggestions (source, tag) VALUES (?, ?)');
+      const insertMany = db.transaction((data) => {
+        for (const source of Object.keys(data)) {
+          const tags = Array.isArray(data[source]) ? data[source] : [];
+          const seen = new Set();
+          for (const tag of tags) {
+            if (typeof tag !== 'string' || tag.length === 0) continue;
+            if (seen.has(tag)) continue;
+            seen.add(tag);
+            insertStmt.run(source, tag);
+          }
+        }
+      });
+      insertMany(suggestions);
     }
-  });
 
-  insertMany(tagMap);
-  db.prepare('DELETE FROM settings WHERE key = ?').run('tag_suggestions');
+    db.prepare('DELETE FROM settings WHERE key = ?').run('tag_suggestions');
+  }
 }
 
 // ============== Download Settings operations ==============
@@ -532,6 +564,7 @@ module.exports = {
   loadSession,
   saveTagSuggestions,
   loadTagSuggestions,
+  queryTagSuggestions,
   saveDownloadSettings,
   loadDownloadSettings
 };

@@ -1200,9 +1200,9 @@ if (hqHoverDelayInput) {
     }
     debouncedSettingsSave();
   });
-  window.hqHoverDelay = parseInt(hqHoverDelayInput.value, 10) || 400;
+  window.hqHoverDelay = parseInt(hqHoverDelayInput.value, 10) || 150;
 } else {
-  window.hqHoverDelay = window.hqHoverDelay || 400;
+  window.hqHoverDelay = window.hqHoverDelay || 150;
 }
 
 // Download concurrency input
@@ -1273,7 +1273,7 @@ async function saveSession() {
       // API credentials (source-specific)
       booruApiCredentials: window.booruApiCredentials || {},
       downloadConcurrency: (document.getElementById('download-concurrency-input') && parseInt(document.getElementById('download-concurrency-input').value, 10)) || 3,
-      hqHoverDelay: (document.getElementById('hq-hover-delay-input') && parseInt(document.getElementById('hq-hover-delay-input').value, 10)) ?? 400,
+      hqHoverDelay: (document.getElementById('hq-hover-delay-input') && parseInt(document.getElementById('hq-hover-delay-input').value, 10)) ?? 150,
       downloadsSortByArtist: window.sessionSortByArtist || false
     };
     await fetch('http://localhost:3001/save-session', {
@@ -1385,9 +1385,9 @@ async function loadSession() {
     // Restore HQ hover delay
     if (session.hqHoverDelay !== undefined && document.getElementById('hq-hover-delay-input')) {
       document.getElementById('hq-hover-delay-input').value = session.hqHoverDelay;
-      window.hqHoverDelay = parseInt(session.hqHoverDelay, 10) ?? 400;
+      window.hqHoverDelay = parseInt(session.hqHoverDelay, 10) ?? 150;
     } else {
-      window.hqHoverDelay = window.hqHoverDelay || 400;
+      window.hqHoverDelay = window.hqHoverDelay || 150;
     }
     // Restore global blacklist tags
     if (session.blacklistTags && blacklistTagsInput) {
