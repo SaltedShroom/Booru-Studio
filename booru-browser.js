@@ -3163,7 +3163,6 @@ function updateGalleryImageQuality() {
         if (errorDiv) {
           errorDiv.remove();
         }
-        
         // Set the new source
         img.src = targetSrc;
         img.onload = () => {
@@ -3172,7 +3171,25 @@ function updateGalleryImageQuality() {
           if (downloadBtn && originalDownloadHTML) {
             downloadBtn.innerHTML = originalDownloadHTML;
           }
-          img.style.filter = ''; // Remove blur after loading
+          img.style.filter = '';
+
+          // --- Update tab cache with new quality ---
+          try {
+            const postId = img.closest('.booru-image-item')?.dataset.postId;
+            const postSource = img.closest('.booru-image-item')?.dataset.postSource;
+            if (window.booruTabs && window.activeTabId) {
+              const tab = window.booruTabs.find(t => t.id === window.activeTabId);
+              if (tab && Array.isArray(tab.booruPosts)) {
+                const post = tab.booruPosts.find(p => String(p.id) === String(postId) && String(p.source) === String(postSource));
+                if (post) {
+                  post.imageUrl = img.src;
+                  post.currentQualityUrl = img.src;
+                  if (!showHighQualityGallery && img.dataset.thumbnailUrl) post.imageUrl = img.dataset.thumbnailUrl;
+                  if (showHighQualityGallery && img.dataset.imageUrl) post.imageUrl = img.dataset.imageUrl;
+                }
+              }
+            }
+          } catch (e) { /* ignore */ }
         }
       } else {
         // URL is the same, just restore UI immediately
@@ -4084,6 +4101,21 @@ function restoreHighQualityGalleryImages() {
     if (!img.dataset.currentQualityUrl) {
       img.dataset.currentQualityUrl = highQualityUrl;
     }
+    // --- Update tab cache with new quality ---
+    try {
+      const postId = img.closest('.booru-image-item')?.dataset.postId;
+      const postSource = img.closest('.booru-image-item')?.dataset.postSource;
+      if (window.booruTabs && window.activeTabId) {
+        const tab = window.booruTabs.find(t => t.id === window.activeTabId);
+        if (tab && Array.isArray(tab.booruPosts)) {
+          const post = tab.booruPosts.find(p => String(p.id) === String(postId) && String(p.source) === String(postSource));
+          if (post) {
+            post.imageUrl = img.src;
+            post.currentQualityUrl = img.src;
+          }
+        }
+      }
+    } catch (e) { /* ignore */ }
   });
 }
 
@@ -4273,7 +4305,16 @@ function createBooruImageElement(post, maxHeight = null, imageWidth = null) {
   let mediaElement;
 
   // Only apply gallery quality toggle to images, not videos
-  const useHighQuality = (!isVideo && typeof showHighQualityGallery !== 'undefined') ? showHighQualityGallery : false;
+  // If post has a cached HQ version, prefer it
+  let useHighQuality = (!isVideo && typeof showHighQualityGallery !== 'undefined') ? showHighQualityGallery : false;
+  let forceQualityUrl = null;
+  if (!isVideo && post && post.currentQualityUrl) {
+    forceQualityUrl = post.currentQualityUrl;
+    useHighQuality = true;
+  } else if (!isVideo && post && post.highQualityLoaded && post.highQualityUrl) {
+    forceQualityUrl = post.highQualityUrl;
+    useHighQuality = true;
+  }
 
   if (isVideo) {
     // Check if thumbnail is also a video (common for downloads) or an actual image thumbnail (common for booru)
@@ -4350,13 +4391,13 @@ function createBooruImageElement(post, maxHeight = null, imageWidth = null) {
     // Create image element
     mediaElement = document.createElement('img');
     mediaElement.alt = post.title || post.tags.slice(0, 5).join(' ');
-    
+
     // Set explicit dimensions for Justified Gallery to layout before image loads
     const width = 400;
     const height = Math.round(width * aspectRatio);
     mediaElement.setAttribute('width', width);
     mediaElement.setAttribute('height', height);
-    
+
     mediaElement.style.width = '100%';
     mediaElement.style.height = '100%';
     mediaElement.style.objectFit = 'cover';
@@ -4381,52 +4422,17 @@ function createBooruImageElement(post, maxHeight = null, imageWidth = null) {
     if (typeof dataIndex !== 'undefined') {
       mediaElement.setAttribute('data-index', dataIndex);
     }
-    
-    mediaElement.addEventListener('load', async () => {
-      mediaElement.style.opacity = '1'; // Fade in on load
-      mediaElement.classList.add('loaded');
-      loader.style.display = 'none';
-      
-      // Check if mouse position is within image boundaries and show preview
-      if (!previewFrozen && typeof showPreviewForElement === 'function') {
-        const rect = mediaElement.getBoundingClientRect();
-        const isHovering = lastMouseX >= rect.left && lastMouseX <= rect.right &&
-                          lastMouseY >= rect.top && lastMouseY <= rect.bottom;
-        if (isHovering) {
-          // Set lastHoveredElement to prevent duplicate calls
-          if (typeof lastHoveredElement !== 'undefined') {
-            window.booruLastHoveredElement = mediaElement;
-          }
-          showPreviewForElement(mediaElement);
-        }
-      }
-    }, { once: true });
-    
-    mediaElement.addEventListener('error', (e) => {
 
-      loader.style.display = 'none';
-      mediaElement.style.display = 'none';
-      const errorDiv = document.createElement('div');
-      errorDiv.style.cssText = `
-        width: 100%;
-        height: 100%;
-        display: flex;
-        align-items: center;
-        justify-content: center;
-        background: var(--bg-darkest);
-        color: var(--text-secondary);
-        font-size: 12px;
-        text-align: center;
-        padding: 10px;
-      `;
-      errorDiv.innerHTML = '<i class="fas fa-exclamation-triangle errorDivIcon"></i>Failed to load';
-      link.appendChild(errorDiv);
-    }, { once: true });
-    
     // Use correct image for current gallery quality; lazy-load so off-screen
     // images (and images in hidden tabs) are not fetched until visible
     mediaElement.loading = 'lazy';
-    const resolvedThumbnailUrl = getImageUrl(useHighQuality ? url : (post.thumbnailUrl || url));
+    let resolvedThumbnailUrl = getImageUrl(useHighQuality ? url : (post.thumbnailUrl || url));
+    if (forceQualityUrl) {
+      resolvedThumbnailUrl = getImageUrl(forceQualityUrl);
+      mediaElement.dataset.highQualityLoaded = 'true';
+      mediaElement.dataset.currentQualityUrl = resolvedThumbnailUrl;
+      mediaElement.dataset.highQualityUrl = resolvedThumbnailUrl;
+    }
     mediaElement.dataset.resolvedThumbnailUrl = resolvedThumbnailUrl;
     const currentTabId = typeof activeTabId !== 'undefined' ? activeTabId : null;
     const isVideoSource = resolvedThumbnailUrl.endsWith('.mp4') || resolvedThumbnailUrl.endsWith('.webm') || resolvedThumbnailUrl.endsWith('.mov');
@@ -4446,6 +4452,46 @@ function createBooruImageElement(post, maxHeight = null, imageWidth = null) {
       mediaElement.src = cachedThumbnailUrl || resolvedThumbnailUrl;
       cacheThumbnailBlobForTab(currentTabId, cachedThumbnailUrl || resolvedThumbnailUrl, cacheKey);
     }
+
+    mediaElement.addEventListener('load', async () => {
+      mediaElement.style.opacity = '1'; // Fade in on load
+      mediaElement.classList.add('loaded');
+      loader.style.display = 'none';
+
+      // Check if mouse position is within image boundaries and show preview
+      if (!previewFrozen && typeof showPreviewForElement === 'function') {
+        const rect = mediaElement.getBoundingClientRect();
+        const isHovering = lastMouseX >= rect.left && lastMouseX <= rect.right &&
+                          lastMouseY >= rect.top && lastMouseY <= rect.bottom;
+        if (isHovering) {
+          // Set lastHoveredElement to prevent duplicate calls
+          if (typeof lastHoveredElement !== 'undefined') {
+            window.booruLastHoveredElement = mediaElement;
+          }
+          showPreviewForElement(mediaElement);
+        }
+      }
+    }, { once: true });
+
+    mediaElement.addEventListener('error', (e) => {
+      loader.style.display = 'none';
+      mediaElement.style.display = 'none';
+      const errorDiv = document.createElement('div');
+      errorDiv.style.cssText = `
+        width: 100%;
+        height: 100%;
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        background: var(--bg-darkest);
+        color: var(--text-secondary);
+        font-size: 12px;
+        text-align: center;
+        padding: 10px;
+      `;
+      errorDiv.innerHTML = '<i class="fas fa-exclamation-triangle errorDivIcon"></i>Failed to load';
+      link.appendChild(errorDiv);
+    }, { once: true });
   }
   
   link.appendChild(mediaElement);
@@ -5653,6 +5699,21 @@ function showPreviewForElement(mediaElement, forceVideoLoad = false) {
               
               // Set the new source using the already-resolved URL if available
               mediaElement.src = getImageUrl(mediaElement.dataset.imageUrl);
+              // --- Update tab cache with new quality ---
+              try {
+                const postId = mediaElement.closest('.booru-image-item')?.dataset.postId;
+                const postSource = mediaElement.closest('.booru-image-item')?.dataset.postSource;
+                if (window.booruTabs && window.activeTabId) {
+                  const tab = window.booruTabs.find(t => t.id === window.activeTabId);
+                  if (tab && Array.isArray(tab.booruPosts)) {
+                    const post = tab.booruPosts.find(p => String(p.id) === String(postId) && String(p.source) === String(postSource));
+                    if (post) {
+                      post.imageUrl = mediaElement.src;
+                      post.currentQualityUrl = mediaElement.src;
+                    }
+                  }
+                }
+              } catch (e) { /* ignore */ }
             } catch (err) {
               console.error('Error loading high quality image:', err);
               showToast('Failed to load high quality preview: ' + err.message, 'error');

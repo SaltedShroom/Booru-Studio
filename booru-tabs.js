@@ -500,6 +500,7 @@ function applyState(state) {
   }
   if (sizeSlider && sizeSlider.value !== String(state.imageSize)) {
     sizeSlider.value = state.imageSize || 250;
+    document.documentElement.style.setProperty('--booru-image-size', `${Math.min(state.imageSize || 250, 300)}px`);
   }
   if (sizeValue) {
     sizeValue.textContent = `${state.imageSize || 250}px`;
