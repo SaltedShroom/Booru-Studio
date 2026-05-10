@@ -2826,7 +2826,7 @@ body, html {
   will-change: transform;
   contain: layout style paint;
   content-visibility: auto;
-  border: calc(var(--booru-image-size) / 220) solid transparent;
+  border: calc(var(--booru-image-size) / 220 * 2) solid transparent;
   box-sizing: border-box;
   display: block;
   text-decoration: none;
@@ -2938,7 +2938,7 @@ body, html {
 .booru-image-item .image-loader {
   position: absolute;
   color: var(--accent);
-  font-size: 65px;
+  font-size: calc(var(--booru-image-size) / 220 * 60);
   width: 100%;
   height: 100%;
   display: flex;
@@ -2984,7 +2984,7 @@ body, html {
   box-shadow: inset 0 0 0 calc(var(--booru-image-size) / 220 * 4) var(--border-gif), var(--booru-image-item-shadow);
 }
 .booru-image-item[data-downloaded="true"].file-type-video::after {
-  box-shadow: inset 0 0 0 calc(var(--booru-image-size) / 220 * 4) var(--border-video), var(--booru-image-item-shadow) ;
+  box-shadow: inset 0 0 0 calc(var(--booru-image-size) / 220 * 4) var(--border-video), var(--booru-image-item-shadow);
 }
 
 .booru-gallery:not(.downloads-gallery) .booru-image-item[data-downloaded="true"].file-type-image {
@@ -3424,7 +3424,7 @@ body, html {
 .reddit-image-item .image-loader {
   position: absolute;
   color: var(--accent);
-  font-size: 32px;
+  font-size: calc(var(--booru-image-size) / 220 * 33);
   z-index: 1;
 }
 

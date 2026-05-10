@@ -2781,11 +2781,23 @@ const server = http.createServer((req, res) => {
       res.writeHead(500, { 'Content-Type': 'application/json' });
       res.end(JSON.stringify({ success: false, error: error.message }));
     }
-  } else if (req.method === 'GET' && req.url === '/load-tag-suggestions') {
+  } else if (req.method === 'GET' && req.url.startsWith('/load-tag-suggestions')) {
     try {
-      const suggestions = database.loadTagSuggestions();
-      res.writeHead(200, { 'Content-Type': 'application/json' });
-      res.end(JSON.stringify(suggestions));
+      const urlObj = new URL(req.url, `http://${req.headers.host}`);
+      const source = urlObj.searchParams.get('source');
+      const prefix = urlObj.searchParams.get('prefix') || '';
+      const limit = parseInt(urlObj.searchParams.get('limit') || '10', 10);
+      if (source) {
+        // Query for a specific source and prefix
+        const matches = database.queryTagSuggestions(source, prefix, limit);
+        res.writeHead(200, { 'Content-Type': 'application/json' });
+        res.end(JSON.stringify(matches));
+      } else {
+        // No source param: return all suggestions (full dump)
+        const suggestions = database.loadTagSuggestions();
+        res.writeHead(200, { 'Content-Type': 'application/json' });
+        res.end(JSON.stringify(suggestions));
+      }
     } catch (error) {
       res.writeHead(500, { 'Content-Type': 'application/json' });
       res.end(JSON.stringify({ success: false, error: error.message }));

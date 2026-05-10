@@ -1303,8 +1303,6 @@ async function showDownloadsGallery(forceReload = false) {
   if (booruContent) {
     booruContent.style.display = 'block';
   }
-
-  let downloadedPosts = await dbStore.getAllDownloadedPosts();
   
   window.isViewingDownloadsGallery = true;
   window.isViewingScroller = false;
@@ -1337,6 +1335,7 @@ async function showDownloadsGallery(forceReload = false) {
   if (searchInput) {
     searchInput.value = window.downloadsSearchText || '';
   }
+
   // 3. Filter header controls: keep only .control-section-primary, .control-section-search, .control-section-slider, .control-section-limit, .control-section-artist, .control-section-source, #select-download-folder-btn
   const controlBar = document.querySelector('header.control-bar.booru-control-bar');
   if (controlBar) {
@@ -1443,6 +1442,8 @@ async function showDownloadsGallery(forceReload = false) {
     controlBar.style.display = 'flex';
   }
 
+  let downloadedPosts = await dbStore.getAllDownloadedPosts();
+
   // 4. Render downloads gallery
   if (typeof dbStore !== 'undefined' && dbStore) {
     // Filter out posts where files don't exist on the server
@@ -1540,7 +1541,6 @@ async function showDownloadsGallery(forceReload = false) {
     window.downloadsPaginationIndex = limit;
     window.hasMoreResults = limit < downloadedPosts.length;
 
-    renderBooruGallery(initialPosts, false);
     // Set booruTotalCount to downloads count
     if (booruTotalCount) {
       booruTotalCount.innerHTML = `DOWNLOADS <b>${downloadedPosts.length}</b>`;
@@ -1594,12 +1594,14 @@ async function showDownloadsGallery(forceReload = false) {
         }
       };
       searchInput.addEventListener('input', () => {
-        if (searchHandlerTimeout) {
-          clearTimeout(searchHandlerTimeout);
+        if (window.isViewingDownloadsGallery) {
+          if (searchHandlerTimeout) {
+            clearTimeout(searchHandlerTimeout);
+          }
+          searchHandlerTimeout = setTimeout(() => {
+            downloadsSearchHandler();
+          }, 400);
         }
-        searchHandlerTimeout = setTimeout(() => {
-          downloadsSearchHandler();
-        }, 400);
       });
       // Store the handler for removal later
       searchInput._downloadsSearchHandler = downloadsSearchHandler;
