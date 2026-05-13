@@ -14,6 +14,7 @@ The goal with Booru Studio is to provide an all-in-one app that simplifies acces
 <br>
 <br>
 ### <a href="https://github.com/SaltedShroom/Booru-Studio/releases">⬇️ Downloads</a>
+download the one with *Setup* in it
 
 </div>
 
