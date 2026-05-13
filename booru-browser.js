@@ -4576,6 +4576,7 @@ function createBooruImageElement(post, maxHeight = null, imageWidth = null) {
 
         if (!isVideo) {
           if (mediaElement) {
+            mediaElement.dataset.highQualityLoaded = 'true';
             if (mediaElement.src !== localUrl) {
               mediaElement.src = localUrl;
             }
