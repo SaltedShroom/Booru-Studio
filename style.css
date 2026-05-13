@@ -3179,6 +3179,9 @@ body, html {
   color: var(--accent);
   font-size: 11px;
   font-weight: 600;
+  overflow: auto;
+  max-height: 30px;
+  max-width: 80%;
 }
 
 .booru-hover-preview-date {
@@ -5042,10 +5045,10 @@ textarea.settings-input {
 .stats-wrapper .tags-container {
   display: flex;
   flex-wrap: wrap;
-  gap: 6px;
+  gap: 2px;
 }
 .stats-wrapper .tag {
-  font-size: 9px;
+  font-size: 8px;
   color: var(--text-secondary);
   background: var(--bg-darkest);
   border: solid 1px var(--border);
@@ -5082,4 +5085,8 @@ textarea.settings-input {
   background: var(--surface-hover);
   color: var(--accent);
   cursor: pointer;
+}
+
+#load-more-icon {
+  transition: opacity 0.2s ease;
 }

@@ -52,8 +52,8 @@ let proxySettings = {
   password: '',
   // Anonymity options (all on by default)
   uaRotation: true,
-  jitterMin: 150,
-  jitterMax: 900,
+  jitterMin: 20,
+  jitterMax: 250,
   torRotateCount: 100,
   torRotateMins: 300
 };
@@ -292,9 +292,9 @@ function getRandomUA() {
   return UA_POOL[Math.floor(Math.random() * UA_POOL.length)];
 }
 
-// Random jitter delay (150–900 ms) before outgoing requests to impede timing correlation
+// Random jitter delay (20–250 ms) before outgoing requests to impede timing correlation
 function requestJitter() {
-  return new Promise(resolve => setTimeout(resolve, 150 + Math.floor(Math.random() * 750)));
+  return new Promise(resolve => setTimeout(resolve, 20 + Math.floor(Math.random() * 250)));
 }
 
 // Returns true when the active proxy looks like a local Tor SOCKS5 instance

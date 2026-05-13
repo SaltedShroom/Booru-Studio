@@ -161,6 +161,9 @@ function cleanupGallery(gallery) {
 
   // Clear innerHTML as final cleanup
   gallery.innerHTML = '';
+
+  // Remove load more icon if it exists
+  document.getElementById('load-more-icon')?.remove();
 }
 
 // Limit array size to prevent unbounded growth

@@ -1033,7 +1033,7 @@ function renderDownloadsTags() {
 
   const topTags = Object.entries(tagCounts)
     .sort((a, b) => b[1] - a[1])
-    .slice(0, 20);
+    .slice(0, 35);
 
   container.innerHTML = '';
   topTags.forEach(([tag, count]) => {
@@ -1281,6 +1281,7 @@ async function showDownloadsGallery(forceReload = false) {
   const booruGallery = document.getElementById('booru-gallery');
   cleanupDownloadsGallery();
   booruGallery.innerHTML = '<i class="fas fa-circle-notch fa-spin image-loader" style="position: relative; color: var(--accent); font-size: 60px; width: 100%; height: 200px; line-height: 200px; text-align: center;"></i>';
+  document.getElementById('load-more-icon')?.remove();
   const booruCounter = document.getElementById('booru-total-count');
   booruCounter.innerHTML = ''; // Clear total count
   
@@ -1525,6 +1526,7 @@ async function showDownloadsGallery(forceReload = false) {
 
     if (booruGallery) {
       booruGallery.innerHTML = '';
+      document.getElementById('load-more-icon')?.remove();
       booruGallery.classList.add('downloads-gallery');
     }
     // Set window properties for lightbox navigation and pagination
@@ -1669,6 +1671,7 @@ function cleanupDownloadsGallery() {
     cleanupGallery(booruGallery);
   } else {
     booruGallery.innerHTML = '';
+    document.getElementById('load-more-icon')?.remove();
   }
   booruGallery.style.height = '300px';
 }
@@ -3537,6 +3540,7 @@ async function loadGenericBooru(sourceId, append) {
     
     if (!userId || !apiKey) {
       booruGallery.innerHTML = `<div style="color: var(--text-secondary); text-align: center; padding: 40px;">Please enter your API key and User ID for ${sourceConfig.name}<br><small>${sourceConfig.auth.helpText || 'Get yours from your account settings'}</small></div>`;
+      document.getElementById('load-more-icon')?.remove();
       showToast(`Authentication required for ${sourceConfig.name}: enter User ID and API key`, 'warning');
       return;
     }
@@ -3552,6 +3556,7 @@ async function loadGenericBooru(sourceId, append) {
   
   if (!append) {
     showToast(`Loading images from ${sourceConfig.name}...`, 'info');
+    document.getElementById('load-more-icon')?.remove();
     booruGallery.innerHTML = '<i class="fas fa-circle-notch fa-spin image-loader" style="position: relative; color: var(--accent); font-size: 60px; width: 100%; height: 200px; line-height: 200px; text-align: center;"></i>';
     booruGallery.style.height = '300px';
     booruPaginationToken = null;
@@ -3561,6 +3566,7 @@ async function loadGenericBooru(sourceId, append) {
     // Remove end message if it exists
     const endMessage = booruGallery.querySelector('.booru-end-message');
     if (endMessage) endMessage.remove();
+    document.getElementById('load-more-icon')?.remove();
     if (booruLoading) booruLoading.style.display = 'flex';
   }
   
@@ -3610,6 +3616,7 @@ async function loadGenericBooru(sourceId, append) {
       }
     } catch (err) {
       console.warn('Failed to fetch total count:', err);
+      showToast('Failed to fetch total count: ' + (err.message || err), 'error');
       window.totalResultCount = null;
     }
   }
@@ -3649,6 +3656,7 @@ async function loadGenericBooru(sourceId, append) {
       if (!append) {
         window.totalResultCount = 0;
         updateTotalCountDisplay();
+        document.getElementById('load-more-icon')?.remove();
         booruGallery.innerHTML = '<div style="color: var(--text-secondary); text-align: center; width: 100%; padding: 40px;">No images found</div>';
         showToast('No images found', 'info');
       }
@@ -3669,6 +3677,7 @@ async function loadGenericBooru(sourceId, append) {
       if (!append) {
         window.totalResultCount = 0;
         updateTotalCountDisplay();
+        document.getElementById('load-more-icon')?.remove();
         booruGallery.innerHTML = '<div style="color: var(--text-secondary); text-align: center; width: 100%; padding: 40px;">No images found</div>';
         showToast('No images found', 'error');
       }
@@ -3707,6 +3716,7 @@ async function loadGenericBooru(sourceId, append) {
     if (normalizedPosts.length === 0 && !append) {
       window.totalResultCount = 0;
       updateTotalCountDisplay();
+      document.getElementById('load-more-icon')?.remove();
       booruGallery.innerHTML = '<div style="color: var(--text-secondary); text-align: center; width: 100%; padding: 40px;">No images found</div>';
       showToast('No matching images', 'error');
       if (booruLoading) booruLoading.style.display = 'none';
@@ -3751,6 +3761,7 @@ async function loadGenericBooru(sourceId, append) {
   } catch (err) {
     console.error(`${sourceConfig.name} fetch error:`, err);
     if (!append) {
+      document.getElementById('load-more-icon')?.remove();
       booruGallery.innerHTML = `<div style="color: var(--text-secondary); text-align: center; margin-top: 100px; width: 100%; font-size: 30px;">Error loading images from ${sourceConfig.name}.</div>`;
     }
     if (booruLoading) booruLoading.style.display = 'none';
@@ -4163,12 +4174,29 @@ function renderBooruGallery(posts, append = true, addSeparators = true) {
       cleanupGallery(booruGallery);
     } else {
       booruGallery.innerHTML = '';
+      document.getElementById('load-more-icon')?.remove();
     }
+
     if (isDownloadsGallery) {
       renderDownloadsSidebar();
       updateArtistFilter();
       updateSourceFilter();
     }
+  }
+
+  if (window.hasMoreResults) {
+    const gallery = document.getElementById('gallery-wrapper');
+    if (gallery) {
+      if (document.getElementById('load-more-icon') == null) {
+        const loadMore = document.createElement('div');
+        loadMore.id = 'load-more-icon';
+        loadMore.innerHTML = '<i class="fa-solid fa-ellipsis" style="color: var(--text-secondary); font-size: 30px;"></i>';
+        loadMore.style.cssText = 'display: flex; opacity: 0; justify-content: center; align-items: center; padding: 20px;';
+        gallery.appendChild(loadMore);
+      }
+    }
+  } else {
+    document.getElementById('load-more-icon')?.remove();
   }
 
   // Get current image size from slider
@@ -4192,16 +4220,17 @@ function renderBooruGallery(posts, append = true, addSeparators = true) {
     if (artistSection)
       artistSection.style.display = 'none';
   }
+  const fragment = document.createDocumentFragment();
   posts.forEach((post, i) => {
     if (post?.imageUrl === undefined) return; // Skip posts without imageUrl
 
     if (lastArtist == null && window.downloadsPaginationIndex == parseInt(document.getElementById('booru-limit-input')?.value) && post.artist && addSeparators) {
-        const seperator = document.createElement('div');
-        seperator.className = 'artist-separator';
-        seperator.innerHTML = `<h2>${post.artist}</h2>`;
-        galleryWrapper.prepend(seperator);
+      const seperator = document.createElement('div');
+      seperator.className = 'artist-separator';
+      seperator.innerHTML = `<h2>${post.artist}</h2>`;
+      galleryWrapper.prepend(seperator);
     }
-    
+
     if (isDownloadsGallery && post.artist !== lastArtist && lastArtist !== null && addSeparators) {
       $(booruGallery).justifiedGallery({
         rowHeight: currentImageSize || 250,
@@ -4212,7 +4241,6 @@ function renderBooruGallery(posts, append = true, addSeparators = true) {
         waitThumbnailsLoad: false,
         border: 0
       });
-      //console.log('Found artist change, last artist:', lastArtist, 'new artist:', post.artist);
       const galleryWrapper = document.getElementById('gallery-wrapper');
       if (galleryWrapper) {
         const newGallery = document.createElement('div');
@@ -4225,14 +4253,20 @@ function renderBooruGallery(posts, append = true, addSeparators = true) {
         booruGallery = newGallery;
       }
     }
+
     const imageElement = createBooruImageElement({ ...post, dataIndex: startIndex + i + 1 });
-    booruGallery.appendChild(imageElement);
+    fragment.appendChild(imageElement);
     lastArtist = post.artist;
     let visibilityDelay = 1000 * (1 - Math.exp(-0.05 * i));
     setTimeout(() => {
       if (imageElement) imageElement.classList.add('visible', 'jg-entry-visible');
     }, visibilityDelay);
   });
+  booruGallery.appendChild(fragment);
+  setTimeout(() => {
+    const loadIcon = document.getElementById('load-more-icon');
+    if (loadIcon) loadIcon.style.opacity = '1';
+  }, 1000 * (1 - Math.exp(-0.05 * posts.length)));
   
   // Initialize or update Justified Gallery
   $(booruGallery).justifiedGallery({
@@ -4419,13 +4453,21 @@ function createBooruImageElement(post, maxHeight = null, imageWidth = null) {
       mediaElement.classList.add('loaded');
       loader.style.display = 'none';
       
+      // Cache thumbnail after successful load (avoid duplicate fetch before load)
+      const currentTabId = typeof activeTabId !== 'undefined' ? activeTabId : null;
+      const resolvedThumbnailUrl = mediaElement.dataset.resolvedThumbnailUrl;
+      const isVideoSource = resolvedThumbnailUrl && (resolvedThumbnailUrl.endsWith('.mp4') || resolvedThumbnailUrl.endsWith('.webm') || resolvedThumbnailUrl.endsWith('.mov'));
+      const cacheKey = isVideoSource ? `video-thumbnail:${resolvedThumbnailUrl}` : resolvedThumbnailUrl;
+      if (currentTabId && cacheKey && !getCachedThumbnailUrl(currentTabId, cacheKey)) {
+        cacheThumbnailBlobForTab(currentTabId, resolvedThumbnailUrl, cacheKey).catch(() => {});
+      }
+
       // Check if mouse position is within image boundaries and show preview
       if (!previewFrozen && typeof showPreviewForElement === 'function') {
         const rect = mediaElement.getBoundingClientRect();
         const isHovering = lastMouseX >= rect.left && lastMouseX <= rect.right &&
                           lastMouseY >= rect.top && lastMouseY <= rect.bottom;
         if (isHovering) {
-          // Set lastHoveredElement to prevent duplicate calls
           if (typeof lastHoveredElement !== 'undefined') {
             window.booruLastHoveredElement = mediaElement;
           }
@@ -4435,7 +4477,6 @@ function createBooruImageElement(post, maxHeight = null, imageWidth = null) {
     }, { once: true });
     
     mediaElement.addEventListener('error', (e) => {
-
       loader.style.display = 'none';
       mediaElement.style.display = 'none';
       const errorDiv = document.createElement('div');
@@ -4455,8 +4496,7 @@ function createBooruImageElement(post, maxHeight = null, imageWidth = null) {
       link.appendChild(errorDiv);
     }, { once: true });
     
-    // Use correct image for current gallery quality; lazy-load so off-screen
-    // images (and images in hidden tabs) are not fetched until visible
+    mediaElement.decoding = 'async';
     mediaElement.loading = 'lazy';
     const resolvedThumbnailUrl = getImageUrl(useHighQuality ? url : (post.thumbnailUrl || url));
     mediaElement.dataset.resolvedThumbnailUrl = resolvedThumbnailUrl;
@@ -4476,7 +4516,6 @@ function createBooruImageElement(post, maxHeight = null, imageWidth = null) {
       }, { once: true });
     } else {
       mediaElement.src = cachedThumbnailUrl || resolvedThumbnailUrl;
-      cacheThumbnailBlobForTab(currentTabId, cachedThumbnailUrl || resolvedThumbnailUrl, cacheKey);
     }
   }
   
@@ -4537,7 +4576,6 @@ function createBooruImageElement(post, maxHeight = null, imageWidth = null) {
 
         if (!isVideo) {
           if (mediaElement) {
-            mediaElement.dataset.highQualityLoaded = 'true';
             if (mediaElement.src !== localUrl) {
               mediaElement.src = localUrl;
             }
@@ -5254,8 +5292,33 @@ function showPreviewForElement(mediaElement, forceVideoLoad = false) {
 
     // Show thumbnail image first, then load video
     const img = document.createElement('img');
-    img.src = mediaElement.src; // Use the thumbnail/poster from gallery
     img.alt = 'Loading video...';
+    
+    // Use cached gallery image instead of forcing new fetch (except for GIFs - preserve animation)
+    const gallerySrc = mediaElement.currentSrc || mediaElement.src || mediaElement.dataset.resolvedThumbnailUrl || getImageUrl(mediaElement.dataset.thumbnailUrl || mediaElement.dataset.imageUrl);
+    const isGif = mediaElement.dataset.isGif === 'true';
+    if (isGif) {
+      // For GIFs, use the actual GIF source directly to preserve animation
+      img.src = gallerySrc;
+    } else if (gallerySrc && mediaElement.complete && mediaElement.naturalWidth > 0) {
+      try {
+        const canvas = document.createElement('canvas');
+        canvas.width = mediaElement.naturalWidth;
+        canvas.height = mediaElement.naturalHeight;
+        const ctx = canvas.getContext('2d');
+        if (ctx) {
+          ctx.drawImage(mediaElement, 0, 0);
+          img.src = canvas.toDataURL('image/jpeg', 0.92);
+        } else {
+          img.src = gallerySrc;
+        }
+      } catch (err) {
+        img.src = gallerySrc;
+      }
+    } else {
+      img.src = gallerySrc;
+    }
+    
     booruPreviewMediaContainer.appendChild(img);
 
     // Create preview loading overlay (same as for images)
@@ -5442,26 +5505,51 @@ function showPreviewForElement(mediaElement, forceVideoLoad = false) {
       // Store post source and ID for middle-click handler
       img.dataset.postSource = mediaElement.closest('.booru-image-item')?.dataset.postSource;
       img.dataset.postId = mediaElement.closest('.booru-image-item')?.dataset.postId;
-      
+      img.alt = 'Preview';
+
+      const gallerySrc = mediaElement.currentSrc || mediaElement.src || mediaElement.dataset.resolvedThumbnailUrl || getImageUrl(mediaElement.dataset.thumbnailUrl || mediaElement.dataset.imageUrl);
+      // For GIFs, use the actual GIF source directly to preserve animation
+      const isGif = mediaElement.dataset.isGif === 'true';
+      if (isGif) {
+        img.src = gallerySrc;
+      } else if (gallerySrc && mediaElement.complete && mediaElement.naturalWidth > 0) {
+        try {
+          const canvas = document.createElement('canvas');
+          canvas.width = mediaElement.naturalWidth;
+          canvas.height = mediaElement.naturalHeight;
+          const ctx = canvas.getContext('2d');
+          if (ctx) {
+            ctx.drawImage(mediaElement, 0, 0);
+            img.src = canvas.toDataURL('image/jpeg', 0.92);
+          } else {
+            img.src = gallerySrc;
+          }
+        } catch (err) {
+          img.src = gallerySrc;
+        }
+      } else {
+        img.src = gallerySrc;
+      }
+
+      // Normalize preview styling to fit the hover container
+      img.style.maxWidth = '100%';
+      img.style.width = '100%';
+      img.style.height = '100%';
+      img.style.objectFit = 'contain';
+
       // Check if gallery image already has a high-quality version loaded
       if (mediaElement.dataset.currentQualityUrl) {
-        // Use the already-loaded quality version from the gallery
         img.src = mediaElement.dataset.currentQualityUrl;
         img.alt = 'Preview (High Quality)';
       } else if (mediaElement.dataset.highQualityLoaded === 'true' && mediaElement.dataset.highQualityUrl) {
-        // Use the stored high quality blob URL
         img.src = mediaElement.dataset.highQualityUrl;
         img.alt = 'Preview (High Quality)';
-        
+
         // Add error handler as fallback if blob URL fails
         img.addEventListener('error', () => {
           img.src = getImageUrl(mediaElement.dataset.imageUrl);
         }, { once: true });
       } else {
-        // Start with the already-loaded gallery thumbnail if available.
-        const imageSrc = mediaElement.currentSrc || mediaElement.src || mediaElement.dataset.resolvedThumbnailUrl || getImageUrl(mediaElement.dataset.thumbnailUrl || mediaElement.dataset.imageUrl);
-        img.src = imageSrc;
-        img.alt = 'Preview';
         // if gallery image itself is already high quality but we haven't recorded it yet,
         // capture it so subsequent hovers will be instantaneous
         if (!mediaElement.dataset.currentQualityUrl && showHighQualityGallery) {
@@ -5469,7 +5557,7 @@ function showPreviewForElement(mediaElement, forceVideoLoad = false) {
         }
       }
     }
-    
+
     // Load high quality in background and swap when ready
     if (mediaElement.dataset.thumbnailUrl && mediaElement.dataset.imageUrl !== mediaElement.dataset.thumbnailUrl) {
       if (mediaElement.dataset.highQualityLoaded === 'true' && mediaElement.dataset.highQualityUrl) {
@@ -6094,8 +6182,8 @@ if (booruContent) {
             // Remove end message if it exists
             const endMessage = booruGallery.querySelector('.booru-end-message');
             if (endMessage) endMessage.remove();
-            
             // Show loading indicator
+            document.getElementById('load-more-icon')?.remove();
             if (booruLoading) booruLoading.style.display = 'flex';
             
             // Delay rendering to allow loading icon to appear
@@ -6171,7 +6259,7 @@ if (booruContent) {
             // Remove end message if it exists
             const endMessage = booruGallery.querySelector('.booru-end-message');
             if (endMessage) endMessage.remove();
-            
+            document.getElementById('load-more-icon')?.remove();
             // Show loading indicator
             if (booruLoading) booruLoading.style.display = 'flex';
             

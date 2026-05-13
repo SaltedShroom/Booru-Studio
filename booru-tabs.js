@@ -627,6 +627,7 @@ function handleCloseActiveTabShortcut(e) {
 
 // Switch to a specific tab
 function switchToTab(tabId) {
+  document.getElementById('load-more-icon')?.remove();
   const existingSidebar = document.getElementById('downloads-sidebar');
   if (existingSidebar)
     existingSidebar.remove();
@@ -889,6 +890,7 @@ function switchToTab(tabId) {
   const booruGallery = document.getElementById('booru-gallery');
   if (booruGallery) {
     if (booruGallery.children.length === 0) {
+      document.getElementById('load-more-icon')?.remove();
       booruGallery.innerHTML = '<i class="fa-regular fa-images cleanup-icon"></i> <i class="fa-solid fa-magnifying-glass cleanup-icon"></i>';
     }
   }

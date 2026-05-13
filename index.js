@@ -153,8 +153,8 @@ async function loadProxySettings() {
 
       // Load anonymity settings
       anonUaRotation.checked     = settings.uaRotation  !== false;
-      anonJitterMin.value        = settings.jitterMin    ?? 150;
-      anonJitterMax.value        = settings.jitterMax    ?? 900;
+      anonJitterMin.value        = settings.jitterMin    ?? 20;
+      anonJitterMax.value        = settings.jitterMax    ?? 250;
       anonTorRotateCount.value   = settings.torRotateCount ?? 100;
       anonTorRotateMins.value    = settings.torRotateMins  ?? 300;
       updateJitterMaxDisabled();
@@ -464,39 +464,69 @@ const proxyStatusBtn = document.getElementById('proxy-status-btn');
 // Server console elements
 const consoleContent = document.getElementById('console-content');
 
+const pendingConsoleLines = [];
+let consoleUpdateScheduled = false;
+const MAX_CONSOLE_LINES = 500;
+
 // Append a line to the server console pane
 function appendConsoleLine(line) {
   if (!consoleContent) return;
-  const p = document.createElement('p');
+  if (pendingConsoleLines.length >= MAX_CONSOLE_LINES) {
+    pendingConsoleLines.shift();
+  }
+  pendingConsoleLines.push(line);
+  if (!consoleUpdateScheduled) {
+    consoleUpdateScheduled = true;
+    setTimeout(flushPendingConsoleLines, 100);
+  }
+}
 
-  // if this line looks like a continuation (starts with whitespace), copy
-  // the high‑severity class from the previous entry so stack traces stay
-  // colored
-  if (/^[ \t]/.test(line)) {
-    const last = consoleContent.lastElementChild;
-    if (last) {
-      if (last.classList.contains('warn')) p.classList.add('warn');
-      if (last.classList.contains('error')) p.classList.add('error');
+function flushPendingConsoleLines() {
+  consoleUpdateScheduled = false;
+  if (!consoleContent || pendingConsoleLines.length === 0) return;
+  if (consoleContent.offsetParent === null) {
+    // If the server log pane is hidden, avoid expensive DOM updates.
+    pendingConsoleLines.length = 0;
+    return;
+  }
+
+  const fragment = document.createDocumentFragment();
+  while (pendingConsoleLines.length) {
+    let line = pendingConsoleLines.shift();
+    const p = document.createElement('p');
+
+    // if this line looks like a continuation (starts with whitespace), copy
+    // the high‑severity class from the previous entry so stack traces stay
+    // colored
+    if (/^[ \t]/.test(line)) {
+      const last = fragment.lastElementChild || consoleContent.lastElementChild;
+      if (last) {
+        if (last.classList.contains('warn')) p.classList.add('warn');
+        if (last.classList.contains('error')) p.classList.add('error');
+      }
     }
+
+    // style according to prefix
+    if (line.startsWith('[WARN]')) {
+      p.classList.add('warn');
+      line = line.slice(6).trim();
+    } else if (line.startsWith('[ERROR]')) {
+      p.classList.add('error');
+      line = line.slice(7).trim();
+    }
+
+    p.textContent = line;
+    fragment.appendChild(p);
   }
 
-  // style according to prefix
-  if (line.startsWith('[WARN]')) {
-    p.classList.add('warn');
-    line = line.slice(6).trim();
-  } else if (line.startsWith('[ERROR]')) {
-    p.classList.add('error');
-    line = line.slice(7).trim();
-  }
+  consoleContent.appendChild(fragment);
 
-  p.textContent = line;
-  consoleContent.appendChild(p);
-
-  // Always keep the server console scrolled to the latest log entry.
-  consoleContent.scrollTop = consoleContent.scrollHeight;
-  const lastLog = consoleContent.lastElementChild;
-  if (lastLog) {
-    lastLog.scrollIntoView({ behavior: 'smooth', block: 'end', inline: 'nearest' });
+  if (consoleContent.offsetParent !== null) {
+    consoleContent.scrollTop = consoleContent.scrollHeight;
+    const lastLog = consoleContent.lastElementChild;
+    if (lastLog) {
+      lastLog.scrollIntoView({ behavior: 'smooth', block: 'end', inline: 'nearest' });
+    }
   }
 }
 
@@ -507,6 +537,9 @@ function initServerConsole() {
     const source = new EventSource('http://localhost:3001/api/server-logs');
     source.onmessage = e => {
       appendConsoleLine(e.data);
+      if (e.data.includes('Puppeteer fallback also failed: Cloudflare or other HTML block page returned even via Puppeteer')) {
+        showToast('Puppeteer fallback also failed — update the cookie setting on the source and try again.', 'error');
+      }
     };
     // Listen for circuit-rotated notifications from the server
     source.addEventListener('circuit-rotated', () => {
