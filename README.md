@@ -16,6 +16,9 @@ The goal with Booru Studio is to provide an all-in-one app that simplifies acces
 ### <a href="https://github.com/SaltedShroom/Booru-Studio/releases">⬇️ Downloads</a>
 to install, download the latest *Setup.exe*
 
+<img width="1673" height="676" alt="downloads" src="https://github.com/user-attachments/assets/d4fed3a0-f1bb-4552-9b48-9ed20dfcde19" />
+
+
 </div>
 
 <br>
