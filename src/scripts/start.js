@@ -3,8 +3,8 @@ const http = require('http');
 const handler = require('serve-handler');
 const path = require('path');
 
-// Configuration - SD folder is next to the project folder
-const SD_PATH = path.join(__dirname, '..', 'STABLE DIFFUSION');
+// Configuration - SD folder is next to the project folder (at root)
+const SD_PATH = path.join(__dirname, '..', '..', 'STABLE DIFFUSION');
 const SD_WEBUI_BAT = path.join(SD_PATH, 'webui-user.bat');
 
 console.log('Starting Booru Studio...\n');
@@ -59,8 +59,8 @@ if (require('fs').existsSync(SD_WEBUI_BAT)) {
 */
 
 // Start the image save server using Electron's bundled runtime.
-const saveServer = spawn(process.execPath, [path.join(__dirname, 'server.js')], {
-  cwd: __dirname,
+const saveServer = spawn(process.execPath, [path.join(__dirname, '..', 'js', 'server.js')], {
+  cwd: path.join(__dirname, '..'),
   stdio: ['ignore', 'pipe', 'pipe']
 });
 
@@ -73,9 +73,24 @@ saveServer.stderr.on('data', (data) => {
 });
 
 // Start the web server directly without spawning an external shell.
+const fs = require('fs');
 const webServer = http.createServer((req, res) => {
+  // Serve index.html at root path
+  if (req.url === '/' || req.url === '') {
+    const indexPath = path.join(__dirname, '..', 'js', 'index.html');
+    fs.readFile(indexPath, 'utf8', (err, data) => {
+      if (err) {
+        res.writeHead(404, { 'Content-Type': 'text/plain' });
+        res.end('404: index.html not found');
+        return;
+      }
+      res.writeHead(200, { 'Content-Type': 'text/html' });
+      res.end(data);
+    });
+    return;
+  }
   return handler(req, res, {
-    public: __dirname,
+    public: path.join(__dirname, '..', '..'),
   });
 });
 

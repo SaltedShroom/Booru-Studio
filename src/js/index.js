@@ -835,7 +835,7 @@ function showSupportToast() {
         <button class="toast-support-btn" onclick="window.open('https://buymeacoffee.com/saltedshroom', '_blank')"><i class="fa-solid fa-angles-right"></i> Support me</button>
         </div>
       <a href="https://buymeacoffee.com/saltedshroom" target="_blank" rel="noopener noreferrer" class="toast-support-image-link">
-        <img src="assets/supportme.gif" alt="Support me">
+        <img src="/src/assets/supportme.gif" alt="Support me">
       </a>
     </div>
   `;
@@ -976,7 +976,7 @@ async function updateAppLoadingDownloadCount() {
 
   for (let i = 0; i < targetLength; i++) {
     const digit = digits[i];
-    const expectedSrc = `counter/${digit}.gif`;
+    const expectedSrc = `/src/assets/counter/${digit}.gif`;
 
     if (i < existingImages.length) {
       const img = existingImages[i];

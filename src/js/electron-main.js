@@ -29,6 +29,15 @@ function sendMainWindowEvent(channel, payload) {
 
 autoUpdater.autoDownload = false;
 
+// Global error handlers
+process.on('uncaughtException', (err) => {
+  console.error('Uncaught exception:', err.message);
+});
+
+process.on('unhandledRejection', (reason) => {
+  console.error('Unhandled rejection:', reason);
+});
+
 autoUpdater.on('error', (err) => {
   console.error('AutoUpdater error:', err);
   sendMainWindowEvent('update-error', { message: err?.message || String(err) });
@@ -59,22 +68,40 @@ autoUpdater.on('update-downloaded', (info) => {
 // ─── Server ────────────────────────────────────────────────────────────────
 
 function startServer() {
-  return new Promise((resolve) => {
-    if (serverProcess) {
-      return resolve();
-    }
+  if (serverProcess) return;
 
-    try {
-      console.log('Starting embedded server inside Electron main process...');
-      require(path.join(__dirname, 'server.js'));
-      serverProcess = true;
-      resolve();
-    } catch (err) {
-      console.error('Failed to start embedded server:', err);
-      serverProcess = null;
-      resolve();
-    }
-  });
+  try {
+    require(path.join(__dirname, 'server.js'));
+    
+    // Start the web server (port 3000)
+    const http = require('http');
+    const handler = require('serve-handler');
+    const webServer = http.createServer((req, res) => {
+      // Serve index.html at root path
+      if (req.url === '/' || req.url === '') {
+        const indexPath = path.join(__dirname, 'index.html');
+        fs.readFile(indexPath, 'utf8', (err, data) => {
+          if (err) {
+            res.writeHead(404, { 'Content-Type': 'text/plain' });
+            res.end('404: index.html not found');
+            return;
+          }
+          res.writeHead(200, { 'Content-Type': 'text/html' });
+          res.end(data);
+        });
+        return;
+      }
+      return handler(req, res, {
+        public: path.join(__dirname, '..', '..'),
+      });
+    });
+    
+    webServer.listen(3000);
+    serverProcess = true;
+    
+  } catch (err) {
+    console.error('[startServer] Error:', err.message);
+  }
 }
 
 // ─── Stable Diffusion support is currently disabled. ─────────────────────────
@@ -127,7 +154,7 @@ function showLauncher() {
     frame: false,
     resizable: false,
     backgroundColor: '#1a1a2e',
-    icon: path.join(__dirname, 'favicon', 'app.ico'),
+    icon: path.join(__dirname, '..', 'assets', 'favicon', 'app.ico'),
     webPreferences: {
       preload: path.join(__dirname, 'launcher-preload.js'),
       contextIsolation: true,
@@ -261,32 +288,36 @@ ipcMain.handle('download-update', async () => {
   }
 });
 
-ipcMain.on('launcher-choice', async (event, choice) => {
+ipcMain.on('launcher-choice', (event, choice) => {
   if (choice === 'electron') {
-    // Open the desktop app immediately, then start the server in the background.
+    // Start servers in the background
+    if (!serverProcess) {
+      startServer();
+    }
+    
+    // Create the main window
     createWindow();
+    
+    // Close the launcher window
     if (launcherWindow) {
       launcherWindow.destroy();
       launcherWindow = null;
     }
-
-    startServer().catch((err) => {
-      console.error('Error starting server after opening app:', err);
-    });
+    
   } else if (choice === 'browser') {
-    // Launch the original browser-mode batch file.
-    // This is the console window the user expects.
+    // Launch the browser-mode batch file
     let browserProcess;
     if (process.platform === 'win32') {
-      const batPath = path.join(__dirname, 'Start Browser.bat');
+      const batPath = path.join(__dirname, '..', 'scripts', 'start browser.bat');
       browserProcess = spawn('cmd.exe', ['/c', 'start', '""', batPath], {
-        cwd: __dirname,
+        cwd: path.join(__dirname, '..'),
         detached: true,
         stdio: 'ignore',
       });
     } else {
-      browserProcess = spawn(process.execPath, [path.join(__dirname, 'start.js')], {
-        cwd: __dirname,
+      const startPath = path.join(__dirname, '..', 'scripts', 'start.js');
+      browserProcess = spawn(process.execPath, [startPath], {
+        cwd: path.join(__dirname, '..'),
         detached: true,
         stdio: 'ignore',
       });
@@ -304,63 +335,81 @@ ipcMain.on('launcher-choice', async (event, choice) => {
 // ─── Window ────────────────────────────────────────────────────────────────
 
 function createWindow() {
-  mainWindow = new BrowserWindow({
-    width: 1400,
-    height: 900,
-    minWidth: 900,
-    minHeight: 600,
-    title: 'Booru Studio',
-    autoHideMenuBar: true,
-    backgroundColor: '#0f0f1a', // match app dark background — prevents white flash
-    icon: path.join(__dirname, 'favicon', 'app.ico'),
-    webPreferences: {
-      nodeIntegration: false,     // keep renderer sandboxed
-      contextIsolation: true,
-      // Allow the file:// page to call http://localhost:3001
-      webSecurity: false,
-      preload: path.join(__dirname, 'preload.js'),
-    },
-  });
+  try {
+    mainWindow = new BrowserWindow({
+      width: 1400,
+      height: 900,
+      minWidth: 900,
+      minHeight: 600,
+      title: 'Booru Studio',
+      autoHideMenuBar: true,
+      backgroundColor: '#0f0f1a',
+      icon: path.join(__dirname, '..', 'assets', 'favicon', 'app.ico'),
+      webPreferences: {
+        nodeIntegration: false,
+        contextIsolation: true,
+        webSecurity: false,
+        preload: path.join(__dirname, 'preload.js'),
+      },
+    });
 
-  // F12 opens/closes DevTools docked to the right; F11 toggles fullscreen; F5/Ctrl+R reloads
-  mainWindow.webContents.on('before-input-event', (event, input) => {
-    if (input.type !== 'keyDown') return;
-    if (input.key === 'F12') {
-      if (mainWindow.webContents.isDevToolsOpened()) {
-        mainWindow.webContents.closeDevTools();
-      } else {
-        mainWindow.webContents.openDevTools({ mode: 'right' });
+    // F12 opens/closes DevTools; F11 toggles fullscreen; F5 reloads, Ctrl+Shift+R hard-reloads with cache clear
+    mainWindow.webContents.on('before-input-event', (event, input) => {
+      if (input.type !== 'keyDown') return;
+      if (input.key === 'F12') {
+        if (mainWindow.webContents.isDevToolsOpened()) {
+          mainWindow.webContents.closeDevTools();
+        } else {
+          mainWindow.webContents.openDevTools({ mode: 'right' });
+        }
+        event.preventDefault();
+      } else if (input.key === 'F11') {
+        mainWindow.setFullScreen(!mainWindow.isFullScreen());
+        event.preventDefault();
+      } else if (input.key === 'F5') {
+        mainWindow.webContents.reloadIgnoringCache();
+        event.preventDefault();
+      } else if (input.key === 'r' && input.control && input.shift) {
+        mainWindow.webContents.reloadIgnoringCache();
+        event.preventDefault();
+      } else if (input.key === 'r' && input.control) {
+        mainWindow.webContents.reload();
+        event.preventDefault();
       }
-      event.preventDefault();
-    } else if (input.key === 'F11') {
-      mainWindow.setFullScreen(!mainWindow.isFullScreen());
-      event.preventDefault();
-    } else if (input.key === 'F5' || (input.key === 'r' && input.control)) {
-      mainWindow.webContents.reload();
-      event.preventDefault();
-    }
-  });
+    });
 
-  // Open anchor links that target _blank in the system browser
-  mainWindow.webContents.setWindowOpenHandler(({ url }) => {
-    shell.openExternal(url);
-    return { action: 'deny' };
-  });
+    // Open anchor links that target _blank in the system browser
+    mainWindow.webContents.setWindowOpenHandler(({ url }) => {
+      shell.openExternal(url);
+      return { action: 'deny' };
+    });
 
-  // Load the app directly — no static server needed
-  mainWindow.loadFile(path.join(__dirname, 'index.html'));
+    // Load the app from the HTTP server
+    mainWindow.loadURL('http://localhost:3000/');
 
-  mainWindow.on('closed', () => {
-    mainWindow = null;
-  });
+    // Show the window immediately
+    mainWindow.show();
+
+    // Handle load errors
+    mainWindow.webContents.on('did-fail-load', (event, errorCode, errorDescription, validatedURL, isMainFrame) => {
+      if (isMainFrame) {
+        console.error(`Failed to load ${validatedURL}:`, errorCode, errorDescription);
+      }
+    });
+
+    mainWindow.on('closed', () => {
+      mainWindow = null;
+    });
+  } catch (err) {
+    console.error('Error creating window:', err.message);
+    throw err;
+  }
 }
 
 // ─── App lifecycle ─────────────────────────────────────────────────────────
 
 async function main() {
-  console.log('Starting Booru Studio…');
   Menu.setApplicationMenu(null);
-  // Show launcher choice dialog first
   showLauncher();
 }
 

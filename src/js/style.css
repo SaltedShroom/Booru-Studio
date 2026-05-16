@@ -358,7 +358,6 @@ body, html {
 .booru-control-bar {
   position: relative;
   background: var(--surface);
-  max-height: 50px;
   z-index: 10;
   padding: 12px 30px 12px 24px;
   gap: 12px;
@@ -1992,6 +1991,7 @@ body, html {
   transform: translateX(-50%);
   z-index: 10001;
   display: flex;
+  flex-wrap: wrap;
   align-items: center;
   gap: 12px;
   background: var(--surface);

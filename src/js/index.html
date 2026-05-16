@@ -3,17 +3,18 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
+<meta http-equiv="Content-Security-Policy" content="default-src 'self' https:; script-src 'self' 'unsafe-inline' https://code.jquery.com https://cdnjs.cloudflare.com https://fonts.googleapis.com; style-src 'self' 'unsafe-inline' https://fonts.googleapis.com https://cdnjs.cloudflare.com; img-src 'self' data: blob: https: http:; font-src 'self' https://fonts.gstatic.com https://cdnjs.cloudflare.com; connect-src 'self' http://localhost:* https: wss: ws:;">
 <title>Booru Studio</title>
-<link rel="icon" type="image/x-icon" href="favicon/favicon.ico">
-<link rel="icon" type="image/png" sizes="32x32" href="favicon/favicon-32x32.png">
-<link rel="icon" type="image/png" sizes="16x16" href="favicon/favicon-16x16.png">
-<link rel="apple-touch-icon" sizes="180x180" href="favicon/apple-touch-icon.png">
-<link rel="icon" type="image/png" sizes="192x192" href="favicon/android-chrome-192x192.png">
-<link rel="icon" type="image/png" sizes="512x512" href="favicon/android-chrome-512x512.png">
-<link rel="stylesheet" href="style.css">
-<link rel="stylesheet" href="node_modules/justifiedGallery/dist/css/justifiedGallery.min.css">
-<link rel="stylesheet" href="node_modules/odometer/themes/odometer-theme-minimal.css">
-<link rel="stylesheet" href="node_modules/select2/dist/css/select2.min.css">
+<link rel="icon" type="image/x-icon" href="/src/assets/favicon/favicon.ico">
+<link rel="icon" type="image/png" sizes="32x32" href="/src/assets/favicon/favicon-32x32.png">
+<link rel="icon" type="image/png" sizes="16x16" href="/src/assets/favicon/favicon-16x16.png">
+<link rel="apple-touch-icon" sizes="180x180" href="/src/assets/favicon/apple-touch-icon.png">
+<link rel="icon" type="image/png" sizes="192x192" href="/src/assets/favicon/android-chrome-192x192.png">
+<link rel="icon" type="image/png" sizes="512x512" href="/src/assets/favicon/android-chrome-512x512.png">
+<link rel="stylesheet" href="/src/js/style.css">
+<link rel="stylesheet" href="/node_modules/justifiedGallery/dist/css/justifiedGallery.min.css">
+<link rel="stylesheet" href="/node_modules/odometer/themes/odometer-theme-minimal.css">
+<link rel="stylesheet" href="/node_modules/select2/dist/css/select2.min.css">
 <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&display=swap" rel="stylesheet">
 <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.5.1/css/all.min.css">
 <script>
@@ -43,7 +44,7 @@
 </head>
 <body>
 <div id="app-loading-overlay">
-  <div class="app-title nav-brand" data-text="ooru Studio"><img src="favicon/android-chrome-512x512.png" alt="SD Studio Logo" />ooru Studio</div>
+  <div class="app-title nav-brand" data-text="ooru Studio"><img src="/src/assets/favicon/android-chrome-512x512.png" alt="SD Studio Logo" />ooru Studio</div>
   <div class="pl">
     <div class="pl__ring pl__ring--a"></div>
     <div class="pl__ring pl__ring--b"></div>
@@ -64,7 +65,7 @@
     <nav class="navbar">
       <div style="display: flex; align-items: center; gap: 24px; flex: 1;">
         <div class="nav-brand" onclick="window.location.reload()">
-          <img src="favicon/android-chrome-192x192.png" alt="SD Studio Logo" />
+          <img src="/src/assets/favicon/android-chrome-192x192.png" alt="SD Studio Logo" />
           <p>ooru Studio</p>
           <span id="app-version"><i class="fa-solid fa-code-branch"></i> v0.0.0</span>
         </div>
@@ -91,10 +92,10 @@
         </div>
         <div class="ref-link-container">
           <a href="https://buymeacoffee.com/saltedshroom" target="_blank" rel="noopener noreferrer" title="https://buymeacoffee.com/saltedshroom" class="ref-link">
-            <img src="assets/bmac.png" alt="Support me">
+            <img src="/src/assets/bmac.png" alt="Support me">
           </a>
           <a href="https://github.com/SaltedShroom/Booru-Studio" target="_blank" rel="noopener noreferrer" title="https://github.com/SaltedShroom/Booru-Studio" class="ref-link">
-            <img src="assets/github.png" alt="GitHub">
+            <img src="/src/assets/github.png" alt="GitHub">
           </a>
         </div>
         <button id="proxy-status-btn" class="proxy-status-btn" title="Toggle Proxy" style="display: none;">
@@ -989,17 +990,17 @@
       <i class="fa-solid fa-angle-right"></i>
     </button>
   </div>
-<script src="node_modules/chart.js/dist/chart.umd.min.js" defer></script>
-<script src="node_modules/odometer/odometer.min.js" defer></script>
+<script src="/node_modules/chart.js/dist/chart.umd.min.js" defer></script>
+<script src="/node_modules/odometer/odometer.min.js" defer></script>
 <script src="https://code.jquery.com/jquery-3.7.1.min.js" defer></script>
-<script src="node_modules/justifiedGallery/dist/js/jquery.justifiedGallery.min.js" defer></script>
-<script src="node_modules/select2/dist/js/select2.min.js" defer></script>
-<script src="cleanup-manager.js" defer></script>
-<script src="db-store.js" defer></script>
-<script src="virtual-gallery.js" defer></script>
-<script src="booru-sources-manager.js" defer></script>
-<script src="index.js" defer></script>
-<script src="booru-browser.js" defer></script>
-<script src="booru-tabs.js" defer></script>
+<script src="/node_modules/justifiedGallery/dist/js/jquery.justifiedGallery.min.js" defer></script>
+<script src="/node_modules/select2/dist/js/select2.min.js" defer></script>
+<script src="/src/js/cleanup-manager.js" defer></script>
+<script src="/src/js/db-store.js" defer></script>
+<script src="/src/js/virtual-gallery.js" defer></script>
+<script src="/src/js/booru-sources-manager.js" defer></script>
+<script src="/src/js/index.js" defer></script>
+<script src="/src/js/booru-browser.js" defer></script>
+<script src="/src/js/booru-tabs.js" defer></script>
 </body>
 </html>
