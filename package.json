@@ -3,13 +3,13 @@
   "version": "1.1.0",
   "description": "Booru Studio",
   "author": "SaltedShroom",
-  "main": "../js/electron-main.js",
+  "main": "src/js/electron-main.js",
   "scripts": {
-    "start": "electron ../js/electron-main.js",
-    "electron": "electron ../js/electron-main.js",
-    "build": "node build.js",
+    "start": "electron src/js/electron-main.js",
+    "electron": "electron src/js/electron-main.js",
+    "build": "node src/config/build.js",
     "rebuild-native": "electron-rebuild -f -w better-sqlite3",
-    "package": "node prepackage.js && electron-builder",
+    "package": "node src/config/prepackage.js && electron-builder",
     "dist": "electron-builder --dir",
     "postinstall": "npm run rebuild-native"
   },
@@ -19,20 +19,20 @@
     "productName": "Booru Studio",
     "asar": false,
     "directories": {
-      "output": "../build/dist"
+      "output": "build/dist"
     },
     "files": [
-      "../js/**",
-      "../assets/**",
-      "../nodejs/**",
-      "!../src/tests/**",
-      "!../src/build/**",
-      "!../data/**",
-      "!../output/**",
-      "!../customConfigs/**",
-      "!../downloads/**",
-      "../package.json",
-      "../package-lock.json"
+      "src/js/**",
+      "src/assets/**",
+      "src/nodejs/**",
+      "!src/tests/**",
+      "!src/build/**",
+      "!data/**",
+      "!output/**",
+      "!customConfigs/**",
+      "!downloads/**",
+      "package.json",
+      "package-lock.json"
     ],
     "releaseInfo": {
       "releaseName": "Booru Studio ${version}"
@@ -50,14 +50,14 @@
         "nsis",
         "portable"
       ],
-      "icon": "../assets/favicon/app.ico"
+      "icon": "src/assets/favicon/app.ico"
     },
     "linux": {
       "target": [
         "AppImage",
         "deb"
       ],
-      "icon": "../assets/favicon"
+      "icon": "src/assets/favicon"
     },
     "extraFiles": [
       {

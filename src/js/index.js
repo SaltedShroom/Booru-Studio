@@ -288,11 +288,13 @@ async function initVersionCheck() {
     }
 
     const remoteVersion = result?.remoteVersion || result?.updateInfo?.version || null;
-    const versionComparison = remoteVersion ? compareVersionStrings(remoteVersion, appVersion) : 0;
+    // Strip 'v' prefix from remote version if present
+    const cleanRemoteVersion = remoteVersion ? remoteVersion.replace(/^v/, '') : null;
+    const versionComparison = cleanRemoteVersion ? compareVersionStrings(cleanRemoteVersion, appVersion) : 0;
     const isUpdateAvailable = versionComparison === 1;
     if (updateBtn) {
       if (isUpdateAvailable && remoteVersion) {
-        updateBtn.innerHTML = updateBtn.innerHTML + ` v${remoteVersion}`;
+        updateBtn.innerHTML = updateBtn.innerHTML + ` ${remoteVersion}`;
       }
       updateBtn.classList.toggle('active', isUpdateAvailable);
     }
