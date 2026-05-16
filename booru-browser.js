@@ -757,6 +757,29 @@ function renderDownloadsSidebar() {
   downloadTitle.textContent = 'SEARCH ANALYTICS';
   sidebar.appendChild(downloadTitle);
 
+  const activityBlock = document.createElement('div');
+  activityBlock.className = 'stats-wrapper';
+
+  const activityTitle = document.createElement('h1');
+  activityTitle.textContent = 'Activity';
+  activityBlock.appendChild(activityTitle);
+
+  const activityChartWrapper = document.createElement('div');
+  activityChartWrapper.className = 'downloads-chart-wrapper';
+  // activityChartWrapper.style.height = '60px';
+
+  const activityCanvas = document.createElement('canvas');
+  activityCanvas.id = 'downloads-activity-chart';
+  activityCanvas.style.width = '100%';
+  activityCanvas.style.height = '180px';
+  activityChartWrapper.appendChild(activityCanvas);
+
+  activityBlock.appendChild(activityChartWrapper);
+  sidebar.appendChild(activityBlock);
+  renderDownloadsActivityChart();
+
+  sidebar.appendChild(document.createElement('hr'));
+
   const sourceArtistBlock = document.createElement('div');
   sourceArtistBlock.className = 'stats-wrapper';
 
@@ -766,11 +789,12 @@ function renderDownloadsSidebar() {
 
   const chartWrapper = document.createElement('div');
   chartWrapper.className = 'downloads-chart-wrapper';
-  chartWrapper.style.height = '160px';
+  // chartWrapper.style.height = '100px';
 
   const chartCanvas = document.createElement('canvas');
   chartCanvas.id = 'downloads-source-artist-chart';
   chartCanvas.style.width = '100%';
+  chartCanvas.style.height = '200px';
   chartWrapper.appendChild(chartCanvas);
 
   sourceArtistBlock.appendChild(chartWrapper);
@@ -789,7 +813,7 @@ function renderDownloadsSidebar() {
 
   const pieWrapper = document.createElement('div');
   pieWrapper.className = 'downloads-chart-wrapper';
-  pieWrapper.style.height = '80px';
+  pieWrapper.style.height = '100px';
   pieWrapper.style.display = 'flex';
   pieWrapper.style.flexDirection = 'column';
 
@@ -802,21 +826,21 @@ function renderDownloadsSidebar() {
   sidebar.appendChild(fileTypeBlock);
   renderDownloadsFileTypeChart();
 
-  sidebar.appendChild(document.createElement('hr'));
+  // sidebar.appendChild(document.createElement('hr'));
 
-  const mostUsedTags = document.createElement('div');
-  mostUsedTags.className = 'stats-wrapper';
+  // const mostUsedTags = document.createElement('div');
+  // mostUsedTags.className = 'stats-wrapper';
 
-  const mostUsedTagsTitle = document.createElement('h1');
-  mostUsedTagsTitle.textContent = 'Favorite Tags';
-  mostUsedTags.appendChild(mostUsedTagsTitle);
-  const tagsContainer = document.createElement('div');
-  tagsContainer.className = 'tags-container';
-  tagsContainer.id = 'downloads-tags-container';
-  mostUsedTags.appendChild(tagsContainer);
-  sidebar.appendChild(mostUsedTags);
+  // const mostUsedTagsTitle = document.createElement('h1');
+  // mostUsedTagsTitle.textContent = 'Favorite Tags';
+  // mostUsedTags.appendChild(mostUsedTagsTitle);
+  // const tagsContainer = document.createElement('div');
+  // tagsContainer.className = 'tags-container';
+  // tagsContainer.id = 'downloads-tags-container';
+  // mostUsedTags.appendChild(tagsContainer);
+  // sidebar.appendChild(mostUsedTags);
 
-  renderDownloadsTags();
+  // renderDownloadsTags();
 }
 
 function renderDownloadsStatsChart() {
@@ -917,6 +941,87 @@ function renderDownloadsStatsChart() {
 
   const ctx = canvas.getContext('2d');
   window.downloadsSourceArtistChart = new Chart(ctx, {
+    type: 'bar',
+    data: chartData,
+    options: chartOptions
+  });
+}
+
+function renderDownloadsActivityChart() {
+  if (typeof Chart === 'undefined') return;
+
+  const canvas = document.getElementById('downloads-activity-chart');
+  if (!canvas) return;
+
+  if (window.downloadsActivityChart) {
+    window.downloadsActivityChart.destroy();
+    window.downloadsActivityChart = null;
+  }
+
+  const posts = Array.isArray(window.allDownloadedPosts) ? window.allDownloadedPosts : [];
+  if (!posts.length) {
+    const ctx = canvas.getContext('2d');
+    if (ctx) {
+      ctx.clearRect(0, 0, canvas.width, canvas.height);
+    }
+    return;
+  }
+
+  // Group downloads by date (YYYY-MM-DD)
+  const dateCounts = {};
+  posts.forEach(post => {
+    if (post.downloadedAt) {
+      const date = new Date(post.downloadedAt);
+      const dateStr = date.toISOString().split('T')[0]; // Format: YYYY-MM-DD
+      dateCounts[dateStr] = (dateCounts[dateStr] || 0) + 1;
+    }
+  });
+
+  // Sort dates from newest to oldest
+  const sortedDates = Object.keys(dateCounts).sort((a, b) => {
+    return new Date(b) - new Date(a);
+  });
+
+  const chartData = {
+    labels: sortedDates,
+    datasets: [{
+      label: 'Downloads',
+      data: sortedDates.map(date => dateCounts[date]),
+      backgroundColor: '#3b8ea5',
+      borderWidth: 0
+    }]
+  };
+
+  const chartOptions = {
+    responsive: true,
+    maintainAspectRatio: false,
+    plugins: {
+      legend: {
+        display: false
+      },
+      tooltip: {
+        mode: 'index',
+        intersect: false
+      }
+    },
+    scales: {
+      x: {
+        beginAtZero: true,
+        ticks: {
+          display: false
+        }
+      },
+      y: {
+        beginAtZero: true,
+        ticks: {
+          precision: 0
+        }
+      }
+    }
+  };
+
+  const ctx = canvas.getContext('2d');
+  window.downloadsActivityChart = new Chart(ctx, {
     type: 'bar',
     data: chartData,
     options: chartOptions
@@ -1033,7 +1138,7 @@ function renderDownloadsTags() {
 
   const topTags = Object.entries(tagCounts)
     .sort((a, b) => b[1] - a[1])
-    .slice(0, 35);
+    .slice(0, 30);
 
   container.innerHTML = '';
   topTags.forEach(([tag, count]) => {
@@ -1048,6 +1153,7 @@ function renderDownloadsTags() {
 }
 
 window.renderDownloadsTags = renderDownloadsTags;
+window.renderDownloadsActivityChart = renderDownloadsActivityChart;
 
 function updateArtistFilter() {
   const controlBar = document.querySelector('header.control-bar.booru-control-bar');
