@@ -292,6 +292,7 @@ async function initVersionCheck() {
     const cleanRemoteVersion = remoteVersion ? remoteVersion.replace(/^v/, '') : null;
     const versionComparison = cleanRemoteVersion ? compareVersionStrings(cleanRemoteVersion, appVersion) : 0;
     const isUpdateAvailable = versionComparison === 1;
+    console.log('Version comparison result:', versionComparison, `(remote: ${cleanRemoteVersion}, local: ${appVersion})`);
     if (updateBtn) {
       if (isUpdateAvailable && remoteVersion) {
         updateBtn.innerHTML = updateBtn.innerHTML + ` ${remoteVersion}`;

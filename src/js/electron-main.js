@@ -29,6 +29,15 @@ function sendMainWindowEvent(channel, payload) {
 
 autoUpdater.autoDownload = false;
 
+// Set the correct app version from package.json
+try {
+  const packageJsonPath = path.join(__dirname, '..', '..', 'package.json');
+  const packageJson = JSON.parse(fs.readFileSync(packageJsonPath, 'utf8'));
+  app.setVersion(packageJson.version);
+} catch (err) {
+  console.error('Failed to set app version from package.json:', err);
+}
+
 // Global error handlers
 process.on('uncaughtException', (err) => {
   console.error('Uncaught exception:', err.message);
