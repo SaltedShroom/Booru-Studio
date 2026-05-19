@@ -2,6 +2,11 @@
 
 <div align="center">
 
+<a href="https://github.com/SaltedShroom/Booru-Studio/releases"><img src="https://img.shields.io/badge/Booru Studio-Downloads-blue?logo=github"/></a>
+<a href="https://github.com/SaltedShroom/Booru-Studio/releases"><img src="https://img.shields.io/badge/License-Apache2-lightgray"/></a>
+<a href="https://buymeacoffee.com/saltedshroom"><img src="https://img.shields.io/badge/Support-SaltedShroom-yellow?logo=buymeacoffee"/></a>
+
+
 <br>
 
 # Booru Studio
