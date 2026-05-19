@@ -10,6 +10,13 @@ const { SocksProxyAgent } = require('socks-proxy-agent');
 const HttpProxyAgent = require('http-proxy-agent');
 const HttpsProxyAgent = require('https-proxy-agent');
 const database = require('./database');
+const { Worker } = require('worker_threads');
+
+// Increase thread pool size for faster file I/O and image processing
+// Default is 4, increase to 18 for faster mosaic generation
+if (!process.env.UV_THREADPOOL_SIZE) {
+  process.env.UV_THREADPOOL_SIZE = 18;
+}
 
 const { app: electronApp } = (() => {
   try {
@@ -41,6 +48,9 @@ const PORT = 3001;
 const DEFAULT_DOWNLOAD_FOLDER = path.join(USER_DATA_BASE, 'downloads');
 let browser = null;
 const FALLBACK_THUMBNAIL_PNG = Buffer.from('iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVQYV2NgYAAAAAMAAWgmWQ0AAAAASUVORK5CYII=', 'base64');
+
+// Mosaic progress tracking
+const mosaicProgressMap = new Map();
 
 // Proxy configuration
 let proxySettings = {
@@ -390,16 +400,23 @@ function activeRequestJitter() {
 
 const OUTPUT_DIR = path.join(USER_DATA_BASE, 'output');
 const CONFIGS_DIR = path.join(USER_DATA_BASE, 'customConfigs');
+const MOSAIC_FOLDER = path.join(USER_DATA_BASE, 'mosaic');
 
 // Ensure directories exist
 ensureDirectoryExists(OUTPUT_DIR);
 ensureDirectoryExists(CONFIGS_DIR);
 ensureDirectoryExists(DEFAULT_DOWNLOAD_FOLDER);
+ensureDirectoryExists(MOSAIC_FOLDER);
 
 // Download folder will be loaded after database init
 let downloadFolder = null;
 
-const server = http.createServer((req, res) => {
+// Check if we're in worker mode
+const { isMainThread, parentPort, workerData } = require('worker_threads');
+const isWorkerMode = !isMainThread && workerData && workerData.isWorker;
+
+// Only create HTTP server if we're in the main thread
+const server = isWorkerMode ? null : http.createServer((req, res) => {
   // Enable CORS
   res.setHeader('Access-Control-Allow-Origin', '*');
   res.setHeader('Access-Control-Allow-Methods', 'GET, POST, DELETE, OPTIONS');
@@ -2306,8 +2323,12 @@ const server = http.createServer((req, res) => {
           cellWidth = 50,
           cellHeight = 50,
           columns = 100,
-          rows = 100
+          rows = 100,
+          gridSize = 250,
+          requestId
         } = JSON.parse(body);
+
+        console.log(`[API /api/generate-mosaic] Received POST: gridSize=${gridSize}, columns=${columns}, rows=${rows}`);
 
         if (!imageBase64) {
           throw new Error('Missing image data');
@@ -2316,6 +2337,16 @@ const server = http.createServer((req, res) => {
           throw new Error('Download folder not set');
         }
 
+        const genId = requestId || `mosaic-${Date.now()}-${Math.random().toString(36).substr(2, 9)}`;
+        
+        // Initialize progress tracking
+        mosaicProgressMap.set(genId, {
+          status: 'initializing',
+          progress: 0,
+          startTime: Date.now(),
+          error: null
+        });
+
         const outputWidth = Number(cellWidth) * Number(columns);
         const outputHeight = Number(cellHeight) * Number(rows);
         const maxPixels = 16_000_000;
@@ -2323,129 +2354,111 @@ const server = http.createServer((req, res) => {
           throw new Error(`Requested mosaic is too large (${outputWidth}x${outputHeight} = ${outputWidth * outputHeight} pixels). Reduce columns, rows, or cell size to keep output under ${maxPixels.toLocaleString()} pixels.`);
         }
 
-        const mosaicModule = require('mosaic-node-generator');
-        const inputDir = path.join(downloadFolder, 'mosaic-test-inputs');
-        const outputsDir = path.join(downloadFolder, 'outputs');
-        const thumbsDir = path.join(downloadFolder, `mosaic-thumbs-${Number(cellWidth)}x${Number(cellHeight)}`);
-        const tilesDir = path.join(downloadFolder, 'mosaic-tiles');
+        // Send immediate response - client will poll for progress
+        res.writeHead(202, { 'Content-Type': 'application/json' });
+        res.end(JSON.stringify({ success: true, requestId: genId, message: 'Mosaic generation started' }));
 
-        if (!fs.existsSync(inputDir)) fs.mkdirSync(inputDir, { recursive: true });
-        if (!fs.existsSync(outputsDir)) fs.mkdirSync(outputsDir, { recursive: true });
-        if (!fs.existsSync(thumbsDir)) fs.mkdirSync(thumbsDir, { recursive: true });
+        // Run mosaic generation in a Worker thread to prevent UI freezing
+        const { Worker } = require('worker_threads');
+        const workerPath = __filename; // Use current file as worker
+        const worker = new Worker(workerPath, {
+          workerData: {
+            taskId: genId,
+            imageBase64,
+            filename,
+            cellWidth,
+            cellHeight,
+            columns,
+            rows,
+            gridSize,
+            downloadFolder,
+            mosaicFolder: MOSAIC_FOLDER,
+            isWorker: true
+          }
+        });
 
-        if (fs.existsSync(tilesDir)) {
-          fs.rmSync(tilesDir, { recursive: true, force: true });
-        }
-        fs.mkdirSync(tilesDir, { recursive: true });
+        // Handle messages from worker
+        worker.on('message', (message) => {
+          const { taskId, type, progress, status, outputFilename, error, success } = message;
+          
+          if (!mosaicProgressMap.has(taskId)) {
+            console.warn('Received message for unknown task:', taskId);
+            return;
+          }
+          
+          if (type === 'status' || type === 'progress') {
+            mosaicProgressMap.get(taskId).progress = progress;
+            mosaicProgressMap.get(taskId).status = status;
+            console.log(`[MOSAIC ${taskId}] ${status} - ${progress}%`);
+          } else if (type === 'complete' && success) {
+            mosaicProgressMap.get(taskId).progress = 100;
+            mosaicProgressMap.get(taskId).status = 'completed';
+            mosaicProgressMap.get(taskId).filename = outputFilename;
+            console.log(`[MOSAIC ${taskId}] completed with file: ${outputFilename}`);
+          } else if (type === 'error') {
+            mosaicProgressMap.get(taskId).status = 'error';
+            mosaicProgressMap.get(taskId).error = error;
+            console.error(`[MOSAIC ${taskId}] error: ${error}`);
+          }
+        });
 
-        const supportedExts = new Set(['.jpg', '.jpeg', '.png', '.webp', '.gif', '.bmp']);
-        const downloadFiles = fs.readdirSync(downloadFolder);
-        const supportedTiles = [];
-        for (const filenameEntry of downloadFiles) {
-          const sourcePath = path.join(downloadFolder, filenameEntry);
-          const stat = fs.statSync(sourcePath);
-          if (!stat.isFile()) continue;
-          const ext = path.extname(filenameEntry).toLowerCase();
-          if (!supportedExts.has(ext)) continue;
-          supportedTiles.push(filenameEntry);
-        }
+        worker.on('error', (error) => {
+          console.error('Worker error:', error);
+          if (mosaicProgressMap.has(genId)) {
+            mosaicProgressMap.get(genId).status = 'error';
+            mosaicProgressMap.get(genId).error = error.message || String(error);
+          }
+          worker.terminate();
+        });
 
-        if (supportedTiles.length === 0) {
-          throw new Error('No supported image tiles found in download folder');
-        }
-
-        const maxTiles = 500;
-        let selectedTiles = supportedTiles;
-        if (supportedTiles.length > maxTiles) {
-          console.log(`[mosaic] found ${supportedTiles.length} supported tiles, limiting to ${maxTiles} selected tiles to reduce memory usage`);
-          selectedTiles = supportedTiles.sort(() => 0.5 - Math.random()).slice(0, maxTiles);
-        }
-
-        let tileCount = 0;
-        for (const filenameEntry of selectedTiles) {
-          const sourcePath = path.join(downloadFolder, filenameEntry);
-          const destPath = path.join(tilesDir, filenameEntry);
-          try {
-            fs.linkSync(sourcePath, destPath);
-          } catch (err) {
-            try {
-              fs.copyFileSync(sourcePath, destPath);
-            } catch (copyErr) {
-              console.warn('Failed to link or copy tile file:', sourcePath, copyErr.message || copyErr);
-              continue;
+        worker.on('exit', (code) => {
+          if (code !== 0) {
+            console.error(`Worker stopped with exit code ${code}`);
+            if (mosaicProgressMap.has(genId) && mosaicProgressMap.get(genId).status !== 'completed') {
+              mosaicProgressMap.get(genId).status = 'error';
+              mosaicProgressMap.get(genId).error = `Worker exited with code ${code}`;
             }
           }
-          tileCount++;
-        }
-
-        if (tileCount === 0) {
-          throw new Error('Failed to stage any tile images for mosaic generation');
-        }
-
-        console.log('[mosaic] tilesDir:', tilesDir, 'tileCount:', tileCount);
-        console.log('[mosaic] thumbsDir:', thumbsDir, 'exists:', fs.existsSync(thumbsDir));
-
-        const inputName = filename ? path.basename(filename) : `mosaic-input-${Date.now()}.png`;
-        const inputPath = path.join(inputDir, inputName);
-        let rawData = imageBase64;
-        if (rawData.startsWith('data:')) {
-          rawData = rawData.substring(rawData.indexOf(',') + 1);
-        }
-        const buffer = Buffer.from(rawData, 'base64');
-        fs.writeFileSync(inputPath, buffer);
-
-        let thumbsDirectoryFromRead = null;
-        const thumbsFiles = fs.readdirSync(thumbsDir).filter(file => {
-          const full = path.join(thumbsDir, file);
-          return fs.statSync(full).isFile();
+          worker.terminate();
         });
-        if (thumbsFiles.length > 0) {
-          thumbsDirectoryFromRead = thumbsDir;
-        }
-
-        console.log('[mosaic] thumbsDirectoryFromRead:', thumbsDirectoryFromRead ? thumbsDir : 'none', 'thumbs count:', thumbsFiles.length);
-
-        const sourceJimp = await mosaicModule.JimpImage.read(inputPath);
-        const sourceImage = new mosaicModule.JimpImage(sourceJimp);
-        const mosaicImage = new mosaicModule.MosaicImage(
-          sourceImage,
-          tilesDir,
-          Number(cellWidth),
-          Number(cellHeight),
-          Number(columns),
-          Number(rows),
-          thumbsDirectoryFromRead,
-          thumbsDir,
-          false
-        );
-
-        const originalCwd = process.cwd();
-        process.chdir(downloadFolder);
-        console.log('[mosaic] starting generate, cwd:', process.cwd());
-        await mosaicImage.generate();
-        process.chdir(originalCwd);
-        console.log('[mosaic] generate completed, cwd restored to:', process.cwd());
-
-        const results = fs.readdirSync(outputsDir)
-          .filter(file => /^output_.*\.(jpg|jpeg|png)$/i.test(file))
-          .map(file => ({
-            name: file,
-            mtime: fs.statSync(path.join(outputsDir, file)).mtimeMs
-          }))
-          .sort((a, b) => b.mtime - a.mtime);
-
-        if (results.length === 0) {
-          throw new Error('Mosaic output file not found');
-        }
-
-        res.writeHead(200, { 'Content-Type': 'application/json' });
-        res.end(JSON.stringify({ success: true, filename: `outputs/${results[0].name}` }));
       } catch (error) {
-        console.error('Mosaic generation failed:', error);
+        console.error('Mosaic generation request failed:', error);
         res.writeHead(500, { 'Content-Type': 'application/json' });
         res.end(JSON.stringify({ success: false, error: error.message || String(error) }));
       }
     });
+  } else if (req.method === 'GET' && req.url.startsWith('/api/mosaic-progress')) {
+    res.setHeader('Access-Control-Allow-Origin', '*');
+    try {
+      const parsedUrl = new URL(req.url, 'http://localhost');
+      const requestId = parsedUrl.searchParams.get('requestId');
+      
+      if (!requestId) {
+        res.writeHead(400, { 'Content-Type': 'application/json' });
+        res.end(JSON.stringify({ success: false, error: 'Missing requestId' }));
+        return;
+      }
+      
+      const progress = mosaicProgressMap.get(requestId);
+      if (!progress) {
+        res.writeHead(404, { 'Content-Type': 'application/json' });
+        res.end(JSON.stringify({ success: false, error: 'Progress not found' }));
+        return;
+      }
+      
+      res.writeHead(200, { 'Content-Type': 'application/json' });
+      res.end(JSON.stringify({ 
+        success: true, 
+        progress: Math.round(progress.progress * 100) / 100,  // Preserve 2 decimal places, don't round to integer
+        status: progress.status,
+        error: progress.error,
+        filename: progress.filename
+      }));
+    } catch (error) {
+      console.error('Error retrieving mosaic progress:', error);
+      res.writeHead(500, { 'Content-Type': 'application/json' });
+      res.end(JSON.stringify({ success: false, error: error.message || String(error) }));
+    }
   } else if (req.method === 'GET' && req.url.startsWith('/api/list-files')) {
     try {
       const parsedUrl = new URL(req.url, 'http://localhost');
@@ -2454,9 +2467,9 @@ const server = http.createServer((req, res) => {
       if (path.isAbsolute(normalizedPath) || normalizedPath.startsWith('..')) {
         throw new Error('Invalid path parameter');
       }
-      const targetDir = path.resolve(__dirname, normalizedPath);
-      const rootDir = path.resolve(__dirname);
-      if (!targetDir.startsWith(rootDir)) {
+      const srcDir = path.resolve(__dirname, '..');
+      const targetDir = path.resolve(srcDir, normalizedPath);
+      if (!targetDir.startsWith(srcDir)) {
         throw new Error('Invalid path parameter');
       }
       const files = fs.readdirSync(targetDir);
@@ -2757,6 +2770,50 @@ const server = http.createServer((req, res) => {
       res.end(JSON.stringify({ error: error.message }));
     }
 
+  } else if (req.method === 'GET' && req.url.startsWith('/serve-mosaic-file/')) {
+    // Serve files from the mosaic folder
+    res.setHeader('Access-Control-Allow-Origin', '*');
+    const filename = decodeURIComponent(req.url.replace('/serve-mosaic-file/', ''));
+    
+    // Sanitize path to prevent directory traversal
+    const safePath = path.normalize(filename).replace(/^([\/]+|\.\.([\/]|$))+/, '');
+    const filepath = path.join(MOSAIC_FOLDER, safePath);
+    if (!filepath.startsWith(MOSAIC_FOLDER + path.sep) && filepath !== MOSAIC_FOLDER) {
+      res.writeHead(400, { 'Content-Type': 'application/json' });
+      res.end(JSON.stringify({ error: 'Invalid file path' }));
+      return;
+    }
+    
+    if (!fs.existsSync(filepath)) {
+      res.writeHead(404, { 'Content-Type': 'application/json' });
+      res.end(JSON.stringify({ error: 'File not found' }));
+      return;
+    }
+    
+    // Determine content type
+    const ext = path.extname(filepath).toLowerCase();
+    const contentTypes = {
+      '.jpg': 'image/jpeg',
+      '.jpeg': 'image/jpeg',
+      '.png': 'image/png',
+      '.gif': 'image/gif',
+      '.webp': 'image/webp'
+    };
+    const contentType = contentTypes[ext] || 'application/octet-stream';
+    
+    try {
+      const stat = fs.statSync(filepath);
+      res.writeHead(200, {
+        'Content-Type': contentType,
+        'Content-Length': stat.size,
+        'Cache-Control': 'public, max-age=31536000'
+      });
+      fs.createReadStream(filepath).pipe(res);
+    } catch (error) {
+      res.writeHead(500, { 'Content-Type': 'application/json' });
+      res.end(JSON.stringify({ error: error.message }));
+    }
+
   } else if (req.method === 'GET' && req.url === '/list-downloaded-files') {
     res.setHeader('Access-Control-Allow-Origin', '*');
     res.setHeader('Access-Control-Allow-Methods', 'GET, OPTIONS');
@@ -2833,9 +2890,10 @@ function ensureDirectoryExists(dirPath) {
   }
 }
 
-// Initialize database and start server
-(async () => {
-  try {
+// Initialize database and start server (main thread only)
+if (!isWorkerMode) {
+  (async () => {
+    try {
     await database.initDatabase();
     
     // Load download folder setting from database, default to the app downloads folder when not set
@@ -2873,7 +2931,8 @@ function ensureDirectoryExists(dirPath) {
     console.error('Failed to initialize database:', error);
     process.exit(1);
   }
-})();
+  })();
+}
 
 // Graceful shutdown
 process.on('SIGINT', () => {
@@ -2887,3 +2946,334 @@ process.on('SIGTERM', () => {
   database.closeDatabase();
   process.exit(0);
 });
+
+// Worker thread code - runs when this file is spawned as a Worker
+if (isWorkerMode) {
+  (async () => {
+    try {
+      const { taskId, imageBase64, filename, cellWidth, cellHeight, columns, rows, gridSize, downloadFolder, mosaicFolder } = workerData;
+      
+      let mosaicModule;
+      try {
+        mosaicModule = require('mosaic-node-generator');
+      } catch (moduleErr) {
+        parentPort.postMessage({
+          taskId: taskId,
+          type: 'error',
+          error: `Failed to load mosaic-node-generator: ${moduleErr.message}`
+        });
+        process.exit(1);
+      }
+      
+      const inputDir = path.join(mosaicFolder, 'mosaic-test-inputs');
+      const outputsDir = path.join(mosaicFolder, 'outputs');
+      const thumbsDir = path.join(mosaicFolder, `mosaic-thumbs-${Number(cellWidth)}x${Number(cellHeight)}`);
+      const tilesDir = path.join(mosaicFolder, 'mosaic-tiles');
+
+      // Verify mosaicFolder is valid (prevent creation in wrong location)
+      if (!mosaicFolder || !path.isAbsolute(mosaicFolder)) {
+        throw new Error('Invalid mosaicFolder path: ' + mosaicFolder);
+      }
+
+      if (!fs.existsSync(inputDir)) fs.mkdirSync(inputDir, { recursive: true });
+      if (!fs.existsSync(outputsDir)) fs.mkdirSync(outputsDir, { recursive: true });
+      if (!fs.existsSync(thumbsDir)) fs.mkdirSync(thumbsDir, { recursive: true });
+
+      if (fs.existsSync(tilesDir)) {
+        fs.rmSync(tilesDir, { recursive: true, force: true });
+      }
+      fs.mkdirSync(tilesDir, { recursive: true });
+
+      // Clean up any outputs folders that might have been created in unexpected locations
+      // This prevents accumulation of rogue outputs folders from mosaic library fallback behavior
+      function cleanupRogueOutputs() {
+        const rogueLocations = [
+          path.join(process.cwd(), 'outputs'),
+          path.join(__dirname, 'outputs'),
+          path.join(path.dirname(__dirname), 'outputs')
+        ];
+        
+        for (const loc of rogueLocations) {
+          if (loc !== outputsDir && fs.existsSync(loc)) {
+            try {
+              fs.rmSync(loc, { recursive: true, force: true });
+              console.error('[WORKER] Cleaned up rogue outputs folder at:', loc);
+            } catch (err) {
+              console.warn('[WORKER] Could not remove rogue outputs folder:', loc, err.message);
+            }
+          }
+        }
+      }
+
+      parentPort.postMessage({ taskId, type: 'status', progress: 5, status: 'gathering_tiles' });
+
+      const supportedExts = new Set(['.jpg', '.jpeg', '.png', '.webp', '.gif', '.bmp']);
+      
+      // Use withFileTypes to avoid extra stat() calls - much faster
+      const downloadEntries = fs.readdirSync(downloadFolder, { withFileTypes: true });
+      const supportedTiles = downloadEntries
+        .filter(entry => entry.isFile() && supportedExts.has(path.extname(entry.name).toLowerCase()))
+        .map(entry => entry.name);
+
+      if (supportedTiles.length === 0) {
+        throw new Error('No supported image tiles found in download folder');
+      }
+
+      // Use gridSize directly as maxTiles (user's desired tile count)
+      // Cap at 1000 to avoid overwhelming the algorithm
+      const maxTiles = Math.min(gridSize, 1000);
+      
+      console.log(`[Worker ${taskId}] Using gridSize ${gridSize} as maxTiles: ${maxTiles}. Available tiles: ${supportedTiles.length}`);
+      
+      let selectedTiles = supportedTiles;
+      if (supportedTiles.length > maxTiles) {
+        selectedTiles = supportedTiles.sort(() => 0.5 - Math.random()).slice(0, maxTiles);
+      }
+
+      // Link/copy tiles in parallel for faster I/O
+      const linkPromises = selectedTiles.map(filenameEntry => {
+        const sourcePath = path.join(downloadFolder, filenameEntry);
+        const destPath = path.join(tilesDir, filenameEntry);
+        
+        return new Promise(resolve => {
+          // Try link first (instant on same filesystem)
+          fs.link(sourcePath, destPath, (linkErr) => {
+            if (!linkErr) {
+              resolve(true);
+              return;
+            }
+            // Fall back to copy if link fails (different filesystem)
+            fs.copyFile(sourcePath, destPath, (copyErr) => {
+              if (copyErr) {
+                console.warn('Failed to link or copy tile:', filenameEntry, copyErr.message || copyErr);
+                resolve(false);
+              } else {
+                resolve(true);
+              }
+            });
+          });
+        });
+      });
+
+      // Wait for all links/copies to complete
+      const linkResults = await Promise.allSettled(linkPromises);
+      const tileCount = linkResults.filter(r => r.status === 'fulfilled' && r.value === true).length;
+
+      if (tileCount === 0) {
+        throw new Error('Failed to stage any tile images for mosaic generation');
+      }
+
+      parentPort.postMessage({ taskId, type: 'status', progress: 15, status: 'preparing_input' });
+
+      const inputName = filename ? path.basename(filename) : `mosaic-input-${Date.now()}.png`;
+      const inputPath = path.join(inputDir, inputName);
+      let rawData = imageBase64;
+      if (rawData.startsWith('data:')) {
+        rawData = rawData.substring(rawData.indexOf(',') + 1);
+      }
+      const buffer = Buffer.from(rawData, 'base64');
+      fs.writeFileSync(inputPath, buffer);
+
+      let thumbsDirectoryFromRead = null;
+      const thumbsFiles = fs.readdirSync(thumbsDir).filter(file => {
+        const full = path.join(thumbsDir, file);
+        return fs.statSync(full).isFile();
+      });
+      if (thumbsFiles.length > 0) {
+        thumbsDirectoryFromRead = thumbsDir;
+      }
+
+      parentPort.postMessage({ taskId, type: 'status', progress: 15, status: 'generating' });
+
+      // Force garbage collection before heavy generation to free memory
+      if (global.gc) {
+        global.gc();
+      }
+
+      const sourceJimp = await mosaicModule.JimpImage.read(inputPath);
+      const sourceImage = new mosaicModule.JimpImage(sourceJimp);
+      const mosaicImage = new mosaicModule.MosaicImage(
+        sourceImage,
+        tilesDir,
+        Number(cellWidth),
+        Number(cellHeight),
+        Number(columns),
+        Number(rows),
+        thumbsDirectoryFromRead,
+        thumbsDir,
+        true
+      );
+      
+      if (mosaicImage.hasOwnProperty('outputPath') || 'outputPath' in mosaicImage) {
+        mosaicImage.outputPath = outputsDir;
+      }
+      if (mosaicImage.hasOwnProperty('outputFolder') || 'outputFolder' in mosaicImage) {
+        mosaicImage.outputFolder = outputsDir;
+      }
+      if (mosaicImage.hasOwnProperty('outputDir') || 'outputDir' in mosaicImage) {
+        mosaicImage.outputDir = outputsDir;
+      }
+      if (typeof mosaicImage.setOutputPath === 'function') {
+        mosaicImage.setOutputPath(outputsDir);
+      }
+      if (typeof mosaicImage.setOutputFolder === 'function') {
+        mosaicImage.setOutputFolder(outputsDir);
+      }
+
+      const originalLog = console.log;
+      let thumbsSaveInProgress = false;
+      
+      console.log = function(...args) {
+        originalLog.apply(console, args);
+        const message = args.map(arg => String(arg)).join(' ');
+        
+        if (message.includes('Start saving thumbs')) {
+          thumbsSaveInProgress = true;
+          parentPort.postMessage({ taskId, type: 'status', progress: 20, status: 'saving_thumbnails' });
+          return;
+        }
+        
+        if (message.includes('End saving thumbs')) {
+          thumbsSaveInProgress = false;
+          parentPort.postMessage({ taskId, type: 'status', progress: 85, status: 'generating' });
+          return;
+        }
+        
+        if (thumbsSaveInProgress) {
+          const thumbsMatch = message.match(/\[Thumbs save\]\s*(\d+)\/(\d+)/);
+          if (thumbsMatch) {
+            const current = parseInt(thumbsMatch[1]);
+            const total = parseInt(thumbsMatch[2]);
+            if (current > 0 && total > 0) {
+              const thumbsPercent = (current / total) * 100;
+              const mappedProgress = 20 + (thumbsPercent * 0.65);
+              const progress = Math.min(85, Math.round(mappedProgress * 100) / 100);
+              parentPort.postMessage({ taskId, type: 'status', progress, status: 'saving_thumbnails' });
+            }
+          }
+          return;
+        }
+        
+        if (!thumbsSaveInProgress && message.match(/Progress:\s*([\d.]+)%/i)) {
+          const progressMatch = message.match(/Progress:\s*([\d.]+)%/i);
+          if (progressMatch) {
+            const progressValue = parseFloat(progressMatch[1]);
+            if (!isNaN(progressValue)) {
+              const mappedProgress = 85 + (progressValue * 0.10);
+              const progress = Math.min(95, Math.round(mappedProgress * 100) / 100);
+              parentPort.postMessage({ taskId, type: 'status', progress, status: 'generating' });
+            }
+          }
+        }
+      };
+
+      const generatePromise = mosaicImage.generate();
+      let generatedImage = null;
+      if (generatePromise && typeof generatePromise.then === 'function') {
+        generatedImage = await generatePromise;
+      } else if (generatePromise && typeof generatePromise === 'object') {
+        generatedImage = await generatePromise;
+      } else {
+        generatedImage = generatePromise;
+      }
+      
+      if (mosaicImage.image) {
+        if (typeof mosaicImage.image.getBuffer === 'function') {
+          // Use quality 85 for faster compression (balances speed and quality)
+          // Jimp JPEG quality is 0-100, default 100. Quality 85 is imperceptible to users
+          // and significantly faster to encode than 100
+          const imgBuffer = await mosaicImage.image.quality(85).getBuffer('image/jpeg');
+          const outputFile = path.join(outputsDir, `output_${Date.now()}.jpg`);
+          fs.writeFileSync(outputFile, imgBuffer);
+        } else if (typeof mosaicImage.image.write === 'function') {
+          const outputFile = path.join(outputsDir, `output_${Date.now()}`);
+          await mosaicImage.image.write(outputFile);
+        } else if (typeof mosaicImage.image.save === 'function') {
+          const outputFile = path.join(outputsDir, `output_${Date.now()}`);
+          await mosaicImage.image.save(outputFile);
+        } else {
+          throw new Error('Cannot save mosaic: no save method available');
+        }
+      }
+      
+      console.log = originalLog;
+      parentPort.postMessage({ taskId, type: 'status', progress: 95, status: 'finalizing' });
+
+      const outputDirContents = fs.readdirSync(outputsDir);
+      let results = outputDirContents
+        .filter(file => /^output_.*\.(jpg|jpeg|png)$/i.test(file))
+        .map(file => ({
+          name: file,
+          mtime: fs.statSync(path.join(outputsDir, file)).mtimeMs
+        }))
+        .sort((a, b) => b.mtime - a.mtime);
+
+      if (results.length === 0) {
+        function findRecentFiles(dir, maxAgeMs = 60000) {
+          const files = [];
+          const entries = fs.readdirSync(dir, { withFileTypes: true });
+          const now = Date.now();
+          
+          for (const entry of entries) {
+            const fullPath = path.join(dir, entry.name);
+            const stat = fs.statSync(fullPath);
+            const age = now - stat.mtimeMs;
+            
+            if (age < maxAgeMs) {
+              if (entry.isFile()) {
+                const ext = path.extname(entry.name).toLowerCase();
+                if (['.jpg', '.jpeg', '.png', '.gif', '.bmp', '.webp'].includes(ext)) {
+                  files.push({ path: fullPath, name: entry.name, mtime: stat.mtimeMs });
+                }
+              } else if (entry.isDirectory()) {
+                files.push(...findRecentFiles(fullPath, maxAgeMs));
+              }
+            }
+          }
+          return files;
+        }
+        
+        const recentFiles = findRecentFiles(mosaicFolder);
+        if (recentFiles.length > 0) {
+          const mostRecent = recentFiles.sort((a, b) => b.mtime - a.mtime)[0];
+          results = [{ name: path.basename(mostRecent.path), path: mostRecent.path }];
+        } else {
+          throw new Error('Mosaic output file not found');
+        }
+      }
+
+      // Clean up any rogue outputs folders created by mosaic library fallback behavior
+      cleanupRogueOutputs();
+
+      let relativePath = 'outputs/' + results[0].name;
+      if (results[0].path) {
+        relativePath = path.relative(mosaicFolder, results[0].path);
+      }
+
+      parentPort.postMessage({
+        taskId,
+        type: 'complete',
+        success: true,
+        outputFilename: relativePath
+      });
+      
+      process.exit(0);
+    } catch (error) {
+      console.error('[WORKER ERROR]', error);
+      parentPort.postMessage({
+        taskId: workerData.taskId,
+        type: 'error',
+        error: error.message || String(error)
+      });
+      process.exit(1);
+    }
+  })().catch(err => {
+    console.error('[WORKER UNCAUGHT]', err);
+    parentPort.postMessage({
+      taskId: workerData.taskId,
+      type: 'error',
+      error: `Uncaught error: ${err.message || String(err)}`
+    });
+    process.exit(1);
+  });
+}

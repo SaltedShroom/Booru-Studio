@@ -199,6 +199,47 @@ ipcMain.handle('get-user-data-output-path', async () => {
   return path.join(userDataBase, 'output');
 });
 
+ipcMain.handle('save-mosaic-file', async (event, imageUrl, defaultFilename) => {
+  const result = await dialog.showSaveDialog(mainWindow, {
+    title: 'Save Mosaic Image',
+    defaultPath: path.join(app.getPath('downloads'), defaultFilename || 'mosaic.jpg'),
+    filters: [
+      { name: 'JPEG Image', extensions: ['jpg', 'jpeg'] },
+      { name: 'All Files', extensions: ['*'] }
+    ],
+  });
+  
+  if (result.canceled) {
+    return { canceled: true };
+  }
+  
+  try {
+    // Fetch the image from the local server
+    const https_module = imageUrl.startsWith('https') ? require('https') : require('http');
+    
+    return new Promise((resolve) => {
+      https_module.get(imageUrl, (response) => {
+        const fileStream = fs.createWriteStream(result.filePath);
+        response.pipe(fileStream);
+        
+        fileStream.on('finish', () => {
+          fileStream.close();
+          resolve({ canceled: false, filePath: result.filePath });
+        });
+        
+        fileStream.on('error', (err) => {
+          fs.unlink(result.filePath, () => {});
+          resolve({ canceled: false, error: err.message });
+        });
+      }).on('error', (err) => {
+        resolve({ canceled: false, error: err.message });
+      });
+    });
+  } catch (err) {
+    return { canceled: false, error: err.message };
+  }
+});
+
 function fetchLatestGitHubRelease() {
   return new Promise((resolve) => {
     const request = https.get(

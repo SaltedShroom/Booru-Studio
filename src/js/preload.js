@@ -6,5 +6,6 @@ contextBridge.exposeInMainWorld('electronAPI', {
   getUserDataOutputPath: () => ipcRenderer.invoke('get-user-data-output-path'),
   checkForUpdates: () => ipcRenderer.invoke('check-for-updates'),
   downloadUpdate: () => ipcRenderer.invoke('download-update'),
+  saveMosaicFile: (imageUrl, defaultFilename) => ipcRenderer.invoke('save-mosaic-file', imageUrl, defaultFilename),
   onUpdateProgress: (callback) => ipcRenderer.on('update-progress', callback),
 });

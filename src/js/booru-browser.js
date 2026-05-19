@@ -283,6 +283,7 @@ let booruPaginationToken = null;
 let isLoadingBooru = false;
 let aiFilterEnabled = false; // AI filter OFF by default
 let maxRecommendedTags = 20;
+let activeDownloadsSidebarTab = 'analytics'; // or 'mosaic'
 
 // Gallery quality state
 let showHighQualityGallery = false;
@@ -293,6 +294,10 @@ let _hqLoadingCount = 0;
 let _hqTotalBytes = 0;
 
 let LoadingCounterTimeout = null;
+
+if (localStorage.getItem('downloadsSidebarSelectedTab')) {
+  activeDownloadsSidebarTab = localStorage.getItem('downloadsSidebarSelectedTab');
+}
 
 function updateHqLoadingCounter(delta) {
   if (LoadingCounterTimeout) {
@@ -728,6 +733,12 @@ async function loadDownloadFolder() {
   }
 }
 
+function selectDownloadsSidebarTab(tab) {
+  activeDownloadsSidebarTab = tab;
+  localStorage.setItem('downloadsSidebarSelectedTab', tab);
+  renderDownloadsSidebar();
+}
+
 function renderDownloadsSidebar() {
   const sidebar = document.getElementById('downloads-sidebar');
   if (!sidebar) return;
@@ -753,6 +764,27 @@ function renderDownloadsSidebar() {
   });
   sidebar.appendChild(toggleBtn);
 
+  let analyticsActive = '';
+  let mosaicActive = '';
+  if (activeDownloadsSidebarTab === 'analytics') {
+    analyticsActive = 'active';
+  } else {
+    mosaicActive = 'active';
+  }
+
+  const navbarContainer = document.createElement('div');
+  navbarContainer.className = 'sidebar-navbar-container';
+  navbarContainer.innerHTML = `<button id="downloads-sidebar-analytics-btn" onclick="selectDownloadsSidebarTab('analytics')" class="sidebar-nav-btn ${analyticsActive}">Analytics</button> <button id="downloads-sidebar-mosaic-btn" onclick="selectDownloadsSidebarTab('mosaic')" class="sidebar-nav-btn ${mosaicActive}">Mosaic</button>`;
+  sidebar.appendChild(navbarContainer);
+
+  if (activeDownloadsSidebarTab === 'analytics') {
+    renderDownloadsAnalytics(sidebar);
+  } else {
+    renderDownloadsMosaic(sidebar);
+  }
+}
+
+function renderDownloadsAnalytics(sidebar) {
   const downloadTitle = document.createElement('h3');
   downloadTitle.textContent = 'SEARCH ANALYTICS';
   sidebar.appendChild(downloadTitle);
@@ -841,6 +873,537 @@ function renderDownloadsSidebar() {
   // sidebar.appendChild(mostUsedTags);
 
   // renderDownloadsTags();
+}
+
+function renderDownloadsMosaic(sidebar) {
+  const mosaicTitle = document.createElement('h3');
+  mosaicTitle.textContent = 'MOSAIC CREATOR';
+  sidebar.appendChild(mosaicTitle);
+
+  const mosaicInputContainer = document.createElement('div');
+  mosaicInputContainer.className = 'mosaic-container';
+  const mosaicInputTitle = document.createElement('h1');
+  mosaicInputTitle.textContent = 'Input Image';
+  const mosaicInputDiv = document.createElement('div');
+  mosaicInputDiv.className = 'mosaic-file-container';
+  mosaicInputDiv.textContent = 'Click or drag an image here';
+  const mosaicInput = document.createElement('input');
+  mosaicInput.className = 'input-container';
+  mosaicInput.type = 'file';
+  mosaicInput.multiple = false;
+  mosaicInput.accept = 'image/*';
+  mosaicInput.style.display = 'none';
+  mosaicInput.style.pointerEvents = 'none';
+  
+  const mosaicImage = document.createElement('img');
+  mosaicImage.id = 'mosaic-input';
+  
+  // Handle file change to display image
+  mosaicInput.addEventListener('change', (e) => {
+    if (e.target.files && e.target.files[0]) {
+      const reader = new FileReader();
+      reader.onload = (event) => {
+        mosaicImage.src = event.target.result;
+      };
+      reader.readAsDataURL(e.target.files[0]);
+    }
+  });
+
+  mosaicImage.addEventListener('load', () => {
+    mosaicInputDiv.style.color = 'var(--bg-darkest)';
+    renderDownloadsOutputPreview();
+  });
+  
+  // Allow clicking the container to open file picker
+  mosaicInputDiv.addEventListener('click', () => {
+    mosaicInput.click();
+  });
+  mosaicInputDiv.style.cursor = 'pointer';
+  
+  // Add drag and drop handlers to the visible container (not the hidden input)
+  mosaicInputDiv.addEventListener('dragover', (e) => {
+    e.preventDefault();
+    e.stopPropagation();
+    mosaicInputDiv.classList.add('dragover');
+  });
+  
+  mosaicInputDiv.addEventListener('dragleave', (e) => {
+    e.preventDefault();
+    e.stopPropagation();
+    mosaicInputDiv.classList.remove('dragover');
+  });
+  
+  mosaicInputDiv.addEventListener('drop', (e) => {
+    e.preventDefault();
+    e.stopPropagation();
+    mosaicInputDiv.classList.remove('dragover');
+    
+    const files = e.dataTransfer.files;
+    
+    // Try alternate approach with DataTransferItemList
+    if (e.dataTransfer.items && e.dataTransfer.items.length > 0) {
+      let fileFound = false;
+      
+      for (let i = 0; i < e.dataTransfer.items.length; i++) {
+        const item = e.dataTransfer.items[i];
+        
+        if (item.kind === 'file') {
+          const file = item.getAsFile();
+          if (file) {
+            const reader = new FileReader();
+            reader.onload = (event) => {
+              mosaicImage.src = event.target.result;
+              mosaicInputDiv.classList.add('has-file');
+            };
+            reader.readAsDataURL(file);
+            fileFound = true;
+            break;
+          }
+        } else if (item.kind === 'string') {
+          if (item.type === 'text/uri-list' || item.type === 'text/plain') {
+            item.getAsString(async (urlString) => {
+              try {
+                // Extract the URL (remove any whitespace/newlines)
+                const imageUrl = urlString.trim().split('\n')[0];
+                
+                const response = await fetch(imageUrl);
+                if (!response.ok) throw new Error(`HTTP error! status: ${response.status}`);
+                
+                const blob = await response.blob();
+                
+                const reader = new FileReader();
+                reader.onload = (event) => {
+                  mosaicImage.src = event.target.result;
+                  mosaicInputDiv.classList.add('has-file');
+                };
+                reader.readAsDataURL(blob);
+                fileFound = true;
+              } catch (error) {
+                // Silently fail if fetch doesn't work
+              }
+            });
+            break;
+          }
+        }
+      }
+    } else if (files && files.length > 0) {
+      const file = files[0];
+      const reader = new FileReader();
+      reader.onload = (event) => {
+        mosaicImage.src = event.target.result;
+        mosaicInputDiv.classList.add('has-file');
+      };
+      reader.readAsDataURL(file);
+    }
+  });
+  
+  mosaicInputDiv.appendChild(mosaicInput);
+  mosaicInputDiv.appendChild(mosaicImage);
+  mosaicInputContainer.appendChild(mosaicInputTitle);
+  mosaicInputContainer.appendChild(mosaicInputDiv);
+  sidebar.appendChild(mosaicInputContainer);
+
+  const mosaicOutputContainer = document.createElement('div');
+  mosaicOutputContainer.className = 'mosaic-container';
+  const mosaicOutputTitle = document.createElement('h1');
+  mosaicOutputTitle.textContent = 'Output Image';
+  const mosaicOutputDiv = document.createElement('div');
+  mosaicOutputDiv.className = 'mosaic-file-container';
+  const mosaicOutput = document.createElement('div');
+  mosaicOutput.className = 'output-container';
+  mosaicOutput.id = 'mosaic-output';
+  const mosaicProgressBar = document.createElement('div');
+  mosaicProgressBar.className = 'mosaic-progress-bar';
+  mosaicProgressBar.id = 'mosaic-progress-bar';
+  const mosaicProgressRect = document.createElement('div');
+  mosaicProgressRect.className = 'mosaic-progress-rect';
+  mosaicProgressRect.id = 'mosaic-progress-rect';
+  const mosaicProgressText = document.createElement('span');
+  mosaicProgressText.className = 'mosaic-progress-text';
+  mosaicProgressText.id = 'mosaic-progress-text';
+  mosaicProgressText.textContent = '0%';
+  mosaicProgressBar.appendChild(mosaicProgressRect);
+  mosaicProgressBar.appendChild(mosaicProgressText);
+  mosaicOutputDiv.appendChild(mosaicOutput);
+  mosaicOutputDiv.appendChild(mosaicProgressBar);
+  mosaicOutputContainer.appendChild(mosaicOutputTitle);
+  mosaicOutputContainer.appendChild(mosaicOutputDiv);
+  sidebar.appendChild(mosaicOutputContainer);
+
+  sidebar.appendChild(document.createElement('hr'));
+
+  //add slider to control mosaic tile size (allow 40, 60, 80, 100, 120)
+  const tileSizeContainer = document.createElement('div');
+  tileSizeContainer.className = 'mosaic-container';
+  const tileSizeTitle = document.createElement('h1');
+  tileSizeTitle.textContent = 'Tile Size';
+  const tileSizeInput = document.createElement('input');
+  tileSizeInput.className = 'input-slider';
+  tileSizeInput.id = 'tile-size-input';
+  tileSizeInput.type = 'range';
+  tileSizeInput.min = '20';
+  tileSizeInput.max = '120';
+  tileSizeInput.value = '80';
+  tileSizeInput.step = '20';
+  const tileSizeValue = document.createElement('span');
+  tileSizeValue.textContent = tileSizeInput.value + 'x' + tileSizeInput.value;
+  
+  tileSizeInput.addEventListener('input', () => {
+    tileSizeValue.textContent = tileSizeInput.value + 'x' + tileSizeInput.value;
+    renderDownloadsOutputPreview();
+  });
+  
+  tileSizeContainer.appendChild(tileSizeTitle);
+  tileSizeContainer.appendChild(tileSizeValue);
+  tileSizeContainer.appendChild(tileSizeInput);
+  sidebar.appendChild(tileSizeContainer);
+
+  //add slider to control grid size (allow 100 to 1000 tiles)
+  const gridSizeContainer = document.createElement('div');
+  gridSizeContainer.className = 'mosaic-container';
+  const gridSizeTitle = document.createElement('h1');
+  gridSizeTitle.textContent = 'Grid Size';
+  const gridSizeInput = document.createElement('input');
+  gridSizeInput.className = 'input-slider';
+  gridSizeInput.id = 'grid-size-input';
+  gridSizeInput.type = 'range';
+  gridSizeInput.min = '100';
+  gridSizeInput.max = '1000';
+  gridSizeInput.value = '100';
+  gridSizeInput.step = '50';
+  const gridSizeValue = document.createElement('span');
+  gridSizeValue.textContent = gridSizeInput.value + ' tiles';
+  
+  gridSizeInput.addEventListener('input', () => {
+    gridSizeValue.textContent = gridSizeInput.value + ' tiles';
+  });
+  
+  gridSizeContainer.appendChild(gridSizeTitle);
+  gridSizeContainer.appendChild(gridSizeValue);
+  gridSizeContainer.appendChild(gridSizeInput);
+  sidebar.appendChild(gridSizeContainer);
+
+  sidebar.appendChild(document.createElement('hr'));
+  
+  const runMosaicBtn = document.createElement('button');
+  runMosaicBtn.className = 'run-mosaic-btn';
+  runMosaicBtn.id = 'run-mosaic-btn';
+  runMosaicBtn.textContent = 'Build Mosaic';
+  runMosaicBtn.addEventListener('click', () => {
+    buildMosaic();
+  });
+  sidebar.appendChild(runMosaicBtn);
+}
+
+function buildMosaic() {
+  document.getElementById('run-mosaic-btn').disabled = true;
+  document.getElementById('mosaic-progress-bar').classList.add('active');
+  document.getElementById('tile-size-input').disabled = true;
+  document.getElementById('grid-size-input').disabled = true;
+  
+  // Reset progress bar
+  const progressRect = document.getElementById('mosaic-progress-rect');
+  if (progressRect) {
+    progressRect.style.width = '0%';
+  }
+
+  const tileSize = parseInt(document.getElementById('tile-size-input').value) || 80;
+  const gridSize = parseInt(document.getElementById('grid-size-input').value) || 100;
+  const mosaicInputImg = document.getElementById('mosaic-input');
+  
+  // Get image dimensions
+  const imageWidth = mosaicInputImg.naturalWidth;
+  const imageHeight = mosaicInputImg.naturalHeight;
+  
+  if (!imageWidth || !imageHeight) {
+    alert('Error: Unable to get image dimensions. Please ensure an image is loaded.');
+    document.getElementById('run-mosaic-btn').disabled = false;
+    document.getElementById('mosaic-progress-bar').classList.remove('active');
+    return;
+  }
+  
+  // Calculate grid dimensions based on aspect ratio
+  const aspectRatio = imageWidth / imageHeight;
+  const columns = Math.round(Math.sqrt(gridSize * aspectRatio));
+  const rows = Math.round(Math.sqrt(gridSize / aspectRatio));
+  
+  // Calculate cell dimensions from tile size
+  const cellWidth = tileSize;
+  const cellHeight = tileSize;
+  
+  // Convert image to base64
+  const canvas = document.createElement('canvas');
+  canvas.width = imageWidth;
+  canvas.height = imageHeight;
+  const ctx = canvas.getContext('2d');
+  ctx.drawImage(mosaicInputImg, 0, 0);
+  const imageBase64 = canvas.toDataURL('image/png');
+  
+  // Generate unique request ID
+  const requestId = `mosaic-${Date.now()}-${Math.random().toString(36).substr(2, 9)}`;
+  
+  // Call the endpoint
+  (async () => {
+    try {
+      let resultFilename = null;
+      let generationCompleted = false;
+      
+      // Step-based animation variables
+      let currentProgress = 0;
+      let targetProgress = 0;
+      let progressIntervalId = null;
+      
+      // Animation loop that steps towards target progress
+      const animateMosaicProgress = () => {
+        if (currentProgress < targetProgress) {
+          // Calculate the remaining distance to target
+          const remainingDistance = targetProgress - currentProgress;
+          
+          // Move 8% of remaining distance each step for smooth but responsive animation
+          const stepSize = Math.max(remainingDistance * 0.08, 0.1);
+          currentProgress += stepSize;
+          
+          // Allow reaching the actual target progress
+          if (currentProgress > targetProgress) {
+            currentProgress = targetProgress;
+          }
+        } else if (currentProgress > targetProgress) {
+          // If somehow above target, come back down to target
+          currentProgress = targetProgress;
+        }
+        
+        const progressRect = document.getElementById('mosaic-progress-rect');
+        const progressText = document.getElementById('mosaic-progress-text');
+        if (progressRect) {
+          progressRect.style.width = currentProgress + '%';
+        }
+        if (progressText) {
+          // Truncate to 2 decimals instead of rounding to show precise values
+          const truncatedProgress = Math.floor(currentProgress * 100) / 100;
+          progressText.textContent = truncatedProgress.toFixed(2) + '%';
+        }
+        
+        if (!generationCompleted) {
+          progressIntervalId = setTimeout(animateMosaicProgress, 500); // Step every 500ms
+        }
+      };
+      
+      // Start animation loop
+      animateMosaicProgress();
+      
+      // Define polling function BEFORE starting anything
+      const pollProgress = () => {
+        if (generationCompleted) return;
+        
+        const progressUrl = `http://localhost:3001/api/mosaic-progress?requestId=${requestId}`;
+        
+        setTimeout(() => {
+          fetch(progressUrl)
+            .then(r => r.json())
+            .then(progressData => {
+              
+              if (progressData.success) {
+                const progress = progressData.progress;
+                
+                // Progress should only move forward, never backward
+                // Use Math.max to ensure we don't regress to lower values
+                targetProgress = Math.max(targetProgress, progress);
+                
+                if (progressData.status === 'completed') {
+                  generationCompleted = true;
+                  
+                  // Cancel animation and set to 100%
+                  if (progressIntervalId) {
+                    clearTimeout(progressIntervalId);
+                  }
+                  const progressRect = document.getElementById('mosaic-progress-rect');
+                  if (progressRect) {
+                    progressRect.style.width = '100%';
+                  }
+                  
+                  // Get filename from progress response
+                  const filename = progressData.filename || resultFilename;
+                  
+                  // Display the result
+                  if (filename) {
+                    const outputImage = document.getElementById('mosaic-output');
+                    const resultImg = document.createElement('img');
+                    resultImg.src = `http://localhost:3001/serve-mosaic-file/${encodeURIComponent(filename)}`;
+                    resultImg.style.width = '100%';
+                    resultImg.style.height = 'auto';
+                    resultImg.style.display = 'block';
+                    resultImg.style.cursor = 'pointer';
+                    outputImage.innerHTML = '';
+                    outputImage.appendChild(resultImg);
+                    
+                    // Add click listener to save mosaic when clicked
+                    resultImg.addEventListener('click', async () => {
+                      try {
+                        if (window.electronAPI && window.electronAPI.saveMosaicFile) {
+                          // Electron mode: use IPC to save
+                          const result = await window.electronAPI.saveMosaicFile(
+                            resultImg.src,
+                            `mosaic-${Date.now()}.jpg`
+                          );
+                          if (result.error) {
+                            console.error('Error saving mosaic:', result.error);
+                            showToast('Error saving mosaic: ' + result.error, 'error');
+                          }
+                        } else {
+                          // Browser mode: download directly
+                          const response = await fetch(resultImg.src);
+                          const blob = await response.blob();
+                          const url = URL.createObjectURL(blob);
+                          const link = document.createElement('a');
+                          link.href = url;
+                          link.download = `mosaic-${Date.now()}.jpg`;
+                          document.body.appendChild(link);
+                          link.click();
+                          document.body.removeChild(link);
+                          URL.revokeObjectURL(url);
+                        }
+                      } catch (err) {
+                        console.error('Failed to save mosaic:', err);
+                      }
+                    });
+                  } else {
+                    console.warn('[MOSAIC] Status completed but filename is not available');
+                  }
+                  document.getElementById('run-mosaic-btn').disabled = false;
+                  document.getElementById('mosaic-progress-bar').classList.remove('active');
+                  document.getElementById('tile-size-input').disabled = false;
+                  document.getElementById('grid-size-input').disabled = false;
+                } else if (progressData.status === 'error') {
+                  generationCompleted = true;
+                  
+                  // Cancel animation on error
+                  if (progressIntervalId) {
+                    clearTimeout(progressIntervalId);
+                  }
+                  throw new Error(progressData.error || 'Generation error occurred');
+                } else if (!generationCompleted) {
+                  // Continue polling
+                  setTimeout(pollProgress, 100);
+                }
+              } else {
+                console.error('[MOSAIC] Progress response not successful:', progressData);
+                if (!generationCompleted) {
+                  setTimeout(pollProgress, 200);
+                }
+              }
+            })
+            .catch(err => {
+              console.error('[MOSAIC] Error polling progress:', err);
+              if (!generationCompleted) {
+                // Continue polling even on error
+                setTimeout(pollProgress, 200);
+              }
+            });
+        }, 800); // Slight delay before each poll to avoid tight loop
+      };
+      
+      // Send POST request - will get immediate 202 response
+      const postPromise = fetch('http://localhost:3001/api/generate-mosaic', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          imageBase64,
+          filename: `mosaic-input-${Date.now()}.png`,
+          cellWidth,
+          cellHeight,
+          columns,
+          rows,
+          gridSize,
+          requestId
+        })
+      });
+      
+      // Start polling immediately (in parallel with POST)
+      setTimeout(() => {
+        pollProgress();
+      }, 50); // Small delay to let server start processing
+      
+      // Wait for initial POST response (202 Accepted)
+      const response = await postPromise;
+      const data = await response.json();
+      
+      if (!data.success) {
+        throw new Error(data.error || 'Mosaic generation failed to start');
+      }
+      
+      // Continue polling until completion - the filename will be available from progress endpoint
+      // when status is 'completed'
+    } catch (error) {
+      console.error('[MOSAIC] Error building mosaic:', error);
+      generationCompleted = true;
+      if (progressIntervalId) {
+        clearTimeout(progressIntervalId);
+      }
+      alert('Error building mosaic: ' + (error.message || error));
+      document.getElementById('run-mosaic-btn').disabled = false;
+      setTimeout(() => {
+      document.getElementById('mosaic-progress-bar').classList.remove('active');
+      }, 500);
+      document.getElementById('tile-size-input').disabled = false;
+      document.getElementById('grid-size-input').disabled = false;
+    }
+  })();
+}
+
+function renderDownloadsOutputPreview() {
+  const outputImage = document.getElementById('mosaic-output');
+  const inputImage = document.getElementById('mosaic-input');
+  
+  const width = inputImage.getBoundingClientRect().width;
+  const height = inputImage.getBoundingClientRect().height;
+
+  const ratioX = inputImage.naturalWidth;
+  const ratioY = inputImage.naturalHeight;
+
+  const tileSize = document.getElementById('tile-size-input').value || 80;
+  
+  outputImage.style.width = width + 'px';
+  outputImage.style.height = height + 'px';
+
+  outputImage.parentElement.style.backgroundColor = 'var(--bg-darkest)';
+  
+  const tilesX = Math.round(ratioX / tileSize);
+  const tilesY = Math.round(ratioY / tileSize);
+  
+  const tileWidth = width / tilesX;
+  const tileHeight = height / tilesY;
+  
+  // Clear previous content
+  outputImage.innerHTML = '';
+  
+  // Get the CSS color values
+  const root = document.documentElement;
+  const darkColor = getComputedStyle(root).getPropertyValue('--surface-darkest').trim();
+  const darkestColor = getComputedStyle(root).getPropertyValue('--bg-dark').trim();
+  
+  // Create SVG for checkerboard pattern
+  const svg = document.createElementNS('http://www.w3.org/2000/svg', 'svg');
+  svg.setAttribute('width', width);
+  svg.setAttribute('height', height);
+  svg.style.display = 'block';
+  
+  for (let y = 0; y < tilesY; y++) {
+    for (let x = 0; x < tilesX; x++) {
+      const rect = document.createElementNS('http://www.w3.org/2000/svg', 'rect');
+      rect.setAttribute('x', x * tileWidth);
+      rect.setAttribute('y', y * tileHeight);
+      rect.setAttribute('width', tileWidth);
+      rect.setAttribute('height', tileHeight);
+      
+      // Checkerboard pattern: alternate colors
+      const isEven = (x + y) % 2 === 0;
+      rect.setAttribute('fill', isEven ? darkColor : darkestColor);
+      
+      svg.appendChild(rect);
+    }
+  }
+  
+  outputImage.appendChild(svg);
 }
 
 function renderDownloadsStatsChart() {

@@ -10,6 +10,7 @@
   --surface: #252a3a;
   --surface-hover: #2d3548;
   --surface-dark: #1b1f2c;
+  --surface-darkest: #1f2433;
   --text-primary: #e8e8e8;
   --text-secondary: #a0a0a0;
   --border: #3a3f52;
@@ -43,6 +44,7 @@
   --accent-hover: #c23852;
   --surface: #ffffff;
   --surface-dark: #eeeeee;
+  --surface-darkest: #dfdfdf;
   --surface-hover: #f0f0f0;
   --text-primary: #000000;
   --text-secondary: #333333;
@@ -4992,7 +4994,7 @@ textarea.settings-input {
   height: 100%;
   position: relative;
   padding: clamp(16px, 2vw, 24px);
-  padding-top: 20px;
+  padding-top: 0;
   display: flex;
   flex-direction: column;
   flex-wrap: nowrap;
@@ -5008,6 +5010,35 @@ textarea.settings-input {
   padding-right: 0;
   overflow-y: hidden;
 }
+.downloads-sidebar .sidebar-navbar-container {
+  display: flex;
+  width: calc(100% - 24px);
+  left: 24px;
+  top: 0;
+  position: absolute;
+  flex-wrap: nowrap;
+  align-items: center;
+  height: 24px;
+  background-color: var(--surface-dark);
+}
+.downloads-sidebar .sidebar-nav-btn {
+  height: 100%;
+  font-size: 14px;
+  color: var(--text-secondary);
+  background: var(--surface-dark);
+  outline: solid 1px var(--border);
+  border: none;
+  flex-grow: 1;
+}
+.downloads-sidebar .sidebar-nav-btn.active {
+  background: var(--surface-darkest);
+  color: var(--text-primary);
+}
+.downloads-sidebar .sidebar-nav-btn:hover {
+  background: var(--surface-hover);
+  color: var(--accent);
+  cursor: pointer;
+}
 .downloads-sidebar h3 {
   font-size: 12px;
   font-weight: normal;
@@ -5016,6 +5047,7 @@ textarea.settings-input {
   padding: 4px;
   padding-top: 0;
   margin: 0;
+  margin-top: 36px;
   margin-bottom: 16px;
   border-bottom: solid 1px var(--border);
 }
@@ -5089,4 +5121,165 @@ textarea.settings-input {
 
 #load-more-icon {
   transition: opacity 0.2s ease;
+}
+
+.mosaic-container {
+
+}
+.mosaic-container h1 {
+  margin-bottom: 4px;
+}
+.mosaic-file-container {
+  position: relative;
+  width: 100%;
+  background: var(--surface-dark);
+  aspect-ratio: 1/0.6;
+  border: solid 1px var(--border);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  overflow: hidden;
+  color: var(--text-secondary);
+  font-size: 10px;
+}
+.mosaic-file-container:hover {
+  border-color: var(--text-primary);
+}
+.mosaic-file-container.dragover {
+  border: solid 1px var(--text-primary);
+}
+.mosaic-file-container.has-file {
+  border-color: var(--accent);
+  color: var(--accent);
+  border-width: 2px;
+  background: var(--bg-darkest);
+}
+.mosaic-file-container input {
+  position: absolute;
+  left: 0;
+  top: 0;
+  opacity: 0;
+  width: 100%;
+  height: 100%;
+  border: none;
+  outline: none;
+  cursor: pointer;
+}
+.mosaic-file-container .output-container {
+  width: 100%;
+  height: 100%;
+  background: var(--bg-darkest);
+  position: relative;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+.mosaic-file-container img {
+  position: absolute;
+  max-width: calc(100% + 2px);
+  max-height: calc(100% + 2px);
+  object-fit: contain;
+  pointer-events: none;
+  user-select: none;
+}
+.mosaic-file-container .output-container img {
+  position: absolute;
+  width: 100%;
+  height: 100%;
+  pointer-events: all;
+  user-select: all;
+}
+.mosaic-container .input-slider {
+  width: 100%;
+  height: 10x;
+  background: var(--border);
+  outline: none;
+  appearance: none;
+  cursor: pointer;
+}
+.mosaic-container .input-slider::-webkit-slider-thumb {
+  appearance: none;
+  width: 12px;
+  height: 12px;
+  background: var(--accent);
+  border-radius: 0;
+  cursor: pointer;
+  transition: all 0.2s;
+}
+.mosaic-container .input-slider::-moz-range-thumb {
+  width: 12px;
+  height: 12px;
+  background: var(--accent);
+  border: none;
+  border-radius: 0;
+  cursor: pointer;
+  transition: all 0.2s;
+}
+.mosaic-container .input-slider::-moz-range-thumb:hover {
+  transform: scale(1.2);
+  box-shadow: 0 0 0 4px rgba(233, 69, 96, 0.2);
+}
+.mosaic-container span {
+  font-size: 10px;
+  color: var(--text-primary);
+}
+.run-mosaic-btn {
+  background: var(--accent);
+  border: none;
+  color: var(--text-primary);
+  padding: 6px 12px;
+  font-size: 14px;
+  cursor: pointer;
+  transition: background 0.2s ease;
+}
+.run-mosaic-btn:hover {
+  background: var(--accent-hover);
+}
+.run-mosaic-btn:disabled, .mosaic-container .input-slider:disabled {
+  opacity: 0.4;
+  cursor: not-allowed;
+}
+.run-mosaic-btn:disabled {
+  background: var(--accent);
+}
+.mosaic-progress-bar {
+  position: absolute;
+  left: 0;
+  bottom: 0;
+  width: 100%;
+  height: 8px;
+  background: #00000080;
+  pointer-events: none;
+  user-select: none;
+  transform: translateY(100%);
+  transition: transform 0.3s ease;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+.mosaic-progress-bar.active {
+  transform: translateY(0);
+}
+.mosaic-progress-rect {
+  position: absolute;
+  height: 100%;
+  left: 0;
+  bottom: 0;
+  background: var(--accent);
+  width: 2px;
+  transition: width 0.2s ease;
+}
+.mosaic-progress-text {
+  position: absolute;
+  left: 2px;
+  bottom: 0;
+  height: 8px;
+  line-height: 8px;
+  font-size: 8px !important;
+  font-weight: bold;
+  color: white !important;
+  text-shadow: 0 1px 2px rgba(0, 0, 0, 0.8);
+  pointer-events: none;
+  user-select: none;
+  z-index: 1;
 }
