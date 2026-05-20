@@ -449,6 +449,11 @@
               <small>How many downloads to run in parallel (change in Settings)</small>
             </div>
             <div class="settings-group">
+              <label for="image-load-concurrency-input">Max concurrent image loads</label>
+              <input id="image-load-concurrency-input" type="number" class="settings-input" min="1" max="10" value="3">
+              <small>How many gallery image loads to run in parallel</small>
+            </div>
+            <div class="settings-group">
               <label for="hq-hover-delay-input">HQ image hover delay (ms)</label>
               <input id="hq-hover-delay-input" type="number" class="settings-input" min="0" max="2000" step="50" value="400">
               <small>How long you must hover over a gallery image before its high-quality version starts loading</small>

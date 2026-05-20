@@ -288,6 +288,7 @@ let activeDownloadsSidebarTab = 'analytics'; // or 'mosaic'
 // Gallery quality state
 let showHighQualityGallery = false;
 let qualityLoadingTimeouts = []; // Track ongoing quality loading operations
+let galleryQualityLoadBatch = 0;
 
 // HQ image loading counter for the toast counter element
 let _hqLoadingCount = 0;
@@ -360,6 +361,36 @@ const downloadQueue = {
         } finally {
           this._active--;
           // process next
+          setTimeout(() => this._process(), 0);
+        }
+      })();
+    }
+  }
+};
+
+window.imageLoadConcurrency = window.imageLoadConcurrency || 3;
+const loadingQueue = {
+  _queue: [],
+  _active: 0,
+  enqueue(task) {
+    return new Promise((resolve, reject) => {
+      this._queue.push({ task, resolve, reject });
+      this._process();
+    });
+  },
+  async _process() {
+    const concurrency = parseInt(window.imageLoadConcurrency, 10) || 3;
+    while (this._active < concurrency && this._queue.length > 0) {
+      const item = this._queue.shift();
+      this._active++;
+      (async () => {
+        try {
+          const res = await item.task();
+          item.resolve(res);
+        } catch (err) {
+          item.reject(err);
+        } finally {
+          this._active--;
           setTimeout(() => this._process(), 0);
         }
       })();
@@ -6254,7 +6285,6 @@ function showPreviewForElement(mediaElement, forceVideoLoad = false) {
           }
           
           mediaElement.dataset.highQualityLoading = 'true';
-          updateHqLoadingCounter(1);
           
           // Add loading spinner to preview
           let loadingOverlay = booruPreviewMediaContainer.querySelector('.preview-loading-overlay');
@@ -6301,10 +6331,10 @@ function showPreviewForElement(mediaElement, forceVideoLoad = false) {
             downloadBtn.innerHTML = '<i class="fas fa-circle-notch fa-spin"></i>';
           }
           
-          // Load high quality image through proxy as blob to avoid CORB errors
-          (async () => {
+          loadingQueue.enqueue(async () => {
             let _thisLoadBytes = 0; // bytes this request added to _hqTotalBytes
             try {
+              updateHqLoadingCounter(1);
               const highQualityUrl = mediaElement.dataset.imageUrl;
               const response = await proxyFetch(highQualityUrl, { method: 'HEAD' });
               
@@ -6473,7 +6503,9 @@ function showPreviewForElement(mediaElement, forceVideoLoad = false) {
               if (_thisLoadBytes > 0) { _hqTotalBytes -= _thisLoadBytes; _thisLoadBytes = 0; }
               updateHqLoadingCounter(-1);
             }
-          })();
+          }).catch(err => {
+            console.error('Queued high quality hover load failed:', err);
+          });
         }, window.hqHoverDelay ?? 150); // hover delay (configurable in Settings)
       }
       // If already loading, keep thumbnail for now

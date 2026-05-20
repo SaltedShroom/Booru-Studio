@@ -1255,6 +1255,19 @@ if (downloadConcurrencyInput) {
   window.downloadConcurrency = window.downloadConcurrency || 3;
 }
 
+const imageLoadConcurrencyInput = document.getElementById('image-load-concurrency-input');
+if (imageLoadConcurrencyInput) {
+  imageLoadConcurrencyInput.addEventListener('input', () => {
+    const v = parseInt(imageLoadConcurrencyInput.value, 10) || 1;
+    window.imageLoadConcurrency = Math.max(1, Math.min(10, v));
+    imageLoadConcurrencyInput.value = window.imageLoadConcurrency;
+    debouncedSettingsSave();
+  });
+  window.imageLoadConcurrency = parseInt(imageLoadConcurrencyInput.value, 10) || 3;
+} else {
+  window.imageLoadConcurrency = window.imageLoadConcurrency || 3;
+}
+
 // Save session to backend
 async function saveSession() {
   try {
@@ -1308,6 +1321,7 @@ async function saveSession() {
       // API credentials (source-specific)
       booruApiCredentials: window.booruApiCredentials || {},
       downloadConcurrency: (document.getElementById('download-concurrency-input') && parseInt(document.getElementById('download-concurrency-input').value, 10)) || 3,
+      imageLoadConcurrency: (document.getElementById('image-load-concurrency-input') && parseInt(document.getElementById('image-load-concurrency-input').value, 10)) || 3,
       hqHoverDelay: (document.getElementById('hq-hover-delay-input') && parseInt(document.getElementById('hq-hover-delay-input').value, 10)) ?? 150,
       downloadsSortByArtist: window.sessionSortByArtist || false
     };
@@ -1416,6 +1430,12 @@ async function loadSession() {
       window.downloadConcurrency = parseInt(session.downloadConcurrency, 10) || 3;
     } else {
       window.downloadConcurrency = window.downloadConcurrency || 3;
+    }
+    if (session.imageLoadConcurrency !== undefined && document.getElementById('image-load-concurrency-input')) {
+      document.getElementById('image-load-concurrency-input').value = session.imageLoadConcurrency;
+      window.imageLoadConcurrency = parseInt(session.imageLoadConcurrency, 10) || 3;
+    } else {
+      window.imageLoadConcurrency = window.imageLoadConcurrency || 3;
     }
     // Restore HQ hover delay
     if (session.hqHoverDelay !== undefined && document.getElementById('hq-hover-delay-input')) {
