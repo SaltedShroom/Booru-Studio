@@ -459,6 +459,11 @@
               <small>How long you must hover over a gallery image before its high-quality version starts loading</small>
             </div>
             <div class="settings-group">
+              <label for="tall-image-scroll-speed-multiplier-input">Tall image scroll speed</label>
+              <input id="tall-image-scroll-speed-multiplier-input" type="number" class="settings-input" min="0.1" max="10" step="0.1" value="1.1">
+              <small>Larger values make tall lightbox images scroll more slowly; controls time per 100px of image height.</small>
+            </div>
+            <div class="settings-group">
               <label class="checkbox-label" for="support-toast-enabled">Support reminders</label>
               <input type="checkbox" id="support-toast-enabled" class="settings-checkbox" checked>
               <small>Give a support reminder once in a while</small>

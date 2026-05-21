@@ -398,6 +398,37 @@ const loadingQueue = {
   }
 };
 
+function enqueueImageSrc(mediaElement, url) {
+  if (!url) {
+    mediaElement.src = url;
+    return Promise.resolve();
+  }
+  return loadingQueue.enqueue(() => new Promise((resolve, reject) => {
+    let resolved = false;
+    const onLoad = () => {
+      if (resolved) return;
+      resolved = true;
+      cleanup();
+      resolve();
+    };
+    const onError = () => {
+      if (resolved) return;
+      resolved = true;
+      cleanup();
+      reject(new Error('Image failed to load'));
+    };
+    const cleanup = () => {
+      mediaElement.removeEventListener('load', onLoad);
+      mediaElement.removeEventListener('error', onError);
+    };
+    mediaElement.addEventListener('load', onLoad);
+    mediaElement.addEventListener('error', onError);
+    mediaElement.src = url;
+  })).catch(() => {
+    mediaElement.src = url;
+  });
+}
+
 async function runDownloadWithRetries(task, maxAttempts = 3, onProgress) {
   let lastError = null;
   for (let attempt = 1; attempt <= maxAttempts; attempt++) {
@@ -471,7 +502,102 @@ function clearThumbnailCacheForTab(tabId) {
     try { URL.revokeObjectURL(objectUrl); } catch (e) {}
   }
   delete window._booruThumbnailCache[tabId];
+  deleteThumbnailCacheForTab(tabId).catch(() => {});
 }
+
+const THUMBNAIL_CACHE_DB_NAME = 'booru-thumbnail-cache-db';
+const THUMBNAIL_CACHE_STORE_NAME = 'thumbnails';
+let _thumbnailCacheDbPromise = null;
+
+function openThumbnailCacheDb() {
+  if (_thumbnailCacheDbPromise) return _thumbnailCacheDbPromise;
+  _thumbnailCacheDbPromise = new Promise((resolve, reject) => {
+    const request = window.indexedDB.open(THUMBNAIL_CACHE_DB_NAME, 1);
+    request.onupgradeneeded = (event) => {
+      const db = event.target.result;
+      if (!db.objectStoreNames.contains(THUMBNAIL_CACHE_STORE_NAME)) {
+        const store = db.createObjectStore(THUMBNAIL_CACHE_STORE_NAME, { keyPath: 'id' });
+        store.createIndex('tabId', 'tabId', { unique: false });
+        store.createIndex('cacheKey', 'cacheKey', { unique: false });
+      }
+    };
+    request.onsuccess = () => resolve(request.result);
+    request.onerror = () => reject(request.error);
+  });
+  return _thumbnailCacheDbPromise;
+}
+
+async function getThumbnailCacheStore(mode = 'readonly') {
+  const db = await openThumbnailCacheDb();
+  const tx = db.transaction(THUMBNAIL_CACHE_STORE_NAME, mode);
+  return tx.objectStore(THUMBNAIL_CACHE_STORE_NAME);
+}
+
+async function restoreThumbnailCacheForTab(tabId) {
+  if (!tabId) return;
+  const cache = getTabThumbnailCache(tabId);
+  if (!cache) return;
+  try {
+    const store = await getThumbnailCacheStore('readonly');
+    return new Promise((resolve, reject) => {
+      const request = store.index('tabId').openCursor(IDBKeyRange.only(tabId));
+      request.onsuccess = (event) => {
+        const cursor = event.target.result;
+        if (!cursor) {
+          resolve();
+          return;
+        }
+        const record = cursor.value;
+        if (record && record.cacheKey && record.blob) {
+          const objectUrl = URL.createObjectURL(record.blob);
+          cache.set(record.cacheKey, objectUrl);
+        }
+        cursor.continue();
+      };
+      request.onerror = () => reject(request.error);
+    });
+  } catch (e) {
+    console.warn('Thumbnail cache restore failed:', e);
+  }
+}
+
+async function persistThumbnailCacheEntry(tabId, cacheKey, blob) {
+  if (!tabId || !cacheKey || !blob) return;
+  try {
+    const store = await getThumbnailCacheStore('readwrite');
+    const id = `${tabId}|${cacheKey}`;
+    return new Promise((resolve, reject) => {
+      const req = store.put({ id, tabId, cacheKey, blob });
+      req.onsuccess = () => resolve();
+      req.onerror = () => reject(req.error);
+    });
+  } catch (e) {
+    console.warn('Thumbnail cache save failed:', e);
+  }
+}
+
+async function deleteThumbnailCacheForTab(tabId) {
+  if (!tabId) return;
+  try {
+    const store = await getThumbnailCacheStore('readwrite');
+    return new Promise((resolve, reject) => {
+      const request = store.index('tabId').openCursor(IDBKeyRange.only(tabId));
+      request.onsuccess = (event) => {
+        const cursor = event.target.result;
+        if (!cursor) {
+          resolve();
+          return;
+        }
+        store.delete(cursor.primaryKey);
+        cursor.continue();
+      };
+      request.onerror = () => reject(request.error);
+    });
+  } catch (e) {
+    console.warn('Thumbnail cache delete failed:', e);
+  }
+}
+
 async function cacheThumbnailBlobForTab(tabId, originalUrl, cacheKey = null) {
   if (!tabId || !originalUrl) return null;
   const cache = getTabThumbnailCache(tabId);
@@ -485,6 +611,7 @@ async function cacheThumbnailBlobForTab(tabId, originalUrl, cacheKey = null) {
     const blob = await response.blob();
     const objectUrl = URL.createObjectURL(blob);
     cache.set(key, objectUrl);
+    persistThumbnailCacheEntry(tabId, key, blob).catch(() => {});
     return objectUrl;
   } catch (err) {
     return null;
@@ -537,6 +664,7 @@ function getProxyDownHint(status, rawMessage) {
 // Proxy fetch helper - always routes through server to avoid CORS issues
 // The proxy setting controls which proxy the server uses, not whether to go through server
 async function proxyFetch(url, options = {}) {
+  const silent = !!options.silent;
   // Always route through server endpoint on port 3001 to avoid CORS issues
   // The server will apply the configured proxy if it's enabled
   try {
@@ -586,8 +714,10 @@ async function proxyFetch(url, options = {}) {
     });
     return response;
   } catch (e) {
-    console.error('Error in proxyFetch:', e);
-    showToast('Network error: ' + e.message, 'error');
+    if (!silent) {
+      console.error('Error in proxyFetch:', e);
+      showToast('Network error: ' + e.message, 'error');
+    }
     throw e;
   }
 }
@@ -5208,14 +5338,15 @@ function createBooruImageElement(post, maxHeight = null, imageWidth = null) {
       mediaElement.src = cachedThumbnailUrl;
     } else if (isVideoSource) {
       const backendThumbnailUrl = `http://localhost:3001/video-thumbnail?url=${encodeURIComponent(resolvedThumbnailUrl)}`;
-      mediaElement.src = backendThumbnailUrl;
-      mediaElement.addEventListener('load', () => {
-        if (currentTabId && cacheKey && !getCachedThumbnailUrl(currentTabId, cacheKey)) {
-          cacheThumbnailBlobForTab(currentTabId, backendThumbnailUrl, cacheKey).catch(() => {});
-        }
-      }, { once: true });
+      enqueueImageSrc(mediaElement, backendThumbnailUrl)
+        .then(() => {
+          if (currentTabId && cacheKey && !getCachedThumbnailUrl(currentTabId, cacheKey)) {
+            cacheThumbnailBlobForTab(currentTabId, backendThumbnailUrl, cacheKey).catch(() => {});
+          }
+        })
+        .catch(() => {});
     } else {
-      mediaElement.src = cachedThumbnailUrl || resolvedThumbnailUrl;
+      enqueueImageSrc(mediaElement, cachedThumbnailUrl || resolvedThumbnailUrl).catch(() => {});
     }
   }
   
@@ -6330,31 +6461,35 @@ function showPreviewForElement(mediaElement, forceVideoLoad = false) {
             }
             downloadBtn.innerHTML = '<i class="fas fa-circle-notch fa-spin"></i>';
           }
+          galleryItem.querySelector('.image-loader').style.display = 'none';
+          updateHqLoadingCounter(1);
           
           loadingQueue.enqueue(async () => {
             let _thisLoadBytes = 0; // bytes this request added to _hqTotalBytes
+            let contentLength = 0;
             try {
-              updateHqLoadingCounter(1);
               const highQualityUrl = mediaElement.dataset.imageUrl;
-              const response = await proxyFetch(highQualityUrl, { method: 'HEAD' });
-              
-              if (!response.ok && response.status !== 302) {
-                throw new Error(`HTTP error! status: ${response.status}`);
+              let response = null;
+              try {
+                response = await proxyFetch(highQualityUrl, { method: 'HEAD', silent: true });
+              } catch (err) {
+                // optional HEAD probe failed; continue without HEAD metadata
               }
-
-              // Register expected size from Content-Length so the counter shows MB in flight
-              const proxyContentLength = response.headers.get('X-Proxy-Content-Length');
-              const contentLength = parseInt(proxyContentLength || response.headers.get('Content-Length') || '0', 10);
-              if (contentLength > 0) {
-                _thisLoadBytes = contentLength;
-                _hqTotalBytes += contentLength;
-                updateHqLoadingCounter(0); // refresh display
+              if (response && (response.ok || response.status === 302)) {
+                const proxyContentLength = response.headers.get('X-Proxy-Content-Length');
+                contentLength = parseInt(proxyContentLength || response.headers.get('Content-Length') || '0', 10);
+                if (contentLength > 0) {
+                  _thisLoadBytes = contentLength;
+                  _hqTotalBytes += contentLength;
+                  updateHqLoadingCounter(0); // refresh display
+                }
+              } else if (response && response.status !== 302) {
+                // optional HEAD probe returned non-OK status; continue without HEAD metadata
               }
               
               // Store the proxied high-quality URL for future preview reuse.
               // This avoids reloading the raw source URL again on subsequent hovers.
               mediaElement.dataset.highQualityUrl = getImageUrl(highQualityUrl);
-              delete mediaElement.dataset.highQualityLoading;
               
               // Update preview image if it's still showing and hasn't been replaced
               if (img.parentNode === booruPreviewMediaContainer) {
@@ -6424,12 +6559,6 @@ function showPreviewForElement(mediaElement, forceVideoLoad = false) {
                 errorDiv.remove();
               }
               
-              // Show loader again
-              const loader = mediaElement.parentElement?.querySelector('.image-loader');
-              if (loader) {
-                loader.style.display = 'block';
-              }
-              
               // Remove loaded class to allow new load event
               mediaElement.classList.remove('loaded');
               
@@ -6445,6 +6574,7 @@ function showPreviewForElement(mediaElement, forceVideoLoad = false) {
                   currentDownloadBtn.innerHTML = originalDownloadHTML;
                 }
                 mediaElement.dataset.highQualityLoaded = 'true';
+                delete mediaElement.dataset.highQualityLoading;
                 if (!mediaElement.dataset.currentQualityUrl) {
                   mediaElement.dataset.currentQualityUrl = mediaElement.dataset.highQualityUrl || getImageUrl(mediaElement.dataset.imageUrl);
                 }
@@ -6463,6 +6593,7 @@ function showPreviewForElement(mediaElement, forceVideoLoad = false) {
                 if (currentDownloadBtn && originalDownloadHTML !== null) {
                   currentDownloadBtn.innerHTML = originalDownloadHTML;
                 }
+                delete mediaElement.dataset.highQualityLoading;
               }, { once: true });
               
               // Set the new source using the already-resolved URL if available
@@ -6483,22 +6614,16 @@ function showPreviewForElement(mediaElement, forceVideoLoad = false) {
                 }
               } catch (e) { /* ignore */ }
             } catch (err) {
-              console.error('Error loading high quality image:', err);
-              showToast('Failed to load high quality preview: ' + err.message, 'error');
-              
+              console.error('Error during hover HQ loading setup:', err);
               // Remove loading indicator on error
               const overlay = booruPreviewMediaContainer.querySelector('.preview-loading-overlay');
               if (overlay) overlay.remove();
-              
               // Restore download button on error - re-query to get fresh reference
               const currentGalleryItem = mediaElement.closest('.booru-image-item');
               const currentDownloadBtn = currentGalleryItem?.querySelector('.booru-download-btn');
               if (currentDownloadBtn && originalDownloadHTML !== null) {
                 currentDownloadBtn.innerHTML = originalDownloadHTML;
               }
-              
-              // Still mark as loaded to prevent retrying
-              mediaElement.dataset.highQualityLoaded = 'true';
               delete mediaElement.dataset.highQualityLoading;
               if (_thisLoadBytes > 0) { _hqTotalBytes -= _thisLoadBytes; _thisLoadBytes = 0; }
               updateHqLoadingCounter(-1);

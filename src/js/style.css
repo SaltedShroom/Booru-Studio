@@ -352,7 +352,6 @@ body, html {
   padding: 8px 24px;
   display: flex;
   gap: 40px;
-  align-items: center;
   border-bottom: 1px solid var(--border);
 }
 
@@ -1920,6 +1919,32 @@ body, html {
   width: auto;
   height: auto;
   transition: opacity 0.2s ease, filter 0.75s ease;
+}
+
+#lightbox-image.tall {
+  position: absolute;
+  top: 50px;
+  left: 50%;
+  width: 70vh !important;
+  max-width: none !important;
+  max-height: none !important;
+  height: auto !important;
+  transform: translateX(-50%) translateY(0);
+  will-change: transform;
+}
+
+#lightbox-image.tall.tall-scroll {
+  animation: tallImageScroll var(--tall-scroll-duration, 12s) linear infinite;
+  animation-delay: 4s;
+}
+
+@keyframes tallImageScroll {
+  0% {
+    transform: translateX(-50%) translateY(0);
+  }
+  100% {
+    transform: translateX(-50%) translateY(calc(min(0px, 90vh - 100%)));
+  }
 }
 
 #lightbox-image.loaded, .lightbox-modal video {

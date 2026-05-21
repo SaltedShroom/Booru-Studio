@@ -779,109 +779,118 @@ function switchToTab(tabId) {
   // Load and apply the tab's state
   const tab = booruTabs.find(t => t.id === tabId);
   if (tab) {
-    
-    // Restore booruPosts array first
-    if (tab.booruPosts && tab.booruPosts.length > 0) {
-      window.booruPosts = [...tab.booruPosts];
-    } else {
-      window.booruPosts = [];
-    }
-    
-    // Restore pagination state
-    if (tab.totalResultCount !== undefined) {
-      window.totalResultCount = tab.totalResultCount;
-    }
-    if (tab.hasMoreResults !== undefined) {
-      window.hasMoreResults = tab.hasMoreResults;
-    }
-    
-    // Apply state to controls
-    applyState(tab.state);
-    
-    // If this tab needs initial load, trigger it
-    if (tab.needsInitialLoad) {
-      tab.needsInitialLoad = false;
-      setTimeout(() => {
-        if (typeof loadBooruImages === 'function') {
-          loadBooruImages(false);
+      const renderTab = () => {
+        // Restore booruPosts array first
+        if (tab.booruPosts && tab.booruPosts.length > 0) {
+          window.booruPosts = [...tab.booruPosts];
+        } else {
+          window.booruPosts = [];
         }
-      }, 100);
-    }
-    
-    // Update currentImageSize for rendering
-    if (typeof window.currentImageSize !== 'undefined') {
-      window.currentImageSize = tab.state.imageSize || 250;
-    }
-    
-    // Rebuild gallery from data.
-    // Hide the content area first so the render + scroll-restore happen
-    // invisibly; we fade it back in once everything is in place.
-    const content = document.querySelector('.booru-content');
-    const gallery = document.getElementById('booru-gallery');
-    if (content) {
-      content.classList.add('hidden');
-    }
+        
+        // Restore pagination state
+        if (tab.totalResultCount !== undefined) {
+          window.totalResultCount = tab.totalResultCount;
+        }
+        if (tab.hasMoreResults !== undefined) {
+          window.hasMoreResults = tab.hasMoreResults;
+        }
+        
+        // Apply state to controls
+        applyState(tab.state);
+        
+        // If this tab needs initial load, trigger it
+        if (tab.needsInitialLoad) {
+          tab.needsInitialLoad = false;
+          setTimeout(() => {
+            if (typeof loadBooruImages === 'function') {
+              loadBooruImages(false);
+            }
+          }, 100);
+        }
+        
+        // Update currentImageSize for rendering
+        if (typeof window.currentImageSize !== 'undefined') {
+          window.currentImageSize = tab.state.imageSize || 250;
+        }
+        
+        // Rebuild gallery from data.
+        // Hide the content area first so the render + scroll-restore happen
+        // invisibly; we fade it back in once everything is in place.
+        const content = document.querySelector('.booru-content');
+        const gallery = document.getElementById('booru-gallery');
+        if (content) {
+          content.classList.add('hidden');
+        }
 
-    // Restore scroll position after gallery renders, then reveal the content.
-    const revealContent = () => {
-      if (content) {
-        content.classList.remove('hidden');
-      }
-    };
-
-    // Register jg.complete listener BEFORE calling renderBooruGallery so it
-    // catches the initial layout event instead of a later infinite-scroll one.
-    if (content && (tab.firstVisiblePostId || tab.scrollPosition)) {
-      let restored = false;
-
-      const restoreScroll = () => {
-        if (restored) return;
-        restored = true;
-        if (tab.firstVisiblePostId) {
-          const anchor = gallery && gallery.querySelector(
-            `.booru-image-item[data-post-id="${CSS.escape(tab.firstVisiblePostId)}"]`
-          );
-          if (anchor) {
-            content.scrollTop = anchor.offsetTop;
-            revealContent();
-            return;
+        // Restore scroll position after gallery renders, then reveal the content.
+        const revealContent = () => {
+          if (content) {
+            content.classList.remove('hidden');
           }
+        };
+
+        // Register jg.complete listener BEFORE calling renderBooruGallery so it
+        // catches the initial layout event instead of a later infinite-scroll one.
+        if (content && (tab.firstVisiblePostId || tab.scrollPosition)) {
+          let restored = false;
+
+          const restoreScroll = () => {
+            if (restored) return;
+            restored = true;
+            if (tab.firstVisiblePostId) {
+              const anchor = gallery && gallery.querySelector(
+                `.booru-image-item[data-post-id="${CSS.escape(tab.firstVisiblePostId)}"]`
+              );
+              if (anchor) {
+                content.scrollTop = anchor.offsetTop;
+                revealContent();
+                return;
+              }
+            }
+            // Fallback to raw pixel offset
+            if (tab.scrollPosition) {
+              content.scrollTop = tab.scrollPosition;
+            }
+            revealContent();
+          };
+
+          if (gallery && typeof $ !== 'undefined' && typeof $.fn.justifiedGallery !== 'undefined') {
+            $(gallery).one('jg.complete', () => setTimeout(restoreScroll, 30));
+          }
+          // Fallback: if jg.complete never fires within 800 ms, restore anyway
+          setTimeout(restoreScroll, 800);
+        } else {
+          // No scroll to restore — just reveal after JG lays out
+          if (gallery && typeof $ !== 'undefined' && typeof $.fn.justifiedGallery !== 'undefined') {
+            $(gallery).one('jg.complete', () => setTimeout(revealContent, 30));
+          }
+          setTimeout(revealContent, 800);
         }
-        // Fallback to raw pixel offset
-        if (tab.scrollPosition) {
-          content.scrollTop = tab.scrollPosition;
+
+        if (window.booruPosts.length > 0) {
+          if (typeof renderBooruGallery === 'function') {
+            gallery.classList.remove('downloads-gallery');
+            renderBooruGallery(window.booruPosts, false);
+          }
+        } else {
+          if (gallery) gallery.innerHTML = '';
         }
-        revealContent();
+
+        // Update total count display
+        if (typeof updateTotalCountDisplay === 'function') {
+          updateTotalCountDisplay();
+        }
       };
 
-      if (gallery && typeof $ !== 'undefined' && typeof $.fn.justifiedGallery !== 'undefined') {
-        $(gallery).one('jg.complete', () => setTimeout(restoreScroll, 30));
+      if (tab.booruPosts && tab.booruPosts.length > 0) {
+        restoreThumbnailCacheForTab(tabId).then(renderTab).catch((err) => {
+          console.warn('Thumbnail cache restore failed:', err);
+          renderTab();
+        });
+      } else {
+        renderTab();
       }
-      // Fallback: if jg.complete never fires within 800 ms, restore anyway
-      setTimeout(restoreScroll, 800);
-    } else {
-      // No scroll to restore — just reveal after JG lays out
-      if (gallery && typeof $ !== 'undefined' && typeof $.fn.justifiedGallery !== 'undefined') {
-        $(gallery).one('jg.complete', () => setTimeout(revealContent, 30));
-      }
-      setTimeout(revealContent, 800);
     }
-
-    if (window.booruPosts.length > 0) {
-      if (typeof renderBooruGallery === 'function') {
-        gallery.classList.remove('downloads-gallery');
-        renderBooruGallery(window.booruPosts, false);
-      }
-    } else {
-      if (gallery) gallery.innerHTML = '';
-    }
-
-    // Update total count display
-    if (typeof updateTotalCountDisplay === 'function') {
-      updateTotalCountDisplay();
-    }
-  }
-
   const searchInput = document.getElementById('search-filter-input');
   if (searchInput.value.toLowerCase() == 'search' || searchInput.value.toLowerCase() == 'new tab') { searchInput.value = ''; };
   

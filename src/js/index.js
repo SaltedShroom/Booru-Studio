@@ -20,6 +20,9 @@ const themeSelect = document.getElementById('theme-select');
 const root = document.documentElement;
 const themeToggleBtn = document.getElementById('theme-toggle-btn');
 const supportToastEnabled = document.getElementById('support-toast-enabled');
+const LOCAL_SERVER_ERROR_COOLDOWN_MS = 15000;
+let tallImageScrollSpeedMultiplier = 1.1; // seconds per 100px of image height
+let localServerUnavailableUntil = 0;
 
 // Window zoom controls
 const increaseZoomBtn = document.getElementById('increase-zoom');
@@ -592,47 +595,7 @@ async function checkProxyConnectivity() {
     // Use the current checkbox state, not the stored state
     updateProxyStatusButton(isConnected, proxyActive.checked);
   } catch (error) {
-    console.error('Proxy connectivity check failed:', error);
-    showToast('Proxy connectivity check failed: ' + (error.message || error), 'error');
-    proxyStatusBtn.style.display = 'none';
-  }
-}
-
-// Check proxy connectivity
-async function checkProxyConnectivity() {
-  const proxySettings = localStorage.getItem('proxySettings');
-  if (!proxySettings) {
-    proxyStatusBtn.style.display = 'none';
-    return;
-  }
-
-  try {
-    const settings = JSON.parse(proxySettings);
-    if (!settings.host || !settings.port) {
-      proxyStatusBtn.style.display = 'none';
-      return;
-    }
-
-    // Try to connect to the proxy
-    const testUrl = `http://localhost:3001/api/test-proxy`;
-    const response = await fetch(testUrl, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify(settings)
-    });
-
-    if (!response.ok) {
-      proxyStatusBtn.style.display = 'none';
-      return;
-    }
-
-    const data = await response.json();
-    const isConnected = data.available === true;
-    // Use the current checkbox state, not the stored state
-    updateProxyStatusButton(isConnected, proxyActive.checked);
-  } catch (error) {
-    console.error('Proxy connectivity check failed:', error);
-    showToast('Proxy connectivity check failed: ' + (error.message || error), 'error');
+    localServerUnavailableUntil = Date.now() + LOCAL_SERVER_ERROR_COOLDOWN_MS;
     proxyStatusBtn.style.display = 'none';
   }
 }
@@ -737,6 +700,38 @@ const lightboxImageFade = document.getElementById('lightbox-image-fade');
 const lightboxBackground = lightboxModal.querySelector('.lightbox-background');
 const leftArrowLightbox = lightboxModal.querySelector('.left-arrow-lightbox');
 const rightArrowLightbox = lightboxModal.querySelector('.right-arrow-lightbox');
+
+let tallLightboxKeyframesStyle = null;
+
+function ensureTallLightboxKeyframesStyle() {
+  if (!tallLightboxKeyframesStyle) {
+    tallLightboxKeyframesStyle = document.createElement('style');
+    tallLightboxKeyframesStyle.id = 'tall-lightbox-keyframes';
+    document.head.appendChild(tallLightboxKeyframesStyle);
+  }
+}
+
+function updateTallLightboxKeyframes(scrollTime) {
+  const totalDuration = scrollTime + 8;
+  const scrollPct = (scrollTime / totalDuration) * 100;
+  ensureTallLightboxKeyframesStyle();
+  tallLightboxKeyframesStyle.textContent = `@keyframes tallImageScroll {\n  0% { transform: translateX(-50%) translateY(0); }\n  ${scrollPct}% { transform: translateX(-50%) translateY(calc(min(0px, 90vh - 100%))); }\n  99.999% { transform: translateX(-50%) translateY(calc(min(0px, 90vh - 100%))); }\n  100% { transform: translateX(-50%) translateY(0); }\n}`;
+}
+
+function stopTallLightboxScroll() {
+  lightboxImage.classList.remove('tall-scroll');
+  lightboxImage.style.removeProperty('--tall-scroll-duration');
+}
+
+function startTallLightboxScroll() {
+  if (!lightboxImage.classList.contains('tall') || !lightboxModal.classList.contains('active')) return;
+  const height = lightboxImage.offsetHeight || lightboxImage.naturalHeight || 1000;
+  const scrollTime = Math.max(1, height / 100 * tallImageScrollSpeedMultiplier); // per 100px, minimum 1s
+  updateTallLightboxKeyframes(scrollTime);
+  const totalDuration = scrollTime + 4;
+  lightboxImage.style.setProperty('--tall-scroll-duration', `${totalDuration}s`);
+  lightboxImage.classList.add('tall-scroll');
+}
 
 // Tab switching
 const navTabs = document.querySelectorAll('.nav-tab');
@@ -1227,6 +1222,7 @@ if (blacklistTagsInput) {
 
 // HQ hover delay input
 const hqHoverDelayInput = document.getElementById('hq-hover-delay-input');
+const tallImageScrollSpeedMultiplierInput = document.getElementById('tall-image-scroll-speed-multiplier-input');
 if (hqHoverDelayInput) {
   hqHoverDelayInput.addEventListener('input', () => {
     const v = parseInt(hqHoverDelayInput.value, 10);
@@ -1238,6 +1234,28 @@ if (hqHoverDelayInput) {
   window.hqHoverDelay = parseInt(hqHoverDelayInput.value, 10) || 150;
 } else {
   window.hqHoverDelay = window.hqHoverDelay || 150;
+}
+
+if (tallImageScrollSpeedMultiplierInput) {
+  tallImageScrollSpeedMultiplierInput.addEventListener('input', () => {
+    const v = parseFloat(tallImageScrollSpeedMultiplierInput.value);
+    if (!isNaN(v)) {
+      tallImageScrollSpeedMultiplier = Math.max(0.1, Math.min(10, v));
+    }
+    debouncedSettingsSave();
+  });
+  tallImageScrollSpeedMultiplierInput.addEventListener('blur', () => {
+    const v = parseFloat(tallImageScrollSpeedMultiplierInput.value);
+    if (isNaN(v)) {
+      tallImageScrollSpeedMultiplierInput.value = tallImageScrollSpeedMultiplier.toFixed(1);
+      return;
+    }
+    tallImageScrollSpeedMultiplier = Math.max(0.1, Math.min(10, v));
+    tallImageScrollSpeedMultiplierInput.value = tallImageScrollSpeedMultiplier.toFixed(1);
+  });
+  tallImageScrollSpeedMultiplier = parseFloat(tallImageScrollSpeedMultiplierInput.value) || 1.1;
+} else {
+  tallImageScrollSpeedMultiplier = tallImageScrollSpeedMultiplier || 1.1;
 }
 
 // Download concurrency input
@@ -1270,6 +1288,7 @@ if (imageLoadConcurrencyInput) {
 
 // Save session to backend
 async function saveSession() {
+  if (localServerUnavailableUntil > Date.now()) return;
   try {
     // Get active tab
     const activeTab = document.querySelector('.nav-tab.active');
@@ -1323,16 +1342,21 @@ async function saveSession() {
       downloadConcurrency: (document.getElementById('download-concurrency-input') && parseInt(document.getElementById('download-concurrency-input').value, 10)) || 3,
       imageLoadConcurrency: (document.getElementById('image-load-concurrency-input') && parseInt(document.getElementById('image-load-concurrency-input').value, 10)) || 3,
       hqHoverDelay: (document.getElementById('hq-hover-delay-input') && parseInt(document.getElementById('hq-hover-delay-input').value, 10)) ?? 150,
+      tallImageScrollSpeedMultiplier: (document.getElementById('tall-image-scroll-speed-multiplier-input') && parseFloat(document.getElementById('tall-image-scroll-speed-multiplier-input').value)) || 1.1,
       downloadsSortByArtist: window.sessionSortByArtist || false
     };
-    await fetch('http://localhost:3001/save-session', {
+    const response = await fetch('http://localhost:3001/save-session', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify(settings)
     });
+    if (!response.ok) {
+      localServerUnavailableUntil = Date.now() + LOCAL_SERVER_ERROR_COOLDOWN_MS;
+      return;
+    }
   } catch(e) {
-    console.error('Failed to save session:', e);
-    showToast('Failed to save session: ' + (e.message || e), 'error');
+    localServerUnavailableUntil = Date.now() + LOCAL_SERVER_ERROR_COOLDOWN_MS;
+    return;
   }
 }
 
@@ -1443,6 +1467,13 @@ async function loadSession() {
       window.hqHoverDelay = parseInt(session.hqHoverDelay, 10) ?? 150;
     } else {
       window.hqHoverDelay = window.hqHoverDelay || 150;
+    }
+    // Restore tall image scroll speed multiplier
+    if (session.tallImageScrollSpeedMultiplier !== undefined && document.getElementById('tall-image-scroll-speed-multiplier-input')) {
+      document.getElementById('tall-image-scroll-speed-multiplier-input').value = session.tallImageScrollSpeedMultiplier;
+      tallImageScrollSpeedMultiplier = parseFloat(session.tallImageScrollSpeedMultiplier) || 1.1;
+    } else {
+      tallImageScrollSpeedMultiplier = tallImageScrollSpeedMultiplier || 1.1;
     }
     // Restore global blacklist tags
     if (session.blacklistTags && blacklistTagsInput) {
@@ -1789,10 +1820,13 @@ document.addEventListener('wheel', (e) => {
 currentImage.addEventListener('click', () => {
   if (currentImage.src && currentImage.src !== window.location.href) {
     redditLightboxImages = []; // Clear Reddit mode
+    lightboxImage.dataset.hqLoaded = 'false';
     lightboxImage.src = currentImage.src;
+    lightboxImage.classList.toggle('tall', currentImage.naturalHeight >= 3 * currentImage.naturalWidth);
     lightboxModal.classList.add('active');
     lightboxModal.classList.remove('reddit-mode');
     lightboxImage.classList.remove('loading');
+    stopTallLightboxScroll();
   }
 });
 
@@ -1825,6 +1859,7 @@ function closeLightbox() {
     video.remove();
   });
   
+  stopTallLightboxScroll();
   lightboxModal.classList.remove('active', 'reddit-mode');
   lightboxImage.src = '';
   lightboxImage.classList.remove('loading');
@@ -1852,10 +1887,11 @@ function openRedditLightbox(imageUrl) {
       const url = post.imageUrl;
       return url && (url.match(/\.(jpeg|jpg|gif|png)$/i) || url.includes('i.redd.it') || url.includes('i.imgur.com'));
     })
-    .map(post => post.imageUrl);
+    .map(post => getImageUrl(post.imageUrl));
   
   // Find index of clicked image
-  redditLightboxIndex = redditLightboxImages.indexOf(imageUrl);
+  const proxiedUrl = getImageUrl(imageUrl);
+  redditLightboxIndex = redditLightboxImages.indexOf(proxiedUrl);
   if (redditLightboxIndex === -1) redditLightboxIndex = 0;
 }
 
@@ -2019,23 +2055,27 @@ function showRedditLightboxImage(idx) {
 
     if (galleryImg) {
       // Always use the gallery image's current src as the placeholder
-      lightboxImage.src = galleryImg.src;
-      lightboxImage.classList.add('loaded');
-    } else {
-      // Fallback: try to get thumbnail/sample from booruPosts
-      let lowQualityUrl = null;
-      if (window.booruPosts) {
-        const post = window.booruPosts.find(p => getImageUrl(p.imageUrl) === url);
-        if (post) {
-          lowQualityUrl = post.sampleUrl || post.thumbnailUrl || post.imageUrl;
-        }
-      }
-      if (lowQualityUrl) {
-        lightboxImage.src = getImageUrl(lowQualityUrl);
+        lightboxImage.dataset.hqLoaded = 'false';
+        lightboxImage.src = galleryImg.src;
+        lightboxImage.classList.toggle('tall', galleryImg.naturalHeight >= 3 * galleryImg.naturalWidth);
         lightboxImage.classList.add('loaded');
-        lightboxImage.classList.add('loading');
+        lightboxImage.classList.remove('tall-scroll');
       } else {
-        // If not found, clear image and show loader
+        // Fallback: try to get thumbnail/sample from booruPosts
+        lightboxImage.dataset.hqLoaded = 'false';
+        let lowQualityUrl = null;
+        if (window.booruPosts) {
+          const post = window.booruPosts.find(p => getImageUrl(p.imageUrl) === url);
+          if (post) {
+            lowQualityUrl = post.sampleUrl || post.thumbnailUrl || post.imageUrl;
+          }
+        }
+        if (lowQualityUrl) {
+          lightboxImage.src = getImageUrl(lowQualityUrl);
+          lightboxImage.classList.toggle('tall', lightboxImage.naturalHeight >= 3 * lightboxImage.naturalWidth);
+          lightboxImage.classList.add('loaded');
+          lightboxImage.classList.add('loading');
+          lightboxImage.classList.remove('tall-scroll');
         lightboxImage.src = '';
         lightboxImage.classList.remove('loaded');
       }
@@ -2056,6 +2096,15 @@ function showRedditLightboxImage(idx) {
         lightboxLoader.classList.add('visible');
       } else {
         lightboxLoader.classList.remove('visible');
+        if (lightboxImage.classList.contains('tall')) {
+          const height = lightboxImage.offsetHeight || lightboxImage.naturalHeight || 1000;
+          const scrollTime = Math.max(1, height / 100 * tallImageScrollSpeedMultiplier); // per 100px, minimum 1s
+          updateTallLightboxKeyframes(scrollTime);
+          const totalDuration = scrollTime + 4;
+          lightboxImage.style.setProperty('--tall-scroll-duration', `${totalDuration}s`);
+          lightboxImage.classList.add('tall-scroll');
+        }
+        return; // HQ already loaded and displayed, no need to proceed further
       }
     }
 
@@ -2068,12 +2117,18 @@ function showRedditLightboxImage(idx) {
       if (modalActive && stillOnThisImage) {
         lightboxImage.src = url;
         lightboxImage.classList.remove('loading');
+        lightboxImage.dataset.hqLoaded = 'true';
         if (lightboxLoader) {
           lightboxLoader.classList.remove('visible');
         }
         (lightboxImage.decode ? lightboxImage.decode() : Promise.resolve())
           .catch(() => {})
-          .then(() => { lightboxImage.classList.add('loaded'); });
+          .then(() => {
+            lightboxImage.classList.add('loaded');
+            if (lightboxImage.classList.contains('tall')) {
+              startTallLightboxScroll();
+            }
+          });
       }
       if (galleryImg && galleryImg.src !== url) {
         galleryImg.src = url;
@@ -2130,7 +2185,8 @@ function nextRedditLightboxImage() {
       document.getElementById('booru-content').dispatchEvent(new Event('scroll'));
       // Update lightbox images array with any new posts that may have loaded
       const prevUrl = redditLightboxImages[redditLightboxIndex];
-      redditLightboxImages = window.booruPosts.map(post => post.imageUrl);
+      redditLightboxImages = window.booruPosts.map(post => getImageUrl(post.imageUrl));
+      redditLightboxIndex = Math.max(0, redditLightboxImages.indexOf(prevUrl));
     }
   }
 }
