@@ -5308,3 +5308,7 @@ textarea.settings-input {
   user-select: none;
   z-index: 1;
 }
+.mosaic-estimated-time {
+  font-size: 10px;
+  height: 13px;
+}

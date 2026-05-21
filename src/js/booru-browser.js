@@ -354,6 +354,8 @@ const downloadQueue = {
                 }
               }
             } catch (e) { /* ignore DOM errors */ }
+            // progress callback -> update mosaicEstimatedTime
+            
           });
           item.resolve(res);
         } catch (err) {
@@ -1185,15 +1187,20 @@ function renderDownloadsMosaic(sidebar) {
   mosaicProgressText.textContent = '0%';
   mosaicProgressBar.appendChild(mosaicProgressRect);
   mosaicProgressBar.appendChild(mosaicProgressText);
+  const mosaicEstimatedTime = document.createElement('span');
+  mosaicEstimatedTime.className = 'mosaic-estimated-time';
+  mosaicEstimatedTime.id = 'mosaic-estimated-time';
+  mosaicEstimatedTime.textContent = '';
   mosaicOutputDiv.appendChild(mosaicOutput);
   mosaicOutputDiv.appendChild(mosaicProgressBar);
   mosaicOutputContainer.appendChild(mosaicOutputTitle);
   mosaicOutputContainer.appendChild(mosaicOutputDiv);
+  mosaicOutputContainer.appendChild(mosaicEstimatedTime);
   sidebar.appendChild(mosaicOutputContainer);
 
   sidebar.appendChild(document.createElement('hr'));
 
-  //add slider to control mosaic tile size (allow 40, 60, 80, 100, 120)
+  //add slider to control mosaic tile size (allow 80, 100, 120)
   const tileSizeContainer = document.createElement('div');
   tileSizeContainer.className = 'mosaic-container';
   const tileSizeTitle = document.createElement('h1');
@@ -1202,7 +1209,7 @@ function renderDownloadsMosaic(sidebar) {
   tileSizeInput.className = 'input-slider';
   tileSizeInput.id = 'tile-size-input';
   tileSizeInput.type = 'range';
-  tileSizeInput.min = '20';
+  tileSizeInput.min = '80';
   tileSizeInput.max = '120';
   tileSizeInput.value = '80';
   tileSizeInput.step = '20';
@@ -1308,7 +1315,104 @@ function buildMosaic() {
     try {
       let resultFilename = null;
       let generationCompleted = false;
-      
+      const estimatedTimeEl = document.getElementById('mosaic-estimated-time');
+      let generationStartTime = Date.now();
+      const progressSamples = [];
+      let lastProgress = null;
+      let lastProgressTime = null;
+
+      if (estimatedTimeEl) {
+        estimatedTimeEl.textContent = '';
+      }
+
+      const formatEstimatedTime = (seconds) => {
+        const totalSeconds = Math.max(0, Math.round(seconds));
+        const hours = Math.floor(totalSeconds / 3600);
+        const minutes = Math.floor((totalSeconds % 3600) / 60);
+        const secs = totalSeconds % 60;
+        const parts = [];
+        if (hours > 0) parts.push(`${hours}h`);
+        if (minutes > 0) parts.push(`${minutes}m`);
+        parts.push(`${secs}s`);
+        return parts.join(' ');
+      };
+
+      const addProgressSample = (progress, time) => {
+        if (progressSamples.length > 0) {
+          const lastSample = progressSamples[progressSamples.length - 1];
+          if (progress < lastSample.progress) return; // ignore regressions
+          if (progress === lastSample.progress) {
+            lastSample.time = time;
+            return;
+          }
+        }
+
+        progressSamples.push({ progress, time });
+        if (progressSamples.length > 6) {
+          progressSamples.shift();
+        }
+      };
+
+      const getSmoothedRate = () => {
+        if (progressSamples.length < 2) return null;
+
+        let totalWeight = 0;
+        let weightedRate = 0;
+
+        for (let i = 1; i < progressSamples.length; i += 1) {
+          const prev = progressSamples[i - 1];
+          const cur = progressSamples[i];
+          const deltaPct = cur.progress - prev.progress;
+          const deltaSeconds = (cur.time - prev.time) / 1000;
+          if (deltaPct <= 0 || deltaSeconds <= 0) continue;
+          const rate = deltaPct / deltaSeconds;
+          const weight = i; // more recent pairs get more weight
+          weightedRate += rate * weight;
+          totalWeight += weight;
+        }
+
+        if (totalWeight === 0) return null;
+        return weightedRate / totalWeight;
+      };
+
+      let etaList = [];
+
+      const updateEstimatedTime = (progressValue) => {
+        if (!estimatedTimeEl) return;
+        const progress = Math.max(0, Math.min(100, Number(progressValue) || 0));
+
+        if (progress >= 96) {
+          estimatedTimeEl.textContent = 'Estimated time left: 2s';
+          return;
+        }
+
+        const now = Date.now();
+        addProgressSample(progress, now);
+
+        let etaSeconds = null;
+        const rate = getSmoothedRate();
+        if (rate && rate > 0) {
+          const remainingPct = Math.max(0, 96 - progress);
+          etaSeconds = remainingPct / rate;
+        }
+
+        if (etaSeconds === null && progress > 0) {
+          const elapsedSeconds = (now - generationStartTime) / 1000;
+          if (elapsedSeconds > 0) {
+            const overallRate = progress / elapsedSeconds;
+            if (overallRate > 0) {
+              const remainingPct = Math.max(0, 96 - progress);
+              etaSeconds = remainingPct / overallRate;
+            }
+          }
+        }
+
+        if (etaSeconds !== null && etaSeconds >= 0) {
+          etaList.push(etaSeconds);
+          estimatedTimeEl.textContent = `Estimated time left: ${formatEstimatedTime(etaSeconds)}`;
+        }
+      };
+
       // Step-based animation variables
       let currentProgress = 0;
       let targetProgress = 0;
@@ -1364,7 +1468,11 @@ function buildMosaic() {
             .then(progressData => {
               
               if (progressData.success) {
-                const progress = progressData.progress;
+                const progress = Number(progressData.progress) || 0;
+                const now = Date.now();
+                lastProgress = progress;
+                lastProgressTime = now;
+                updateEstimatedTime(progress);
                 
                 // Progress should only move forward, never backward
                 // Use Math.max to ensure we don't regress to lower values
@@ -1380,6 +1488,9 @@ function buildMosaic() {
                   const progressRect = document.getElementById('mosaic-progress-rect');
                   if (progressRect) {
                     progressRect.style.width = '100%';
+                  }
+                  if (estimatedTimeEl) {
+                    estimatedTimeEl.textContent = '';
                   }
                   
                   // Get filename from progress response
@@ -5014,20 +5125,7 @@ function renderBooruGallery(posts, append = true, addSeparators = true) {
     }
   }
 
-  if (window.hasMoreResults) {
-    const gallery = document.getElementById('gallery-wrapper');
-    if (gallery) {
-      if (document.getElementById('load-more-icon') == null) {
-        const loadMore = document.createElement('div');
-        loadMore.id = 'load-more-icon';
-        loadMore.innerHTML = '<i class="fa-solid fa-ellipsis" style="color: var(--text-secondary); font-size: 30px;"></i>';
-        loadMore.style.cssText = 'display: flex; opacity: 0; justify-content: center; align-items: center; padding: 20px;';
-        gallery.appendChild(loadMore);
-      }
-    }
-  } else {
-    document.getElementById('load-more-icon')?.remove();
-  }
+
 
   // Get current image size from slider
   currentImageSize = parseInt(imageSizeSlider.value, 10);
@@ -5050,7 +5148,6 @@ function renderBooruGallery(posts, append = true, addSeparators = true) {
     if (artistSection)
       artistSection.style.display = 'none';
   }
-  const fragment = document.createDocumentFragment();
   posts.forEach((post, i) => {
     if (post?.imageUrl === undefined) return; // Skip posts without imageUrl
 
@@ -5080,19 +5177,39 @@ function renderBooruGallery(posts, append = true, addSeparators = true) {
         seperator.innerHTML = `<h2>${post.artist}</h2>`;
         galleryWrapper.appendChild(seperator);
         galleryWrapper.appendChild(newGallery);
+        booruGallery.id = ''; // Clear old gallery ID to prevent conflicts
+        newGallery.id = 'booru-gallery'; // Assign ID to new gallery
         booruGallery = newGallery;
       }
+    } else {
+      //console.log(isDownloadsGallery, post.artist, lastArtist, addSeparators);
     }
 
     const imageElement = createBooruImageElement({ ...post, dataIndex: startIndex + i + 1 });
-    fragment.appendChild(imageElement);
+    booruGallery.appendChild(imageElement);
     lastArtist = post.artist;
     let visibilityDelay = 1000 * (1 - Math.exp(-0.05 * i));
     setTimeout(() => {
       if (imageElement) imageElement.classList.add('visible', 'jg-entry-visible');
     }, visibilityDelay);
+    
   });
-  booruGallery.appendChild(fragment);
+
+  if (window.hasMoreResults) {
+    const gallery = document.getElementById('gallery-wrapper');
+    if (gallery) {
+      if (document.getElementById('load-more-icon') == null) {
+        const loadMore = document.createElement('div');
+        loadMore.id = 'load-more-icon';
+        loadMore.innerHTML = '<i class="fa-solid fa-ellipsis" style="color: var(--text-secondary); font-size: 30px;"></i>';
+        loadMore.style.cssText = 'display: flex; opacity: 0; justify-content: center; align-items: center; padding: 20px;';
+        gallery.appendChild(loadMore);
+      }
+    }
+  } else {
+    document.getElementById('load-more-icon')?.remove();
+  }
+  
   setTimeout(() => {
     const loadIcon = document.getElementById('load-more-icon');
     if (loadIcon) loadIcon.style.opacity = '1';
