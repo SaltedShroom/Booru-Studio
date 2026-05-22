@@ -733,6 +733,35 @@ function startTallLightboxScroll() {
   lightboxImage.classList.add('tall-scroll');
 }
 
+let slideshowTimer = null;
+
+function clearSlideshowTimer() {
+  if (slideshowTimer) {
+    clearTimeout(slideshowTimer);
+    clearInterval(slideshowTimer);
+    slideshowTimer = null;
+  }
+}
+
+function getTallLightboxAutoplayDuration() {
+  const height = lightboxImage.offsetHeight || lightboxImage.naturalHeight || 1000;
+  const scrollTime = Math.max(1, height / 100 * tallImageScrollSpeedMultiplier);
+  return scrollTime + 4;
+}
+
+function scheduleSlideshowAdvance(delaySeconds) {
+  clearSlideshowTimer();
+  if (!slideshowActive) return;
+  slideshowTimer = setTimeout(() => {
+    nextRedditLightboxImage();
+    if (redditLightboxIndex < redditLightboxImages.length - 1) {
+      startRedditSlideshow();
+    } else {
+      stopRedditSlideshow();
+    }
+  }, delaySeconds * 1000);
+}
+
 // Tab switching
 const navTabs = document.querySelectorAll('.nav-tab');
 const tabContents = document.querySelectorAll('.tab-content');
@@ -1871,7 +1900,6 @@ function closeLightbox() {
 // Reddit Lightbox with Slideshow
 let redditLightboxImages = [];
 let redditLightboxIndex = 0;
-let slideshowInterval = null;
 let slideshowActive = false;
 let galleryImg = null;
 
@@ -1923,10 +1951,11 @@ function showRedditLightboxImage(idx) {
   }
   
   // If a slideshow is running and the new item is video, cancel any pending
-  // interval tick right away so that we don't advance before the video loads.
-  if (isVideo && slideshowActive && slideshowInterval) {
-    clearInterval(slideshowInterval);
-    slideshowInterval = null;
+  // timer right away so that we don't advance before the video loads.
+  if (isVideo && slideshowActive && slideshowTimer) {
+    clearTimeout(slideshowTimer);
+    clearInterval(slideshowTimer);
+    slideshowTimer = null;
   }
 
   if (isVideo) {
@@ -2000,9 +2029,10 @@ function showRedditLightboxImage(idx) {
       video.style.opacity = '1';
       video.play().catch(e => console.warn('Lightbox autoplay prevented:', e));
 
-      if (slideshowInterval) {
-        clearInterval(slideshowInterval);
-        slideshowInterval = null;
+      if (slideshowTimer) {
+        clearTimeout(slideshowTimer);
+        clearInterval(slideshowTimer);
+        slideshowTimer = null;
       }
 
       // Always remove any previous 'ended' listeners before adding
@@ -2104,6 +2134,9 @@ function showRedditLightboxImage(idx) {
           lightboxImage.style.setProperty('--tall-scroll-duration', `${totalDuration}s`);
           lightboxImage.classList.add('tall-scroll');
         }
+        if (slideshowActive) {
+          startRedditSlideshow();
+        }
         return; // HQ already loaded and displayed, no need to proceed further
       }
     }
@@ -2127,6 +2160,9 @@ function showRedditLightboxImage(idx) {
             lightboxImage.classList.add('loaded');
             if (lightboxImage.classList.contains('tall')) {
               startTallLightboxScroll();
+            }
+            if (slideshowActive) {
+              startRedditSlideshow();
             }
           });
       }
@@ -2208,15 +2244,10 @@ function prevRedditLightboxImage() {
 function startRedditSlideshow() {
   slideshowActive = true;
   lightboxModal.classList.add('slideshow-active');
-  const intervalSeconds = parseFloat(slideshowIntervalInput.value) || 3;
 
   slideshowPlayBtn.classList.add('playing');
   slideshowPlayBtn.innerHTML = '<i class="fas fa-pause"></i>';
 
-  // If the current slide is a video we don't start the timer; the video
-  // handlers in showRedditLightboxImage will kick off the next slide once the
-  // clip ends.  This matches the requirement that the interval should not
-  // matter for video media.
   const currentUrl = redditLightboxImages[redditLightboxIndex] || '';
   const currentIsVideo = currentUrl.toLowerCase().endsWith('.mp4') ||
                          currentUrl.toLowerCase().endsWith('.webm') ||
@@ -2224,6 +2255,8 @@ function startRedditSlideshow() {
                          currentUrl.toLowerCase().includes('.mp4?') ||
                          currentUrl.toLowerCase().includes('.webm?') ||
                          currentUrl.toLowerCase().includes('.mov?');
+
+  clearSlideshowTimer();
 
   // Always update the current video element's loop/event handler
   if (currentIsVideo) {
@@ -2244,10 +2277,16 @@ function startRedditSlideshow() {
         }
       }));
     }
-    slideshowInterval = null;
     return;
   }
-  slideshowInterval = setInterval(() => {
+
+  if (lightboxImage.classList.contains('tall')) {
+    scheduleSlideshowAdvance(getTallLightboxAutoplayDuration());
+    return;
+  }
+
+  const intervalSeconds = parseFloat(slideshowIntervalInput.value) || 3;
+  slideshowTimer = setInterval(() => {
     nextRedditLightboxImage();
   }, intervalSeconds * 1000);
 }
@@ -2255,10 +2294,7 @@ function startRedditSlideshow() {
 function stopRedditSlideshow() {
   slideshowActive = false;
   lightboxModal.classList.remove('slideshow-active');
-  if (slideshowInterval) {
-    clearInterval(slideshowInterval);
-    slideshowInterval = null;
-  }
+  clearSlideshowTimer();
   
   if (slideshowPlayBtn) {
     slideshowPlayBtn.classList.remove('playing');

@@ -3750,8 +3750,13 @@ function initBooruBrowser() {
     window._lastGalleryType = 'booru'; // 'booru' or 'downloads'
     imageSizeSlider.addEventListener('input', () => {
       currentImageSize = parseInt(imageSizeSlider.value, 10);
-      // Set the CSS variable for image size
-      document.documentElement.style.setProperty('--booru-image-size', `${Math.min(currentImageSize, 300)}px`);
+      // Set the CSS variable for image size on the gallery wrapper instead of document root
+      const galleryWrapper = document.getElementById('gallery-wrapper');
+      if (galleryWrapper) {
+        galleryWrapper.style.setProperty('--booru-image-size', `${Math.min(currentImageSize, 300)}px`);
+      } else {
+        document.documentElement.style.setProperty('--booru-image-size', `${Math.min(currentImageSize, 300)}px`);
+      }
       if (typeof imageSizeValue !== 'undefined' && imageSizeValue) {
         imageSizeValue.textContent = `${currentImageSize}px`;
       }
@@ -3769,17 +3774,25 @@ function initBooruBrowser() {
         } catch (e) {}
         window._lastGalleryType = 'booru';
       }
-      // Update Justified Gallery rowHeight dynamically
-      if (booruGallery && booruPosts.length > 0 && typeof $.fn.justifiedGallery !== 'undefined') {
-        $(booruGallery).justifiedGallery('norewind').justifiedGallery({
-          rowHeight: currentImageSize,
-          maxRowHeight: false,
-          margins: 10,
-          lastRow: 'nojustify',
-          captions: false,
-          waitThumbnailsLoad: false,
-          border: 0
+      // Update Justified Gallery rowHeight dynamically for all gallery instances in the wrapper
+      if (typeof $.fn.justifiedGallery !== 'undefined') {
+        const wrapper = galleryWrapper || booruGallery;
+        const galleryTargets = galleryWrapper
+          ? Array.from(galleryWrapper.querySelectorAll('.booru-gallery'))
+          : (booruGallery ? [booruGallery] : []);
+
+        galleryTargets.forEach((gallery) => {
+          $(gallery).justifiedGallery('norewind').justifiedGallery({
+            rowHeight: currentImageSize,
+            maxRowHeight: false,
+            margins: 10,
+            lastRow: 'nojustify',
+            captions: false,
+            waitThumbnailsLoad: false,
+            border: 0
+          });
         });
+
         if (_hqRestoreResizeTimeout) {
           clearTimeout(_hqRestoreResizeTimeout);
         }
