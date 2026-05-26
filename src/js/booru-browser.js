@@ -5468,15 +5468,12 @@ function createBooruImageElement(post, maxHeight = null, imageWidth = null) {
       mediaElement.src = cachedThumbnailUrl;
     } else if (isVideoSource) {
       const backendThumbnailUrl = `http://localhost:3001/video-thumbnail?url=${encodeURIComponent(resolvedThumbnailUrl)}`;
-      enqueueImageSrc(mediaElement, backendThumbnailUrl)
-        .then(() => {
-          if (currentTabId && cacheKey && !getCachedThumbnailUrl(currentTabId, cacheKey)) {
-            cacheThumbnailBlobForTab(currentTabId, backendThumbnailUrl, cacheKey).catch(() => {});
-          }
-        })
-        .catch(() => {});
+      mediaElement.src = backendThumbnailUrl;
+      if (currentTabId && cacheKey && !getCachedThumbnailUrl(currentTabId, cacheKey)) {
+        cacheThumbnailBlobForTab(currentTabId, backendThumbnailUrl, cacheKey).catch(() => {});
+      }
     } else {
-      enqueueImageSrc(mediaElement, cachedThumbnailUrl || resolvedThumbnailUrl).catch(() => {});
+      mediaElement.src = cachedThumbnailUrl || resolvedThumbnailUrl;
     }
   }
   
