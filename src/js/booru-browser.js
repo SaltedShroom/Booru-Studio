@@ -2182,6 +2182,38 @@ function updateDownloadFolderDisplay() {
 
 let searchHandlerTimeout = null;
 
+function getDownloadsDateSortOrder() {
+  if (window.sessionDownloadsDateSortOrder !== undefined) {
+    return window.sessionDownloadsDateSortOrder;
+  }
+  const saved = localStorage.getItem('downloadsDateSortOrder');
+  if (saved === 'asc' || saved === 'desc') {
+    window.sessionDownloadsDateSortOrder = saved;
+    return saved;
+  }
+  window.sessionDownloadsDateSortOrder = 'desc';
+  return 'desc';
+}
+
+function setDownloadsDateSortOrder(order) {
+  if (order !== 'asc' && order !== 'desc') {
+    return;
+  }
+  window.sessionDownloadsDateSortOrder = order;
+  localStorage.setItem('downloadsDateSortOrder', order);
+}
+
+function sortDownloadedPosts(posts) {
+  if (!Array.isArray(posts)) return posts;
+  const order = getDownloadsDateSortOrder();
+  posts.sort((a, b) => {
+    const dateA = a.downloadedAt || 0;
+    const dateB = b.downloadedAt || 0;
+    return order === 'asc' ? dateA - dateB : dateB - dateA;
+  });
+  return posts;
+}
+
 // Function to show downloads gallery
 async function showDownloadsGallery(forceReload = false) {
 
@@ -2247,22 +2279,51 @@ async function showDownloadsGallery(forceReload = false) {
     searchInput.value = window.downloadsSearchText || '';
   }
 
-  // 3. Filter header controls: keep only .control-section-primary, .control-section-search, .control-section-slider, .control-section-limit, .control-section-artist, .control-section-source, #select-download-folder-btn
+  // 3. Filter header controls: keep only .control-section-primary, .control-section-search, .control-section-slider, .control-section-limit, .control-section-artist, .control-section-source, .control-section-downloads-date-order, #select-download-folder-btn
   const controlBar = document.querySelector('header.control-bar.booru-control-bar');
   if (controlBar) {
     // Hide all children except allowed ones
-    controlBar.querySelectorAll('.booru-control-left > *:not(.control-section-primary):not(.control-section-search):not(.control-section-slider):not(.control-section-limit):not(.control-section-artist):not(.control-section-source)').forEach(el => el.style.display = 'none');
+    controlBar.querySelectorAll('.booru-control-left > *:not(.control-section-primary):not(.control-section-search):not(.control-section-slider):not(.control-section-limit):not(.control-section-artist):not(.control-section-source):not(.control-section-downloads-date-order)').forEach(el => el.style.display = 'none');
     controlBar.querySelectorAll('.booru-control-right > *:not(#select-download-folder-btn)').forEach(el => el.style.display = 'none');
     // Explicitly show the allowed left controls in case they were hidden previously
-    controlBar.querySelectorAll('.control-section-primary, .control-section-search, .control-section-slider, .control-section-limit, .control-section-artist, .control-section-source').forEach(el => el.style.display = '');
+    controlBar.querySelectorAll('.control-section-primary, .control-section-search, .control-section-slider, .control-section-limit, .control-section-artist, .control-section-source, .control-section-downloads-date-order').forEach(el => el.style.display = '');
     // Hide ai filter and sort section (keep reload button visible)
     const aiFilter = controlBar.querySelector('#ai-filter-toggle');
     if (aiFilter) aiFilter.style.display = 'none';
     const sortSection = controlBar.querySelector('.control-section-sort');
     if (sortSection) sortSection.style.display = 'none';
+
+    const galleryQualityToggleBtn = document.getElementById('gallery-quality-toggle');
+    if (galleryQualityToggleBtn) galleryQualityToggleBtn.style.display = 'none';
+
+    const leftControls = controlBar.querySelector('.booru-control-left');
+    const searchSection = controlBar.querySelector('.control-section-search');
+    let downloadsDateSortSection = controlBar.querySelector('.control-section-downloads-date-order');
+    if (!downloadsDateSortSection && leftControls) {
+      downloadsDateSortSection = document.createElement('div');
+      downloadsDateSortSection.className = 'control-section control-select control-section-downloads-date-order';
+      downloadsDateSortSection.innerHTML = `
+        <div class="section-label">Date</div>
+        <select id="downloads-date-sort-select" class="select-minimal">
+          <option value="desc">Newest</option>
+          <option value="asc">Oldest</option>
+        </select>
+      `;
+      leftControls.insertBefore(downloadsDateSortSection, searchSection?.nextSibling || null);
+    }
+    const downloadsDateSortSelect = document.getElementById('downloads-date-sort-select');
+    if (downloadsDateSortSelect) {
+      downloadsDateSortSelect.value = getDownloadsDateSortOrder();
+      downloadsDateSortSelect.addEventListener('change', () => {
+        setDownloadsDateSortOrder(downloadsDateSortSelect.value);
+        if (window.downloadsGalleryOriginalPosts) {
+          sortDownloadedPosts(window.downloadsGalleryOriginalPosts);
+        }
+        document.getElementById('search-filter-input')?.dispatchEvent(new Event('input', { bubbles: true }));
+      });
+    }
     
     // Add shuffle button before search input if not already added (original logic)
-    const searchSection = controlBar.querySelector('.control-section-search');
     // Always remove sort by artist button before adding (prevents it from appearing in regular galleries)
     const existingSortArtistBtn = document.getElementById('downloads-sort-artist-btn');
     if (existingSortArtistBtn) existingSortArtistBtn.remove();
@@ -2424,11 +2485,7 @@ async function showDownloadsGallery(forceReload = false) {
     // Sort by download date, newest first
     if (Array.isArray(downloadedPosts)) {
       if (downloadedPosts.length > 0 && downloadedPosts.some(p => p.downloadedAt)) {
-        downloadedPosts.sort((a, b) => {
-          const dateA = a.downloadedAt || 0;
-          const dateB = b.downloadedAt || 0;
-          return dateB - dateA;
-        });
+        sortDownloadedPosts(downloadedPosts);
       } else {
         downloadedPosts.reverse();
       }
@@ -2440,7 +2497,8 @@ async function showDownloadsGallery(forceReload = false) {
       booruGallery.classList.add('downloads-gallery');
     }
     // Set window properties for lightbox navigation and pagination
-    window.allDownloadedPosts = downloadedPosts; // Store all posts
+    window.downloadsGalleryOriginalPosts = downloadedPosts;
+    window.allDownloadedPosts = downloadedPosts; // Store current result set
     window.booruPosts = []; // Will be filled incrementally
     window.downloadsPaginationIndex = 0; // Track current pagination position
     window.hasMoreResults = true;
@@ -2466,7 +2524,8 @@ async function showDownloadsGallery(forceReload = false) {
         const val = searchInput.value.trim().toLowerCase();
         const tokens = val ? val.split(/\s+/) : [];
         const selectedSource = document.getElementById('downloads-source-select')?.value;
-        const filtered = downloadedPosts.filter(post => {
+        const sourcePosts = window.downloadsGalleryOriginalPosts || downloadedPosts;
+        const filtered = sourcePosts.filter(post => {
           if (selectedSource && post.source !== selectedSource) {
             return false;
           }
@@ -3555,6 +3614,9 @@ function initBooruBrowser() {
       if (shuffleBtn) shuffleBtn.remove();
       const sortArtistBtn = document.getElementById('downloads-sort-artist-btn');
       if (sortArtistBtn) sortArtistBtn.remove();
+      const downloadsDateSortSection = document.querySelector('.control-section-downloads-date-order');
+      if (downloadsDateSortSection) downloadsDateSortSection.remove();
+      window.downloadsGalleryOriginalPosts = null;
       
       window.isViewingDownloadsGallery = false;
       

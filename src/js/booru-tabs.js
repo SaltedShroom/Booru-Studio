@@ -729,9 +729,13 @@ function switchToTab(tabId) {
       controlBar.querySelectorAll('.booru-control-right > *').forEach(el => el.style.display = '');
       const aiFilter = controlBar.querySelector('#ai-filter-toggle');
       if (aiFilter) aiFilter.style.display = '';
+      const galleryQualityToggleBtn = controlBar.querySelector('#gallery-quality-toggle');
+      if (galleryQualityToggleBtn) galleryQualityToggleBtn.style.display = '';
       const reloadBtn = controlBar.querySelector('#reload-booru-btn');
       if (reloadBtn) reloadBtn.style.display = '';
     }
+    const downloadsDateSortSection = document.querySelector('.control-section-downloads-date-order');
+    if (downloadsDateSortSection) downloadsDateSortSection.remove();
     // Remove downloads button active
     const showDownloadsBtn = document.getElementById('show-downloads-gallery-btn');
     if (showDownloadsBtn) showDownloadsBtn.classList.remove('active');
