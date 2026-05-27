@@ -526,6 +526,33 @@ function applyState(state) {
       sortSelect.value = state.sort;
     }
   }
+
+  const imageSizeSlider = document.getElementById('image-size-slider');
+  const currentImageSize = parseInt(imageSizeSlider.value, 10);
+  // Set the CSS variable for image size on the gallery wrapper instead of document root
+  if (galleryWrapper) {
+    galleryWrapper.style.setProperty('--booru-image-size', `${Math.min(currentImageSize, 300)}px`);
+  } else {
+    document.documentElement.style.setProperty('--booru-image-size', `${Math.min(currentImageSize, 300)}px`);
+  }
+  if (typeof imageSizeValue !== 'undefined' && imageSizeValue) {
+    imageSizeValue.textContent = `${currentImageSize}px`;
+  }
+  if (window.isViewingDownloadsGallery) {
+    window.sessionDownloadsImageSize = imageSizeSlider.value;
+    try {
+      localStorage.setItem('downloadsImageSize', imageSizeSlider.value);
+    } catch (e) {}
+    window._lastGalleryType = 'downloads';
+  } else if (window.isViewingDownloadsGallery === false || window.isViewingDownloadsGallery === undefined) {
+    // Only update booruImageSize if NOT in downloads gallery
+    window.sessionBooruImageSize = imageSizeSlider.value;
+    try {
+      localStorage.setItem('booruImageSize', imageSizeSlider.value);
+    } catch (e) {}
+    window._lastGalleryType = 'booru';
+  }
+
 }
 
 // Save current tab state (called frequently, uses debouncing)
@@ -903,6 +930,7 @@ function switchToTab(tabId) {
       booruGallery.innerHTML = '<i class="fa-regular fa-images cleanup-icon"></i> <i class="fa-solid fa-magnifying-glass cleanup-icon"></i>';
     }
   }
+
 }
 
 // Update tab name

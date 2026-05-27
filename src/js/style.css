@@ -2866,11 +2866,6 @@ body, html {
   filter: opacity(1);
 }
 
-.booru-image-item video {
-  object-fit: cover;
-  display: block;
-}
-
 .booru-image-item::after {
   content: '';
   position: absolute;
@@ -2982,6 +2977,7 @@ body, html {
 }
 
 .booru-image-item img, .booru-image-item video {
+  position: relative;
   width: 100%;
   height: 100%;
   object-fit: cover;
