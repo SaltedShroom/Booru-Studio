@@ -489,11 +489,6 @@ function appendConsoleLine(line) {
 function flushPendingConsoleLines() {
   consoleUpdateScheduled = false;
   if (!consoleContent || pendingConsoleLines.length === 0) return;
-  if (consoleContent.offsetParent === null) {
-    // If the server log pane is hidden, avoid expensive DOM updates.
-    pendingConsoleLines.length = 0;
-    return;
-  }
 
   const fragment = document.createDocumentFragment();
   while (pendingConsoleLines.length) {
