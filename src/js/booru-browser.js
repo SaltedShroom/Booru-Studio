@@ -24,14 +24,14 @@ function updateBooruGalleryCounter() {
   } else {
     counter.classList.remove('downloads');
   }
-  if (!totalCount || totalCount <= 0) {
+  if (totalCount === 0) {
     counter.style.opacity = '0';
     return;
   } else {
     counter.style.opacity = '1';
   }
 
-  counter.title = totalCount ? totalCount.toString() : 'null';
+  counter.title = totalCount ? totalCount.toString() : 'unknown';
   // Get the visible viewport boundaries
   const viewportTop = window.scrollY;
   const viewportBottom = viewportTop + window.innerHeight;
@@ -49,6 +49,7 @@ function updateBooruGalleryCounter() {
   });
 
   function formatNumber(num) {
+    if (num === null || num === undefined) return '?';
     let s = num.toString();
     if (s.length > 6) s = s.slice(0, s.length - 6) + 'M+';
     else if (s.length > 3) s = s.slice(0, s.length - 3) + 'k+';
@@ -570,7 +571,7 @@ async function deleteThumbnailCacheForTab(tabId) {
 }
 
 async function cacheThumbnailBlobForTab(tabId, originalUrl, cacheKey = null) {
-  if (!tabId || !originalUrl) return null;
+  if (!tabId || !originalUrl || originalUrl.includes('?url=Unknown')) return null;
   const cache = getTabThumbnailCache(tabId);
   if (!cache) return null;
   const key = cacheKey || originalUrl;
@@ -5125,7 +5126,9 @@ function updateTotalCountDisplay() {
     booruTotalCount.style.display = 'block';
     saveTotalCount(); // Save to localStorage
   } else {
-    booruTotalCount.style.display = 'none';
+    const displayText = `${booruSourceSelect.value.charAt(0).toUpperCase() + booruSourceSelect.value.slice(1)} <b>? found</b>`;
+    booruTotalCount.innerHTML = displayText;
+    booruTotalCount.style.display = 'block';
   }
 }
 

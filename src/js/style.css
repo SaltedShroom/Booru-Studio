@@ -935,6 +935,8 @@ body, html {
   justify-content: center;
 }
 
+
+
 .form-group {
   margin-bottom: 20px;
 }
@@ -5307,4 +5309,66 @@ textarea.settings-input {
 .mosaic-estimated-time {
   font-size: 10px;
   height: 13px;
+}
+
+/* Community & Support Section */
+.community-support-section {
+  margin-top: 24px;
+  background: linear-gradient(135deg, rgba(102, 126, 234, 0.1) 0%, rgba(118, 75, 162, 0.1) 100%);
+  border: 1px solid rgba(102, 126, 234, 0.3);
+  padding-bottom: 82px;
+}
+
+.community-support-title {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.community-support-subtitle {
+  display: block;
+  margin-bottom: 12px;
+  opacity: 0.7;
+}
+
+.github-issues-link {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  text-decoration: none;
+  padding: 10px 16px;
+  border-radius: 4px;
+  border: 1px solid var(--accent);
+  background: var(--accent);
+  color: var(--bg-darker);
+  font-weight: 500;
+  transition: all 0.2s;
+  cursor: pointer;
+}
+
+.github-issues-link:hover {
+  border: 1px solid var(--accent);
+  background: var(--bg-darker);
+  color: var(--accent);
+}
+
+.github-discussions-link {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  text-decoration: none;
+  padding: 10px 16px;
+  border-radius: 4px;
+  border: 1px solid var(--accent-secondary);
+  background: var(--accent-secondary);
+  color: var(--bg-darker);
+  font-weight: 500;
+  transition: all 0.2s;
+  cursor: pointer;
+}
+
+.github-discussions-link:hover {
+  border: 1px solid var(--accent-secondary);
+  background: var(--bg-darker);
+  color: var(--accent-secondary);
 }
