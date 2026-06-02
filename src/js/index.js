@@ -82,6 +82,8 @@ const anonJitterMin       = document.getElementById('anon-jitter-min');
 const anonJitterMax       = document.getElementById('anon-jitter-max');
 const anonTorRotateCount  = document.getElementById('anon-tor-rotate-count');
 const anonTorRotateMins   = document.getElementById('anon-tor-rotate-mins');
+const anonTorControlPort  = document.getElementById('anon-tor-control-port');
+const anonTorHashedPassword = document.getElementById('anon-tor-hashed-password');
 const anonTorRotateNow    = document.getElementById('anon-tor-rotate-now');
 const anonTorStatus       = document.getElementById('anon-tor-rotate-status');
 
@@ -160,7 +162,10 @@ async function loadProxySettings() {
       anonJitterMax.value        = settings.jitterMax    ?? 250;
       anonTorRotateCount.value   = settings.torRotateCount ?? 100;
       anonTorRotateMins.value    = settings.torRotateMins  ?? 300;
+      anonTorControlPort.value   = settings.torControlPort ?? 9051;
+      anonTorHashedPassword.value = settings.torHashedPassword || '';
       updateJitterMaxDisabled();
+      updateTorStatusText();
       
       // Sync proxy settings to server immediately on page load and force a proxy restart if enabled.
       await syncProxySettingsToServer(settings, 1, settings.active === true);
@@ -194,11 +199,16 @@ function saveProxySettings() {
     jitterMax:       parseInt(anonJitterMax.value)      || 0,
     torRotateCount:  parseInt(anonTorRotateCount.value) || 0,
     torRotateMins:   parseInt(anonTorRotateMins.value)  || 0,
+    torControlPort:  parseInt(anonTorControlPort.value) || 9051,
+    torHashedPassword: anonTorHashedPassword.value.trim() || '',
   };
   localStorage.setItem('proxySettings', JSON.stringify(settings));
   
   // Send proxy settings to server on port 3001
   syncProxySettingsToServer(settings).catch(e => console.error('Error sending proxy settings to server:', e));
+  
+  // Update status text with the new control port
+  updateTorStatusText();
 }
 
 // Update disabled state of proxy fields based on active checkbox
@@ -216,6 +226,8 @@ function updateProxyFieldsDisabled() {
   if (typeof anonJitterMax !== 'undefined') anonJitterMax.disabled = isDisabled;
   if (typeof anonTorRotateCount !== 'undefined') anonTorRotateCount.disabled = isDisabled;
   if (typeof anonTorRotateMins !== 'undefined') anonTorRotateMins.disabled = isDisabled;
+  if (typeof anonTorControlPort !== 'undefined') anonTorControlPort.disabled = isDisabled;
+  if (typeof anonTorHashedPassword !== 'undefined') anonTorHashedPassword.disabled = isDisabled;
   if (typeof anonTorRotateNow !== 'undefined') anonTorRotateNow.disabled = isDisabled;
 }
 
@@ -438,6 +450,14 @@ anonJitterMin.addEventListener('input', saveProxySettings);
 anonJitterMax.addEventListener('input', saveProxySettings);
 anonTorRotateCount.addEventListener('input', saveProxySettings);
 anonTorRotateMins.addEventListener('input', saveProxySettings);
+anonTorControlPort.addEventListener('input', saveProxySettings);
+anonTorHashedPassword.addEventListener('input', saveProxySettings);
+
+// Update status text to show current control port
+function updateTorStatusText() {
+  const controlPort = parseInt(anonTorControlPort.value) || 9051;
+  anonTorStatus.textContent = `Sends SIGNAL NEWNYM to Tor control port ${controlPort}`;
+}
 
 anonTorRotateNow.addEventListener('click', async () => {
   anonTorRotateNow.disabled = true;
@@ -450,7 +470,7 @@ anonTorRotateNow.addEventListener('click', async () => {
     anonTorStatus.textContent = '⚠ Server unreachable';
   }
   setTimeout(() => {
-    anonTorStatus.textContent = 'Sends SIGNAL NEWNYM to Tor control port 9051';
+    anonTorStatus.textContent = 'Sends SIGNAL NEWNYM to Tor control port';
     anonTorRotateNow.disabled = false;
   }, 3000);
 });
@@ -651,26 +671,110 @@ proxyStatusBtn.addEventListener('click', () => {
   const menu = document.createElement('div');
   menu.id = 'proxy-context-menu';
   menu.className = 'proxy-context-menu';
-  menu.innerHTML = '<button class="proxy-context-item" id="ctx-rotate-circuit"><i class="fas fa-arrows-rotate"></i> New Tor circuit</button>';
+  menu.innerHTML = `
+    <button class="proxy-context-item" id="ctx-rotate-circuit"><i class="fas fa-arrows-rotate"></i> New Tor circuit</button>
+    <div class="circuit-divider"></div>
+    <div id="ctx-circuit-display" class="circuit-display">
+      <div class="circuit-nodes" id="ctx-circuit-nodes">
+        <span class="circuit-loading"><i class="fas fa-spinner fa-spin"></i> Loading...</span>
+      </div>
+    </div>
+  `;
   document.body.appendChild(menu);
+
+  async function loadCurrentCircuit() {
+    try {
+      const response = await fetch('http://localhost:3001/api/tor-test/circuit-info');
+      const data = await response.json();
+      const nodesContainer = document.getElementById('ctx-circuit-nodes');
+      
+      if (data.ok && data.nodes && data.nodes.length > 0) {
+        // Extract fingerprints and query Onionoo for country data
+        const countryMap = {};
+        
+        // Fetch country data from Onionoo API (same format as test page)
+        try {
+          const fpList = data.nodes.map(n => n.id.toUpperCase()).join(',');
+          const onionooRes = await fetch(`https://onionoo.torproject.org/details?fields=fingerprint,country&lookup=${fpList}`);
+          
+          if (onionooRes.ok) {
+            const onionooData = await onionooRes.json();
+            
+            if (onionooData.relays && onionooData.relays.length > 0) {
+              onionooData.relays.forEach(relay => {
+                countryMap[relay.fingerprint.toUpperCase()] = (relay.country || '??').toUpperCase();
+              });
+            }
+          }
+        } catch (e) {
+          // Fallback if Onionoo fails
+        }
+        
+        // Build country tag display
+        const countryCodes = data.nodes.map((node) => {
+          const country = countryMap[node.id.toUpperCase()] || '??';
+          return `<span class="country-tag">${country}</span>`;
+        }).join('');
+        
+        nodesContainer.innerHTML = countryCodes || '<span class="circuit-loading">No circuit</span>';
+      } else {
+        nodesContainer.innerHTML = '<span class="circuit-loading">No circuit</span>';
+      }
+    } catch (error) {
+      document.getElementById('ctx-circuit-nodes').innerHTML = '<span class="circuit-loading">Error loading</span>';
+    }
+  }
 
   function closeMenu() {
     menu.classList.remove('visible');
   }
 
+  function positionMenuWithinViewport(clientX, clientY) {
+    // First, make visible temporarily to get dimensions
+    menu.classList.add('visible');
+    const rect = menu.getBoundingClientRect();
+    const menuWidth = rect.width;
+    const menuHeight = rect.height;
+    const padding = 10; // Padding from screen edges
+    
+    let left = clientX;
+    let top = clientY;
+    
+    // Adjust horizontal position if menu goes off-screen to the right
+    if (clientX + menuWidth + padding > window.innerWidth) {
+      left = Math.max(padding, window.innerWidth - menuWidth - padding);
+    }
+    
+    // Adjust vertical position if menu goes off-screen to the bottom
+    if (clientY + menuHeight + padding > window.innerHeight) {
+      top = Math.max(padding, window.innerHeight - menuHeight - padding);
+    }
+    
+    menu.style.left = left + 'px';
+    menu.style.top = top + 'px';
+  }
+
   proxyStatusBtn.addEventListener('contextmenu', (e) => {
     e.preventDefault();
-    menu.style.left = e.clientX + 'px';
-    menu.style.top = e.clientY + 'px';
-    menu.classList.add('visible');
+    loadCurrentCircuit();
+    positionMenuWithinViewport(e.clientX, e.clientY);
   });
 
   document.getElementById('ctx-rotate-circuit').addEventListener('click', async () => {
-    closeMenu();
-    showCircuitSpinner();
+    const nodesContainer = document.getElementById('ctx-circuit-nodes');
+    nodesContainer.innerHTML = '<span class="circuit-loading"><i class="fas fa-spinner fa-spin"></i> Creating new circuit...</span>';
+    
     try {
       await fetch('http://localhost:3001/api/rotate-circuit', { method: 'POST' });
-    } catch (e) { /* server unreachable */ }
+      
+      // Wait a bit for TOR to build the new circuit
+      await new Promise(resolve => setTimeout(resolve, 2000));
+      
+      // Reload and display the new circuit
+      await loadCurrentCircuit();
+    } catch (e) {
+      nodesContainer.innerHTML = '<span class="circuit-loading">Error</span>';
+    }
   });
 
   document.addEventListener('click', closeMenu);
@@ -839,6 +943,41 @@ function showToast(message, type = 'info') {
     toast.classList.remove('show');
     setTimeout(() => toast.remove(), 300);
   }, 3000);
+}
+
+// Confirm toast with Yes/No buttons (does not auto-dismiss)
+function showConfirmToast(message, onYes, onNo) {
+  const container = document.getElementById('toast-container');
+  const toast = document.createElement('div');
+  toast.className = 'toast toast-warning toast-confirm';
+  toast.innerHTML = `
+    <div class="toast-confirm-message">${message}</div>
+    <div class="toast-confirm-buttons">
+      <button class="toast-confirm-btn toast-btn-yes">Yes</button>
+      <button class="toast-confirm-btn toast-btn-no">No</button>
+    </div>
+  `;
+  
+  const yesBtn = toast.querySelector('.toast-btn-yes');
+  const noBtn = toast.querySelector('.toast-btn-no');
+  
+  const dismiss = () => {
+    toast.classList.remove('show');
+    setTimeout(() => toast.remove(), 300);
+  };
+  
+  yesBtn.addEventListener('click', () => {
+    dismiss();
+    if (onYes) onYes();
+  });
+  
+  noBtn.addEventListener('click', () => {
+    dismiss();
+    if (onNo) onNo();
+  });
+  
+  container.appendChild(toast);
+  setTimeout(() => toast.classList.add('show'), 10);
 }
 
 function showSupportToast() {
@@ -1045,7 +1184,61 @@ function hideLoadingOverlay() {
   if (window._initBooruTabs) await window._initBooruTabs();
   hideLoadingOverlay();
   countContainer.classList.add('loaded');
+  
+  // Setup booru source change tracking
+  setupBooruSourceChangeTracking();
 })();
+
+// Track booru source changes and tab switches
+function setupBooruSourceChangeTracking() {
+  const booruSourceSelect = document.getElementById('booru-source-select');
+  let previousTabSource = null;
+  
+  // Function to call when source changes
+  function onSourceOrTabChange() {
+    // Rotate TOR circuit when source changes
+    try {
+      fetch('http://localhost:3001/api/rotate-circuit', { method: 'POST' }).catch(() => {});
+    } catch (e) {
+      // Silent fail if server unreachable
+    }
+  }
+  
+  // Listen for direct source changes
+  if (booruSourceSelect) {
+    booruSourceSelect.addEventListener('change', () => {
+      onSourceOrTabChange();
+    });
+  }
+  
+  // Override the switchToTab function to track source changes
+  if (window._switchToTab) {
+    // If the function was already assigned, store the original
+    window._originalSwitchToTab = window._switchToTab;
+  } else {
+    // Check if switchToTab exists globally through booru-tabs.js
+    // We'll need to patch it via a global hook
+  }
+  
+  // Create a hook that booru-tabs.js can call
+  window._onBooruTabSwitch = function(tabId, previousTabId) {
+    // Get the current active tab from booru-tabs
+    if (window.booruTabs) {
+      const currentTab = window.booruTabs.find(t => t.id === tabId);
+      const previousTab = window.booruTabs.find(t => t.id === previousTabId);
+      
+      if (currentTab && previousTab) {
+        const currentSource = currentTab.state?.source;
+        const previousSource = previousTab.state?.source;
+        
+        // Call if sources are different
+        if (currentSource !== previousSource) {
+          onSourceOrTabChange();
+        }
+      }
+    }
+  };
+}
 
 // Stable Diffusion loading check
 const sdLoadingOverlay = document.getElementById('sd-loading-overlay');
@@ -1541,8 +1734,12 @@ async function loadSession() {
     progress.className = 'dt-progress';
     progressTrack.appendChild(progress);
 
+    const img = document.createElement('img');
+    img.className = 'dt-preview';
+
     toast.appendChild(top);
     toast.appendChild(progressTrack);
+    toast.appendChild(img);
     container.appendChild(toast);
 
     // show animation (match other toasts) — add .show after a short tick so CSS transition runs
@@ -1558,14 +1755,15 @@ async function loadSession() {
         this.update(100, msg || (success ? 'Completed' : 'Failed'));
         // show downloaded image inside the toast on success
         if (success && imageUrl) {
-          const img = document.createElement('img');
-          img.className = 'dt-preview';
-          img.src = typeof getImageUrl === 'function' ? getImageUrl(imageUrl) : imageUrl;
-          toast.appendChild(img);
-          requestAnimationFrame(() => { img.style.maxHeight = '300px'; });
+          img.src = getImageUrl(imageUrl);
+          img.onload = () => {
+            img.classList.add('loaded');
+          }
+
+          requestAnimationFrame(() => { img.style.maxHeight = '200px'; });
         }
         // keep visible longer when image is shown
-        const delay = success && imageUrl ? 3500 : 2500;
+        const delay = success && imageUrl ? 4000 : 3000;
         setTimeout(() => {
           toast.classList.remove('show');
           setTimeout(() => toast.remove(), 300);

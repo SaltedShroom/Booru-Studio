@@ -793,6 +793,12 @@ function switchToTab(tabId) {
   
   // (State already saved above, before cleanupGallery)
   
+  // Call hook for booru source change tracking BEFORE updating activeTabId
+  const previousTabId = activeTabId;
+  if (window._onBooruTabSwitch) {
+    window._onBooruTabSwitch(tabId, previousTabId);
+  }
+  
   activeTabId = tabId;
   window.activeTabId = activeTabId;
   

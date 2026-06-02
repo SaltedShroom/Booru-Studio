@@ -293,12 +293,56 @@ body, html {
   border-radius: 8px;
   box-shadow: 0 4px 16px rgba(0, 0, 0, 0.4);
   padding: 4px;
-  min-width: 180px;
   display: none;
 }
 
 .proxy-context-menu.visible {
   display: block;
+}
+
+.circuit-divider {
+  height: 1px;
+  background: var(--surface-hover);
+  margin: 6px 0;
+}
+
+.circuit-display {
+  padding: 8px 12px;
+  font-size: 12px;
+}
+
+.circuit-nodes {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  align-items: center;
+  min-height: 24px;
+}
+
+.country-tag {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  background: var(--surface-hover);
+  color: var(--text-primary);
+  padding: 2px 8px;
+  font-weight: bold;
+  font-size: 11px;
+  min-width: 32px;
+  border: 2px solid var(--border);
+  border-bottom: 2px solid var(--accent);
+}
+
+.circuit-loading {
+  color: var(--text-secondary);
+  font-size: 11px;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.circuit-loading i {
+  display: inline-block;
 }
 
 .proxy-context-item {
@@ -2138,7 +2182,7 @@ body, html {
   z-index: 10000;
   display: flex;
   flex-direction: column-reverse;
-  width: 280px;
+  width: 180px;
   pointer-events: auto;
   border-radius: 8px;
   border-top-left-radius: 0;
@@ -2155,13 +2199,13 @@ body, html {
 .loading-toast-counter {
   position: relative;
   padding: 6px 10px;
-  font-size: 13px;
+  font-size: 11px;
+  width: 180px;
   color: var(--text-secondary);
   background: var(--surface);
   border-radius: 8px;
   border-top-left-radius: 0;
   border-bottom-left-radius: 0;
-  width: min-content;
   text-wrap: nowrap;
   white-space: nowrap;
   pointer-events: none;
@@ -2177,6 +2221,10 @@ body, html {
   font-weight: bold;
   color: var(--text-primary);
 }
+.loading-toast-counter b.hq-loading-mb {
+  position: absolute;
+  right: 10px;
+}
 .loading-toast-counter.hidden {
   transform: translateX(-100%);
 }
@@ -2187,7 +2235,7 @@ body, html {
   display: flex;
   flex-direction: column;
   gap: 6px;
-  font-size: 13px;
+  font-size: 11px;
   overflow: hidden;
 }
 .download-toast:nth-of-type(n+1) {
@@ -2205,7 +2253,7 @@ body, html {
 }
 .download-toast .dt-title { font-weight: 600; color: var(--text-primary); }
 .download-toast .dt-status { font-size: 12px; color: var(--text-secondary); }
-.download-toast .dt-progress-track { background: rgba(0,0,0,0.06); height: 8px; border-radius: 4px; overflow: hidden; }
+.download-toast .dt-progress-track { background: rgba(0,0,0,0.06); height: 5px; border-radius: 4px; overflow: hidden; }
 .download-toast .dt-progress { height: 100%; width: 0%; background: linear-gradient(90deg, var(--accent), var(--accent-secondary)); transition: width 200ms linear; }
 
 .download-toast .dt-preview {
@@ -2215,7 +2263,11 @@ body, html {
   max-height: 0;
   overflow: hidden;
   border-radius: 0 0 0 0;
-  transition: max-height 0.5s ease;
+  transition: transform 0.5s ease;
+  transform: scaleY(0);
+}
+.download-toast .dt-preview.loaded {
+  transform: scaleY(1);
 }
 
 /* match toast animation used by .toast */
@@ -2268,6 +2320,68 @@ body, html {
 .toast-info {
   border-left-color: #4a9eff;
   background: rgb(35, 77, 125);
+}
+
+.toast-confirm {
+  min-width: 280px;
+  max-width: 320px;
+  padding: 12px 16px;
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+
+.toast-confirm-message {
+  font-size: 13px;
+  word-wrap: break-word;
+}
+
+.toast-confirm-buttons {
+  display: flex;
+  gap: 8px;
+}
+
+.toast-confirm-btn {
+  flex-grow: 1;
+  padding: 6px 14px;
+  font-size: 12px;
+  box-shadow: 0 2px 4px rgba(0, 0, 0, 0.1);
+  border: 1px solid rgba(255, 255, 255, 0.3);
+  border-radius: 2px;
+  background: rgba(255, 255, 255, 0.1);
+  color: var(--text-primary);
+  cursor: pointer;
+  transition: all 0.2s ease;
+  font-weight: 500;
+}
+
+.toast-confirm-btn:hover {
+  background: rgba(255, 255, 255, 0.2);
+  border-color: rgba(255, 255, 255, 0.5);
+}
+
+.toast-confirm-btn:active {
+  background: rgba(255, 255, 255, 0.3);
+}
+
+.toast-btn-yes {
+  border-color: #4caf50;
+  background-color: #4caf50;
+  color: #fff;
+}
+
+.toast-btn-yes:hover {
+  background: rgba(76, 175, 80, 0.2);
+}
+
+.toast-btn-no {
+  border-color: #f44336;
+  background-color: #f44336;
+  color: #fff;
+}
+
+.toast-btn-no:hover {
+  background: rgba(244, 67, 54, 0.2);
 }
 
 .toast-support {

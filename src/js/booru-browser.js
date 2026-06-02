@@ -310,14 +310,14 @@ function updateHqLoadingCounter(delta) {
   const el = document.getElementById('loading-toast-counter');
   if (!el) return;
   if (_hqLoadingCount === 0) {
-    el.innerHTML = 'Loading: <b>0</b> posts &middot; <b>0.0 MB</b>';
+    el.innerHTML = 'Loading: <b>0</b> posts <b class="hq-loading-mb">0.0 MB</b>';
     LoadingCounterTimeout = setTimeout(() => {
       el.classList.add('hidden');
     }, 500);
     return;
   }
   const countLabel = `<b>${_hqLoadingCount}</b> post${_hqLoadingCount !== 1 ? 's' : ''}`;
-  const mbLabel = _hqTotalBytes > 0 ? ` &middot; <b>${(_hqTotalBytes / (1024 * 1024)).toFixed(1)} MB</b>` : ' &middot; <b>0.0 MB</b>';
+  const mbLabel = _hqTotalBytes > 0 ? ` <b class="hq-loading-mb">${(_hqTotalBytes / (1024 * 1024)).toFixed(1)} MB</b>` : ' <b class="hq-loading-mb">0.0 MB</b>';
   el.innerHTML = `Loading: ${countLabel}${mbLabel}`;
   el.classList.remove('hidden');
 }
@@ -2441,26 +2441,30 @@ async function showDownloadsGallery(forceReload = false) {
           return existingFiles.has(filename);
         });
         if (removedPosts.length > 0) {
-          let count = 0
-          // removedPosts.forEach(p => {
-          //   if (dbStore) {
-          //     dbStore.removeDownloadedPost(p.id).catch(err => {
-          //       console.warn(`Failed to remove post ${p.id} from IndexedDB:`, err);
-          //       count--;
-          //     });
-          //     count++;
-          //   } else {
-          //     console.warn('dbStore not available, cannot remove post with missing file:', p);
-          //   }
-          // });
-          removedPosts.forEach(p => {
-            count++;
-          });
-          // console.log(`Removed ${count} posts with missing files`);
-          // showToast(`Removed ${count} posts with missing files`, 'warning');
+          const count = removedPosts.length;
           console.log(`Cannot find ${count} posts with missing files`);
-          showToast(`Cannot find ${count} posts with missing files`, 'warning');
-          window.updateAppLoadingDownloadCount();
+          
+          showConfirmToast(
+            `Cannot find ${count} posts with missing files. Remove from database?`,
+            () => {
+              // Yes - Remove posts from database
+              removedPosts.forEach(p => {
+                if (dbStore) {
+                  dbStore.removeDownloadedPost(p.id).catch(err => {
+                    console.error(`Failed to remove post ${p.id} from database:`, err);
+                  });
+                } else {
+                  console.warn('dbStore not available, cannot remove post:', p.id);
+                }
+              });
+              showToast(`Removed ${count} posts with missing files`, 'success');
+              window.updateAppLoadingDownloadCount();
+            },
+            () => {
+              // No - Do nothing
+              console.log('User chose not to remove posts with missing files');
+            }
+          );
         }
       }
     } catch (err) {
@@ -2523,23 +2527,43 @@ async function showDownloadsGallery(forceReload = false) {
         window.downloadsSearchText = searchInput.value;
         window.debouncedSave();
         const val = searchInput.value.trim().toLowerCase();
-        const tokens = val ? val.split(/\s+/) : [];
         const selectedSource = document.getElementById('downloads-source-select')?.value;
         const sourcePosts = window.downloadsGalleryOriginalPosts || downloadedPosts;
+        
+        // Check if search contains OR operator ||
+        const hasOrOperator = val.includes('||');
+        let filterGroups = [];
+        
+        if (hasOrOperator) {
+          // Split by || to create OR groups
+          filterGroups = val.split('||').map(group => group.trim()).filter(g => g.length > 0);
+        } else {
+          // No OR operator, treat entire search as single AND group
+          filterGroups = val.length > 0 ? [val] : [];
+        }
+        
         const filtered = sourcePosts.filter(post => {
           if (selectedSource && post.source !== selectedSource) {
             return false;
           }
-          // Filter by tags or artist
+          
+          // If no filter groups, include all posts
+          if (!filterGroups.length) {
+            return true;
+          }
+          
           const tags = post.tags || [];
           const artist = Array.isArray(post.artist)
             ? post.artist.join(' ').toLowerCase()
             : (post.artist || '').toLowerCase();
-          if (!tokens.length) {
-            return true;
-          }
-          return tokens.every(token => {
-            return tags.some(tag => tag.toLowerCase().startsWith(token)) || artist.startsWith(token);
+          
+          // Check if post matches any of the OR groups (OR logic between groups)
+          return filterGroups.some(group => {
+            const tokens = group.split(/\s+/);
+            // Within each group, all tokens must match (AND logic)
+            return tokens.every(token => {
+              return tags.some(tag => tag.toLowerCase().startsWith(token)) || artist.startsWith(token);
+            });
           });
         });
         // Reset pagination for filtered results

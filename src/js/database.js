@@ -144,27 +144,38 @@ function closeDatabase() {
 // Downloaded Posts operations
 function saveDownloadedPost(post) {
   if (!db) throw new Error('Database not initialized');
+  if (!post) throw new Error('Post object is null or undefined');
   
-  const stmt = db.prepare(`
-    INSERT OR REPLACE INTO downloaded_posts 
-    (id, image_url, thumbnail_url, tags, artist, score, source, aspect_ratio, created_at, downloaded_at)
-    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-  `);
+  // Handle score objects (e.g., e621 returns {up: X, down: Y, total: Z})
+  let scoreValue = post.score;
+  if (scoreValue && typeof scoreValue === 'object' && scoreValue.total !== undefined) {
+    scoreValue = scoreValue.total;
+  }
   
-  stmt.run(
-    post.id,
-    post.imageUrl || null,
-    post.thumbnailUrl || null,
-    JSON.stringify(post.tags || []),
-    post.artist || post.author || null,
-    post.score || null,
-    post.source || null,
-    post.aspectRatio || null,
-    post.createdAt || null,
-    post.downloadedAt || Date.now()
-  );
-  
-  return true;
+  try {
+    const stmt = db.prepare(`
+      INSERT OR REPLACE INTO downloaded_posts 
+      (id, image_url, thumbnail_url, tags, artist, score, source, aspect_ratio, created_at, downloaded_at)
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+    `);
+    
+    stmt.run(
+      post.id || undefined,
+      post.imageUrl || post.image_url || null,
+      post.thumbnailUrl || post.thumbnail_url || null,
+      JSON.stringify(Array.isArray(post.tags) ? post.tags : []),
+      post.artist || post.author || null,
+      scoreValue !== undefined ? Number(scoreValue) : null,
+      post.source || undefined,
+      post.aspectRatio || post.aspect_ratio || null,
+      post.createdAt || post.created_at || null,
+      post.downloadedAt || Date.now()
+    );
+    return true;
+  } catch (error) {
+    console.error('❌ saveDownloadedPost FAILED for post', post?.id, ':', error.message);
+    throw error;
+  }
 }
 
 function getDownloadedPost(id) {
@@ -243,19 +254,29 @@ function bulkImportPosts(posts) {
   const insertMany = db.transaction((posts) => {
     let count = 0;
     for (const post of posts) {
-      stmt.run(
-        post.id,
-        post.imageUrl || null,
-        post.thumbnailUrl || null,
-        JSON.stringify(post.tags || []),
-        post.artist || post.author || null,
-        post.score || null,
-        post.source || null,
-        post.aspectRatio || null,
-        post.createdAt || null,
-        post.downloadedAt || Date.now()
-      );
-      count++;
+      // Handle score objects (e.g., e621 returns {up: X, down: Y, total: Z})
+      let scoreValue = post.score;
+      if (scoreValue && typeof scoreValue === 'object' && scoreValue.total !== undefined) {
+        scoreValue = scoreValue.total;
+      }
+      
+      try {
+        stmt.run(
+          post.id,
+          post.imageUrl || null,
+          post.thumbnailUrl || null,
+          JSON.stringify(post.tags || []),
+          post.artist || post.author || null,
+          scoreValue !== undefined ? Number(scoreValue) : null,
+          post.source || null,
+          post.aspectRatio || null,
+          post.createdAt || null,
+          post.downloadedAt || Date.now()
+        );
+        count++;
+      } catch (error) {
+        console.error(`❌ Failed to import post ${post?.id}:`, error.message);
+      }
     }
     return count;
   });

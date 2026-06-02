@@ -549,6 +549,18 @@
               </div>
 
               <div class="settings-group">
+                <label for="anon-tor-control-port">Control Port</label>
+                <input type="number" id="anon-tor-control-port" class="settings-input" min="1" max="65535" value="9051" style="width:100px;">
+                <small>Control port for sending circuit rotation commands</small>
+              </div>
+
+              <div class="settings-group">
+                <label for="anon-tor-hashed-password">Control Password (Optional)</label>
+                <input type="text" id="anon-tor-hashed-password" class="settings-input" style="font-family:monospace; font-size:12px;" placeholder="e.g., 16:7287C8B287AD3...">
+                <small>Your TOR hashed control password. Generate with: tor --hash-password your_password</small>
+              </div>
+
+              <div class="settings-group">
                 <label class="checkbox-label">Rotate Circuit Now</label>
                 <button type="button" id="anon-tor-rotate-now" class="settings-btn">Rotate</button>
                 <small id="anon-tor-rotate-status">Sends SIGNAL NEWNYM to Tor control port 9051</small>

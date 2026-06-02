@@ -34,6 +34,26 @@ const DOCUMENTS_PATH = electronApp && typeof electronApp.getPath === 'function'
       ? path.join(process.env.HOME, 'Documents')
       : path.join(__dirname, '..', 'Documents');
 
+// Helper function to find and read TOR control auth cookie
+function getTorControlAuthCookie() {
+  // This function is no longer used - cookie authentication has been removed
+  // Kept for backwards compatibility only
+  return null;
+}
+
+// Helper function to get authentication command for TOR control port
+function getTorAuthCommand() {
+  // Check if user provided a hashed password (priority)
+  if (proxySettings.torHashedPassword && proxySettings.torHashedPassword.trim()) {
+    const hashedPwd = proxySettings.torHashedPassword.trim();
+    // Hashed passwords must be wrapped in quotes per TOR control protocol
+    return `AUTHENTICATE "${hashedPwd}"\r\n`;
+  }
+  
+  // Final fallback to empty authentication
+  return 'AUTHENTICATE ""\r\n';
+}
+
 const USER_DATA_BASE = path.join(DOCUMENTS_PATH, 'My Games', 'BS');
 
 function ensureDirectoryExists(dirPath) {
@@ -65,7 +85,9 @@ let proxySettings = {
   jitterMin: 20,
   jitterMax: 250,
   torRotateCount: 100,
-  torRotateMins: 300
+  torRotateMins: 300,
+  torControlPort: 9051,
+  torHashedPassword: ''
 };
 
 let blacklistTags = [];
@@ -322,8 +344,9 @@ function rotateTorCircuit() {
   return new Promise((resolve) => {
     const socket = new net.Socket();
     socket.setTimeout(2000);
-    socket.connect(9051, '127.0.0.1', () => {
-      socket.write('AUTHENTICATE ""\r\nSIGNAL NEWNYM\r\nQUIT\r\n');
+    const controlPort = parseInt(proxySettings.torControlPort) || 9051;
+    socket.connect(controlPort, '127.0.0.1', () => {
+      socket.write(getTorAuthCommand() + 'SIGNAL NEWNYM\r\nQUIT\r\n');
     });
     socket.on('data', () => {});
     socket.on('close', resolve);
@@ -556,6 +579,451 @@ const server = isWorkerMode ? null : http.createServer((req, res) => {
         res.end(JSON.stringify({ available: false, error: error.message }));
       }
     });
+    return;
+  }
+
+  // ============== TOR CONTROL PORT TEST ENDPOINTS ==============
+
+  // Get current TOR configuration
+  if (req.method === 'GET' && req.url === '/api/tor-test/config') {
+    try {
+      const hasHashedPassword = proxySettings.torHashedPassword && proxySettings.torHashedPassword.trim().length > 0;
+      let authInfo = 'None';
+      let authMethod = 'None (authentication disabled)';
+      
+      if (hasHashedPassword) {
+        const hashedPwd = proxySettings.torHashedPassword.trim();
+        authInfo = `Hashed Password (${hashedPwd.substring(0, 20)}...)`;
+        authMethod = 'HashedControlPassword';
+      } else {
+        authMethod = 'Empty authentication';
+        authInfo = 'No credentials';
+      }
+      
+      const config = {
+        ok: true,
+        config: {
+          type: proxySettings.type,
+          host: proxySettings.host,
+          port: proxySettings.port,
+          controlPort: proxySettings.torControlPort,
+          isTor: isTorProxy(),
+          active: proxySettings.active,
+          authMethod: authMethod,
+          userCookie: authInfo
+        }
+      };
+      res.writeHead(200, { 'Content-Type': 'application/json' });
+      res.end(JSON.stringify(config));
+    } catch (error) {
+      res.writeHead(500, { 'Content-Type': 'application/json' });
+      res.end(JSON.stringify({ ok: false, message: error.message }));
+    }
+    return;
+  }
+
+  // Test connection to TOR control port
+  if (req.method === 'POST' && req.url === '/api/tor-test/connect') {
+    let body = '';
+    req.on('data', chunk => {
+      body += chunk.toString();
+    });
+
+    req.on('end', () => {
+      try {
+        const { port = 9051, host = '127.0.0.1' } = JSON.parse(body);
+        const socket = new net.Socket();
+        socket.setTimeout(3000);
+        let connected = false;
+        let version = null;
+        let protocol = null;
+
+        socket.on('connect', () => {
+          connected = true;
+          socket.write('AUTHENTICATE ""\r\n');
+        });
+
+        socket.on('data', (data) => {
+          const response = data.toString();
+          if (!version && response.includes('Tor is running on')) {
+            const match = response.match(/version (\d+\.\d+\.\d+\.\d+)/i);
+            version = match ? match[1] : 'unknown';
+            protocol = response.includes('250') ? 'v3' : 'v2';
+          }
+          socket.destroy();
+        });
+
+        socket.on('error', () => {
+          if (!connected) {
+            res.writeHead(200, { 'Content-Type': 'application/json' });
+            res.end(JSON.stringify({ ok: false, message: 'Connection refused' }));
+          }
+        });
+
+        socket.on('timeout', () => {
+          socket.destroy();
+          res.writeHead(200, { 'Content-Type': 'application/json' });
+          res.end(JSON.stringify({ ok: false, message: 'Connection timeout' }));
+        });
+
+        socket.on('close', () => {
+          if (connected) {
+            res.writeHead(200, { 'Content-Type': 'application/json' });
+            res.end(JSON.stringify({ ok: true, version, protocol }));
+          }
+        });
+
+        socket.connect(port, host);
+      } catch (error) {
+        res.writeHead(400, { 'Content-Type': 'application/json' });
+        res.end(JSON.stringify({ ok: false, message: error.message }));
+      }
+    });
+    return;
+  }
+
+  // Send SIGNAL command to TOR control port
+  if (req.method === 'POST' && req.url === '/api/tor-test/signal') {
+    let body = '';
+    req.on('data', chunk => {
+      body += chunk.toString();
+    });
+
+    req.on('end', () => {
+      try {
+        const { signal = 'NEWNYM' } = JSON.parse(body);
+        const port = parseInt(proxySettings.torControlPort) || 9051;
+        const socket = new net.Socket();
+        socket.setTimeout(3000);
+        let response = '';
+        let responseSent = false;
+
+        socket.on('connect', () => {
+          socket.write(getTorAuthCommand() + `SIGNAL ${signal}\r\nQUIT\r\n`);
+        });
+
+        socket.on('data', (data) => {
+          response += data.toString();
+        });
+
+        socket.on('error', () => {
+          if (responseSent) return;
+          responseSent = true;
+          res.writeHead(200, { 'Content-Type': 'application/json' });
+          res.end(JSON.stringify({ ok: false, message: 'Connection error' }));
+        });
+
+        socket.on('timeout', () => {
+          socket.destroy();
+          if (responseSent) return;
+          responseSent = true;
+          res.writeHead(200, { 'Content-Type': 'application/json' });
+          res.end(JSON.stringify({ ok: false, message: 'Timeout' }));
+        });
+
+        socket.on('close', () => {
+          if (responseSent) return;
+          responseSent = true;
+          const success = response.includes('250');
+          let warning = '';
+          let errorMsg = '';
+          
+          // Check for specific error codes
+          if (response.includes('552')) {
+            errorMsg = 'Unrecognized signal';
+          } else if (response.includes('553')) {
+            errorMsg = 'Failed to send signal (rate limited or other issue)';
+            warning = 'TOR rate limit: Wait 10+ seconds between NEWNYM signals';
+          } else if (response.includes('515')) {
+            errorMsg = 'Authentication failed - check hashed password';
+          }
+          
+          res.writeHead(200, { 'Content-Type': 'application/json' });
+          res.end(JSON.stringify({ 
+            ok: success, 
+            response: response.trim(),
+            error: errorMsg,
+            warning: warning
+          }));
+        });
+
+        socket.connect(port, '127.0.0.1');
+      } catch (error) {
+        res.writeHead(400, { 'Content-Type': 'application/json' });
+        res.end(JSON.stringify({ ok: false, message: error.message }));
+      }
+    });
+    return;
+  }
+
+  // Send GETINFO command to TOR control port
+  if (req.method === 'POST' && req.url === '/api/tor-test/getinfo') {
+    let body = '';
+    req.on('data', chunk => {
+      body += chunk.toString();
+    });
+
+    req.on('end', () => {
+      try {
+        const { key = 'version' } = JSON.parse(body);
+        const port = parseInt(proxySettings.torControlPort) || 9051;
+        const socket = new net.Socket();
+        socket.setTimeout(3000);
+        let response = '';
+        let responseSent = false;
+
+        socket.on('connect', () => {
+          socket.write(getTorAuthCommand() + `GETINFO ${key}\r\nQUIT\r\n`);
+        });
+
+        socket.on('data', (data) => {
+          response += data.toString();
+        });
+
+        socket.on('error', () => {
+          if (responseSent) return;
+          responseSent = true;
+          res.writeHead(200, { 'Content-Type': 'application/json' });
+          res.end(JSON.stringify({ ok: false, message: 'Connection error' }));
+        });
+
+        socket.on('timeout', () => {
+          socket.destroy();
+          if (responseSent) return;
+          responseSent = true;
+          res.writeHead(200, { 'Content-Type': 'application/json' });
+          res.end(JSON.stringify({ ok: false, message: 'Timeout' }));
+        });
+
+        socket.on('close', () => {
+          if (responseSent) return;
+          responseSent = true;
+          const success = response.includes('250');
+          res.writeHead(200, { 'Content-Type': 'application/json' });
+          res.end(JSON.stringify({ ok: success, value: response.trim() }));
+        });
+
+        socket.connect(port, '127.0.0.1');
+      } catch (error) {
+        res.writeHead(400, { 'Content-Type': 'application/json' });
+        res.end(JSON.stringify({ ok: false, message: error.message }));
+      }
+    });
+    return;
+  }
+
+  // Send raw command to TOR control port
+  if (req.method === 'POST' && req.url === '/api/tor-test/command') {
+    let body = '';
+    req.on('data', chunk => {
+      body += chunk.toString();
+    });
+
+    req.on('end', () => {
+      try {
+        const { command = '' } = JSON.parse(body);
+        if (!command) {
+          res.writeHead(400, { 'Content-Type': 'application/json' });
+          res.end(JSON.stringify({ ok: false, message: 'No command provided' }));
+          return;
+        }
+
+        const port = parseInt(proxySettings.torControlPort) || 9051;
+        const socket = new net.Socket();
+        socket.setTimeout(3000);
+        let response = '';
+        let responseSent = false;
+
+        socket.on('connect', () => {
+          socket.write(getTorAuthCommand() + `${command}\r\nQUIT\r\n`);
+        });
+
+        socket.on('data', (data) => {
+          response += data.toString();
+        });
+
+        socket.on('error', () => {
+          if (responseSent) return;
+          responseSent = true;
+          res.writeHead(200, { 'Content-Type': 'application/json' });
+          res.end(JSON.stringify({ ok: false, message: 'Connection error' }));
+        });
+
+        socket.on('timeout', () => {
+          socket.destroy();
+          if (responseSent) return;
+          responseSent = true;
+          res.writeHead(200, { 'Content-Type': 'application/json' });
+          res.end(JSON.stringify({ ok: false, message: 'Timeout' }));
+        });
+
+        socket.on('close', () => {
+          if (responseSent) return;
+          responseSent = true;
+          const success = response.includes('250');
+          res.writeHead(200, { 'Content-Type': 'application/json' });
+          res.end(JSON.stringify({ ok: success, response: response.trim() }));
+        });
+
+        socket.connect(port, '127.0.0.1');
+      } catch (error) {
+        res.writeHead(400, { 'Content-Type': 'application/json' });
+        res.end(JSON.stringify({ ok: false, message: error.message }));
+      }
+    });
+    return;
+  }
+
+  // Get circuit information
+  if (req.method === 'GET' && req.url === '/api/tor-test/circuit-info') {
+    try {
+      const port = parseInt(proxySettings.torControlPort) || 9051;
+      const socket = new net.Socket();
+      socket.setTimeout(3000);
+      let response = '';
+      let responseSent = false;
+
+      socket.on('connect', () => {
+        socket.write(getTorAuthCommand() + 'GETINFO circuit-status\r\nQUIT\r\n');
+      });
+
+      socket.on('data', (data) => {
+        response += data.toString();
+      });
+
+      socket.on('error', () => {
+        if (responseSent) return;
+        responseSent = true;
+        res.writeHead(200, { 'Content-Type': 'application/json' });
+        res.end(JSON.stringify({ ok: false, message: 'Connection error' }));
+      });
+
+      socket.on('timeout', () => {
+        socket.destroy();
+        if (responseSent) return;
+        responseSent = true;
+        res.writeHead(200, { 'Content-Type': 'application/json' });
+        res.end(JSON.stringify({ ok: false, message: 'Timeout' }));
+      });
+
+      socket.on('close', () => {
+        if (responseSent) return;
+        responseSent = true;
+        const success = response.includes('250');
+        
+        // Parse circuit info from response
+        // Format: CircuitID BUILT $FINGERPRINT~NAME,$FINGERPRINT~NAME,... FLAGS...
+        // Look for any line containing BUILT (more flexible than strict regex)
+        const lines = response.split('\r\n');
+        const firstCircuit = lines.find(line => line.includes('BUILT'));
+        
+        let circuitInfo = 'N/A';
+        let nodes = [];
+        
+        if (firstCircuit) {
+          circuitInfo = firstCircuit;
+          // Extract the path part (between "BUILT " and the next flag)
+          // This handles the format: CIRCUITID BUILT $FP1~NAME1,$FP2~NAME2,$FP3~NAME3 PURPOSE=...
+          const pathMatch = firstCircuit.match(/BUILT\s+(\$[^\s]+)/);
+          if (pathMatch) {
+            const pathStr = pathMatch[1]; // e.g., "$FP1~NAME1,$FP2~NAME2,$FP3~NAME3"
+            const nodeStrs = pathStr.split(',').map(s => s.trim()).filter(s => s.length > 0);
+            nodes = nodeStrs.map((nodeStr, index) => {
+              // Parse "$FINGERPRINT~NAME"
+              const match = nodeStr.match(/\$([A-F0-9]+)~(.+)/i);
+              const fingerprint = match ? match[1] : nodeStr;
+              const name = match ? match[2] : 'Unknown';
+              const position = index === 0 ? 'Entry' : index === nodeStrs.length - 1 ? 'Exit' : 'Middle';
+              return { id: fingerprint, name, position };
+            });
+          }
+        }
+        
+        res.writeHead(200, { 'Content-Type': 'application/json' });
+        res.end(JSON.stringify({
+          ok: success,
+          circuitStatus: circuitInfo,
+          address: 'N/A',
+          nodes: nodes,
+          rawResponse: response.trim()
+        }));
+      });
+
+      socket.connect(port, '127.0.0.1');
+    } catch (error) {
+      res.writeHead(400, { 'Content-Type': 'application/json' });
+      res.end(JSON.stringify({ ok: false, message: error.message }));
+    }
+    return;
+  }
+
+  // Debug endpoint to check circuit diagnostics and NEWNYM status
+  if (req.method === 'GET' && req.url === '/api/tor-test/circuit-diagnostics') {
+    try {
+      const port = parseInt(proxySettings.torControlPort) || 9051;
+      const socket = new net.Socket();
+      socket.setTimeout(3000);
+      let response = '';
+      let responseSent = false;
+
+      socket.on('connect', () => {
+        // Get all circuits (not just BUILT) and timing info
+        socket.write(getTorAuthCommand() + 'GETINFO circuit-status\r\nQUIT\r\n');
+      });
+
+      socket.on('data', (data) => {
+        response += data.toString();
+      });
+
+      socket.on('error', () => {
+        if (responseSent) return;
+        responseSent = true;
+        res.writeHead(200, { 'Content-Type': 'application/json' });
+        res.end(JSON.stringify({ ok: false, message: 'Connection error' }));
+      });
+
+      socket.on('timeout', () => {
+        socket.destroy();
+        if (responseSent) return;
+        responseSent = true;
+        res.writeHead(200, { 'Content-Type': 'application/json' });
+        res.end(JSON.stringify({ ok: false, message: 'Timeout' }));
+      });
+
+      socket.on('close', () => {
+        if (responseSent) return;
+        responseSent = true;
+        const success = response.includes('250');
+        
+        // Parse ALL circuits (not just BUILT) to see if new ones are being created
+        const lines = response.split('\r\n');
+        const allCircuits = [];
+        
+        lines.forEach(line => {
+          if (line.includes('LAUNCHED') || line.includes('BUILT') || line.includes('EXTEND')) {
+            allCircuits.push(line);
+          }
+        });
+        
+        let diagnostics = {
+          ok: success,
+          totalCircuits: allCircuits.length,
+          circuits: allCircuits,
+          builtCount: allCircuits.filter(c => c.includes('BUILT')).length,
+          launchedCount: allCircuits.filter(c => c.includes('LAUNCHED')).length,
+          extendCount: allCircuits.filter(c => c.includes('EXTEND')).length,
+          note: 'If you see LAUNCHED circuits, NEWNYM is working. Wait for them to become BUILT.'
+        };
+        
+        res.writeHead(200, { 'Content-Type': 'application/json' });
+        res.end(JSON.stringify(diagnostics));
+      });
+
+      socket.connect(port, '127.0.0.1');
+    } catch (error) {
+      res.writeHead(400, { 'Content-Type': 'application/json' });
+      res.end(JSON.stringify({ ok: false, message: error.message }));
+    }
     return;
   }
 
@@ -1127,6 +1595,7 @@ const server = isWorkerMode ? null : http.createServer((req, res) => {
         res.writeHead(200, { 'Content-Type': 'application/json' });
         res.end(JSON.stringify({ success: true }));
       } catch (error) {
+        console.error('❌ POST /api/db/posts error:', error.message);
         res.writeHead(500, { 'Content-Type': 'application/json' });
         res.end(JSON.stringify({ error: error.message }));
       }
