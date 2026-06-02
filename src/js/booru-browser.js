@@ -2397,8 +2397,13 @@ async function showDownloadsGallery(forceReload = false) {
         } else {
           sortArtistBtn.classList.remove('btn-accent');
         }
-        document.getElementById('search-filter-input')?.dispatchEvent(new Event('input', { bubbles: true }));
-        document.getElementById('search-filter-input')?.dispatchEvent(new Event('blur', { bubbles: true }));
+        if (sortByArtist) {
+          document.getElementById('search-filter-input')?.dispatchEvent(new Event('input', { bubbles: true }));
+          document.getElementById('search-filter-input')?.dispatchEvent(new Event('blur', { bubbles: true }));
+        } else {
+          document.getElementById('reload-booru-btn')?.dispatchEvent(new Event('click', { bubbles: true }));
+          document.getElementById('reload-booru-btn')?.dispatchEvent(new Event('blur', { bubbles: true }));
+        }
         if (typeof saveSession === 'function') saveSession();
       });
       const primarySection = controlBar.querySelector('.control-section-primary');
