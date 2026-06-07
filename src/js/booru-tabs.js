@@ -819,6 +819,12 @@ function switchToTab(tabId) {
       const renderTab = () => {
         // Restore booruPosts array first
         if (tab.booruPosts && tab.booruPosts.length > 0) {
+          // if any post in tab.booruPosts is missing imageUrl, skip restoring and trigger a reload to fetch fresh data
+          const hasMissingData = tab.booruPosts.some(post => !post.imageUrl);
+          if (hasMissingData) {
+            document.getElementById('reload-booru-btn')?.click();
+            return;
+          }
           window.booruPosts = [...tab.booruPosts];
         } else {
           window.booruPosts = [];

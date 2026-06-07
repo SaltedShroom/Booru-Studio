@@ -512,18 +512,31 @@ async function restoreThumbnailCacheForTab(tabId) {
   try {
     const store = await getThumbnailCacheStore('readonly');
     return new Promise((resolve, reject) => {
+      const records = [];
       const request = store.index('tabId').openCursor(IDBKeyRange.only(tabId));
       request.onsuccess = (event) => {
         const cursor = event.target.result;
         if (!cursor) {
-          resolve();
+          // Transaction is complete, now convert blobs to data URLs
+          const conversionPromises = records.map(record => {
+            return new Promise((resolve) => {
+              if (record && record.cacheKey && record.blob) {
+                const reader = new FileReader();
+                reader.onload = () => {
+                  cache.set(record.cacheKey, reader.result);
+                  resolve();
+                };
+                reader.onerror = () => resolve();
+                reader.readAsDataURL(record.blob);
+              } else {
+                resolve();
+              }
+            });
+          });
+          Promise.all(conversionPromises).then(() => resolve()).catch(() => resolve());
           return;
         }
-        const record = cursor.value;
-        if (record && record.cacheKey && record.blob) {
-          const objectUrl = URL.createObjectURL(record.blob);
-          cache.set(record.cacheKey, objectUrl);
-        }
+        records.push(cursor.value);
         cursor.continue();
       };
       request.onerror = () => reject(request.error);
@@ -575,16 +588,25 @@ async function cacheThumbnailBlobForTab(tabId, originalUrl, cacheKey = null) {
   const cache = getTabThumbnailCache(tabId);
   if (!cache) return null;
   const key = cacheKey || originalUrl;
+  if (key.includes('?url=Unknown')) return null;
   if (cache.has(key)) return cache.get(key);
 
   try {
     const response = await fetch(originalUrl, { cache: 'force-cache' });
     if (!response.ok) return null;
     const blob = await response.blob();
-    const objectUrl = URL.createObjectURL(blob);
-    cache.set(key, objectUrl);
-    persistThumbnailCacheEntry(tabId, key, blob).catch(() => {});
-    return objectUrl;
+    // Use data URL instead of blob URL to avoid CSP issues
+    const reader = new FileReader();
+    return new Promise((resolve) => {
+      reader.onload = () => {
+        const dataUrl = reader.result;
+        cache.set(key, dataUrl);
+        persistThumbnailCacheEntry(tabId, key, blob).catch(() => {});
+        resolve(dataUrl);
+      };
+      reader.onerror = () => resolve(null);
+      reader.readAsDataURL(blob);
+    });
   } catch (err) {
     return null;
   }
@@ -724,6 +746,10 @@ function getImageUrl(imageUrl) {
   if (imageUrl.includes('localhost') || imageUrl.includes('127.0.0.1')) {
     return imageUrl;
   }
+  // Never proxy data URLs - they're already embedded and would create huge header sizes
+  if (imageUrl.startsWith('data:')) {
+    return imageUrl;
+  }
   
   const proxySettings = localStorage.getItem('proxySettings');
   if (proxySettings) {
@@ -747,8 +773,10 @@ function getImageUrl(imageUrl) {
 document.addEventListener('error', event => {
   const el = event.target;
   if (el && el.tagName === 'IMG') {
+    //only use proxy if src does not contain "data%3Aimage" (already a data URL) or "url=Unknown" (placeholder for failed proxy)
+
     const src = el.src || '';
-    if (src.includes('/proxy-image?')) {
+    if (src.includes('/proxy-image?') && !src.includes('data%3Aimage') && !src.includes('url=Unknown')) {
       // try fetching same URL to extract JSON error details
       fetch(src)
         .then(r => {
@@ -758,6 +786,8 @@ document.addEventListener('error', event => {
         .catch(() => {
           showToast('Image failed to load (proxy)', 'error');
         });
+    } else {
+      return; // not a proxied image, ignore
     }
   }
 }, true);
@@ -3738,6 +3768,14 @@ function initBooruBrowser() {
   // Load AI filter setting
   loadAiFilterSetting();
   
+  // Restore gallery quality toggle state from localStorage
+  try {
+    const savedQualityState = localStorage.getItem('showHighQualityGallery');
+    if (savedQualityState !== null) {
+      showHighQualityGallery = savedQualityState === 'true';
+    }
+  } catch (e) {}
+  
   if (aiFilterToggleBtn) {
     aiFilterToggleBtn.addEventListener('click', toggleAiFilter);
   }
@@ -3745,6 +3783,10 @@ function initBooruBrowser() {
   if (galleryQualityToggleBtn) {
     galleryQualityToggleBtn.addEventListener('click', () => {
       showHighQualityGallery = !showHighQualityGallery;
+      // Save to localStorage
+      try {
+        localStorage.setItem('showHighQualityGallery', showHighQualityGallery.toString());
+      } catch (e) {}
       // clear any cached previews so they reflect the new quality immediately
       if (window._previewCache) window._previewCache.clear();
 
@@ -3788,7 +3830,23 @@ function initBooruBrowser() {
           showScrollerBtn.click();
         }
       } else {
-        // Normal booru reload
+        // Normal booru reload - clear current active tab's cache
+        window.booruPosts = [];
+        window.hasMoreResults = true;
+        window.totalResultCount = null;
+        booruPaginationToken = null;
+        
+        // Clear cached posts from current active tab
+        if (activeTabId && window.booruTabs && Array.isArray(window.booruTabs)) {
+          const activeTab = window.booruTabs.find(tab => tab.id === activeTabId);
+          if (activeTab) {
+            activeTab.booruPosts = [];
+            activeTab.hasMoreResults = true;
+            activeTab.totalResultCount = null;
+            activeTab.paginationToken = null;
+          }
+        }
+        
         debouncedSettingsSave();
         loadBooruImages(false);
       }
@@ -4976,7 +5034,7 @@ function parsePosts(responseText, sourceConfig) {
     return [];
   } catch (jsonErr) {
     console.error('Failed to parse JSON:', jsonErr);
-    showToast('Error parsing response from server', 'error');
+    showToast('Error parsing response from server - Try updating cookies for the source', 'error');
     return [];
   }
 }
@@ -5319,604 +5377,236 @@ function renderBooruGallery(posts, append = true, addSeparators = true) {
   }
 }
 
-function createBooruImageElement(post, maxHeight = null, imageWidth = null) {
-
-  // Use <div> instead of <a> to prevent browser navigation on middle mouse
-  const link = document.createElement('div');
-  link.className = 'booru-image-item';
-  link.dataset.score = post.score || 0;
-  link.dataset.tags = post.tags ? post.tags.join(' ') : '';
-  link.dataset.artist = Array.isArray(post.artist) ? post.artist.join(', ') : (post.artist || (post.artists ? post.artists.join(', ') : 'Unknown'));
-  link.dataset.postId = normalizePostId(post.id);
-  link.dataset.postSource = post.source;
-  const aspectRatio = post.aspectRatio || 1;
-  link.dataset.aspectRatio = aspectRatio;
-  // For legacy/local posts, ensure preview works by setting correct data attributes
-  // If imageUrl is a relative path, set both imageUrl and thumbnailUrl to the same value if needed
-  if (post.source === 'legacy' && post.imageUrl && post.imageUrl.startsWith('/')) {
-    post.thumbnailUrl = post.thumbnailUrl || post.imageUrl;
-  }
-  // If post.dataIndex is present, assign it to the image later
-  const dataIndex = post.dataIndex;
-  
-  const loader = document.createElement('i');
-  loader.className = 'fas fa-circle-notch fa-spin image-loader';
-  link.appendChild(loader);
-  
-  // Check if URL is a video
-  const url = post?.imageUrl?.toLowerCase() || 'Unknown';
-  const isVideo = url.endsWith('.mp4') || url.endsWith('.webm') || url.endsWith('.mov') || 
-                  url.includes('.mp4?') || url.includes('.webm?') || url.includes('.mov?');
-  const isGif = url.endsWith('.gif') || url.includes('.gif?');
-  
-  // Add file type class for colored border
-  if (isVideo) {
-    link.classList.add('file-type-video');
-  } else if (isGif) {
-    link.classList.add('file-type-gif');
-    //post.thumbnailUrl = post.imageUrl; // For GIFs, use full URL as thumbnail to preserve animation
-  } else {
-    link.classList.add('file-type-image');
-  }
-  
-  let mediaElement;
-
-  // Only apply gallery quality toggle to images, not videos
-  const useHighQuality = (!isVideo && typeof showHighQualityGallery !== 'undefined') ? showHighQualityGallery : false;
-
-  if (isVideo) {
-    // Check if thumbnail is also a video (common for downloads) or an actual image thumbnail (common for booru)
-    const thumbnailUrl = useHighQuality ? post.imageUrl : (post.thumbnailUrl || post.imageUrl);
-
-    // Thumbnail is an image - use img element (for booru gallery)
-    mediaElement = document.createElement('img');
-    mediaElement.alt = post.title || 'Video';
-    mediaElement.dataset.isVideo = 'true';
-    
-    const width = 400;
-    const height = Math.round(width * aspectRatio);
-    mediaElement.setAttribute('width', width);
-    mediaElement.setAttribute('height', height);
-    mediaElement.style.opacity = '0';
-    
-    mediaElement.dataset.imageUrl = post.imageUrl;
-    mediaElement.dataset.thumbnailUrl = post.thumbnailUrl;
-    mediaElement.dataset.tags = post.tags.join(' ');
-    mediaElement.dataset.author = Array.isArray(post.artist) ? post.artist.join(', ') : (post.artist || post.author || 'Unknown');
-    mediaElement.dataset.title = post.title || '';
-    mediaElement.dataset.createdAt = post.createdAt || '';
-
-    if (typeof dataIndex !== 'undefined') {
-      mediaElement.setAttribute('data-index', dataIndex);
-    }
-
-    mediaElement.addEventListener('load', () => {
-      mediaElement.style.opacity = '1';
-      mediaElement.classList.add('loaded');
-      loader.style.display = 'none';
-    }, { once: true });
-    
-    mediaElement.addEventListener('error', () => {
-      mediaElement.src = 'data:image/svg+xml,<svg xmlns="http://www.w3.org/2000/svg" width="400" height="300"><rect width="400" height="300" fill="%23252a3a"/><text x="50%" y="50%" text-anchor="middle" fill="%23a0a0a0" font-size="16">Video</text></svg>';
-      mediaElement.style.opacity = '1';
-      mediaElement.classList.add('loaded');
-      loader.style.display = 'none';
-    }, { once: true });
-    
-    mediaElement.loading = 'lazy';
-    const currentTabId = typeof activeTabId !== 'undefined' ? activeTabId : null;
-    const resolvedThumbnailUrl = getImageUrl(thumbnailUrl);
-    mediaElement.dataset.resolvedThumbnailUrl = resolvedThumbnailUrl;
-    const isVideoSource = thumbnailUrl.toLowerCase().endsWith('.mp4') || thumbnailUrl.toLowerCase().endsWith('.webm') || thumbnailUrl.toLowerCase().endsWith('.mov');
-    const cacheKey = isVideoSource ? `video-thumbnail:${thumbnailUrl}` : resolvedThumbnailUrl;
-    const cachedThumbnailUrl = currentTabId ? getCachedThumbnailUrl(currentTabId, cacheKey) : null;
-    const backendThumbnailUrl = isVideoSource && resolvedThumbnailUrl ? `http://localhost:3001/video-thumbnail?url=${encodeURIComponent(resolvedThumbnailUrl)}` : null;
-
-    if (cachedThumbnailUrl) {
-      mediaElement.src = cachedThumbnailUrl;
-    } else if (isVideoSource) {
-      if (backendThumbnailUrl) {
-        mediaElement.src = backendThumbnailUrl;
-        mediaElement.addEventListener('load', () => {
-          if (currentTabId && cacheKey && !getCachedThumbnailUrl(currentTabId, cacheKey)) {
-            cacheThumbnailBlobForTab(currentTabId, backendThumbnailUrl, cacheKey).catch(() => {});
-          }
-        }, { once: true });
-      } else {
-        console.warn('No valid thumbnail URL for video post:', post);
-        mediaElement.src = 'data:image/svg+xml,<svg xmlns="http://www.w3.org/2000/svg" width="400" height="300"><rect width="400" height="300" fill="%23252a3a"/><text x="50%" y="50%" text-anchor="middle" fill="%23a0a0a0" font-size="16">Video</text></svg>';
-      }
-    } else {
-      mediaElement.src = resolvedThumbnailUrl;
-      mediaElement.addEventListener('load', () => {
-        if (currentTabId && cacheKey && !getCachedThumbnailUrl(currentTabId, cacheKey)) {
-          cacheThumbnailBlobForTab(currentTabId, resolvedThumbnailUrl, cacheKey).catch(() => {});
-        }
-      }, { once: true });
-    }
-    
-  } else {
-    // Create image element
-    mediaElement = document.createElement('img');
-    mediaElement.alt = post.title || post.tags.slice(0, 5).join(' ');
-    
-    // Set explicit dimensions for Justified Gallery to layout before image loads
-    const width = 400;
-    const height = Math.round(width * aspectRatio);
-    mediaElement.setAttribute('width', width);
-    mediaElement.setAttribute('height', height);
-    
-    mediaElement.style.width = '100%';
-    mediaElement.style.height = '100%';
-    mediaElement.style.objectFit = 'cover';
-    mediaElement.style.opacity = '0'; // Start hidden, show on load
-    mediaElement.dataset.aspectRatio = aspectRatio;
-    mediaElement.dataset.imageUrl = post.imageUrl;  // Store full quality URL for preview/download
-    mediaElement.dataset.thumbnailUrl = post.thumbnailUrl;  // Store thumbnail URL
-    if (post.sampleUrl) {
-      mediaElement.dataset.sampleUrl = post.sampleUrl;  // Store sample/medium quality URL if available
-    }
-    mediaElement.dataset.tags = post.tags.join(' ');
-    mediaElement.dataset.author = Array.isArray(post.artist) ? post.artist.join(', ') : (post.artist || post.author || 'Unknown');
-    mediaElement.dataset.title = post.title || '';
-    mediaElement.dataset.createdAt = post.createdAt || '';
-
-    if (post.sampleUrl) {
-      mediaElement.dataset.sampleUrl = post.sampleUrl;  // Store sample/medium quality URL if available
-    }
-    if (url.endsWith('.gif') || url.includes('.gif?')) {
-      mediaElement.dataset.isGif = 'true';
-    }
-    if (typeof dataIndex !== 'undefined') {
-      mediaElement.setAttribute('data-index', dataIndex);
-    }
-    
-    mediaElement.addEventListener('load', async () => {
-      mediaElement.style.opacity = '1'; // Fade in on load
-      mediaElement.classList.add('loaded');
-      loader.style.display = 'none';
-      
-      // Cache thumbnail after successful load (avoid duplicate fetch before load)
-      const currentTabId = typeof activeTabId !== 'undefined' ? activeTabId : null;
-      const resolvedThumbnailUrl = mediaElement.dataset.resolvedThumbnailUrl;
-      const isVideoSource = resolvedThumbnailUrl && (resolvedThumbnailUrl.endsWith('.mp4') || resolvedThumbnailUrl.endsWith('.webm') || resolvedThumbnailUrl.endsWith('.mov'));
-      const cacheKey = isVideoSource ? `video-thumbnail:${resolvedThumbnailUrl}` : resolvedThumbnailUrl;
-      if (currentTabId && cacheKey && !getCachedThumbnailUrl(currentTabId, cacheKey)) {
-        cacheThumbnailBlobForTab(currentTabId, resolvedThumbnailUrl, cacheKey).catch(() => {});
-      }
-
-      // Check if mouse position is within image boundaries and show preview
-      if (!previewFrozen && typeof showPreviewForElement === 'function') {
-        const rect = mediaElement.getBoundingClientRect();
-        const isHovering = lastMouseX >= rect.left && lastMouseX <= rect.right &&
-                          lastMouseY >= rect.top && lastMouseY <= rect.bottom;
-        if (isHovering) {
-          if (typeof lastHoveredElement !== 'undefined') {
-            window.booruLastHoveredElement = mediaElement;
-          }
-          showPreviewForElement(mediaElement);
-        }
-      }
-    }, { once: true });
-    
-    mediaElement.addEventListener('error', (e) => {
-      loader.style.display = 'none';
-      mediaElement.style.display = 'none';
-      const errorDiv = document.createElement('div');
-      errorDiv.style.cssText = `
-        width: 100%;
-        height: 100%;
-        display: flex;
-        align-items: center;
-        justify-content: center;
-        background: var(--bg-darkest);
-        color: var(--text-secondary);
-        font-size: 12px;
-        text-align: center;
-        padding: 10px;
-      `;
-      errorDiv.innerHTML = '<i class="fas fa-exclamation-triangle errorDivIcon"></i>Failed to load';
-      link.appendChild(errorDiv);
-    }, { once: true });
-    
-    mediaElement.decoding = 'async';
-    mediaElement.loading = 'lazy';
-    const resolvedThumbnailUrl = getImageUrl(useHighQuality ? url : (post.thumbnailUrl || url));
-    mediaElement.dataset.resolvedThumbnailUrl = resolvedThumbnailUrl;
-    const currentTabId = typeof activeTabId !== 'undefined' ? activeTabId : null;
-    const isVideoSource = resolvedThumbnailUrl.endsWith('.mp4') || resolvedThumbnailUrl.endsWith('.webm') || resolvedThumbnailUrl.endsWith('.mov');
-    const cacheKey = isVideoSource ? `video-thumbnail:${resolvedThumbnailUrl}` : resolvedThumbnailUrl;
-    const cachedThumbnailUrl = currentTabId && cacheKey ? getCachedThumbnailUrl(currentTabId, cacheKey) : null;
-    if (cachedThumbnailUrl) {
-      mediaElement.src = cachedThumbnailUrl;
-    } else if (isVideoSource) {
-      const backendThumbnailUrl = `http://localhost:3001/video-thumbnail?url=${encodeURIComponent(resolvedThumbnailUrl)}`;
-      mediaElement.src = backendThumbnailUrl;
-      if (currentTabId && cacheKey && !getCachedThumbnailUrl(currentTabId, cacheKey)) {
-        cacheThumbnailBlobForTab(currentTabId, backendThumbnailUrl, cacheKey).catch(() => {});
-      }
-    } else {
-      mediaElement.src = cachedThumbnailUrl || resolvedThumbnailUrl;
-    }
-  }
-  
-  link.appendChild(mediaElement);
-  
-  link.addEventListener('click', (e) => { 
-    openBooruLightbox(post.imageUrl);
-  });
-  
-  link.addEventListener('mousedown', (e) => {
-    if (e.button === 1) {
-      // Only trigger download, do not open URL
-      e.preventDefault();
-      e.stopPropagation();
-      if (downloadBtn)
-        downloadBtn.click();
-      return false;
-    }
-  });
-  
-  // Add download button
-  let downloadBtn = document.createElement('button');
-  downloadBtn.className = 'booru-download-btn';
-  downloadBtn.innerHTML = '<i class="fas fa-download"></i>';
-  downloadBtn.title = 'Download';
-  
-  // Add progress bar (hidden by default)
-  const progressContainer = document.createElement('div');
-  progressContainer.className = 'booru-download-progress';
-  progressContainer.style.display = 'none';
-  const progressBar = document.createElement('div');
-  progressBar.className = 'booru-download-progress-bar';
-  progressBar.style.width = '0%';
-  progressContainer.appendChild(progressBar);
-  
-  // Store download state
-  link.dataset.downloaded = 'false';
-  
-  // Store hover handlers for removal later
-  let hoverHandlers = null;
-  
-  // Check if this image is already downloaded (exclude videos)
-  if (window.downloadFolder) {
-    const filename = getFilenameFromUrl(post.imageUrl, post.id);
-    fetch('http://localhost:3001/check-downloaded-images', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ filenames: [filename] })
-    })
-    .then(res => res.json())
-    .then(data => {
-      if (data.downloaded && data.downloaded[filename]) {
-        const localUrl = `http://localhost:3001/serve-local-file/${encodeURIComponent(filename)}`;
-        link.dataset.downloaded = 'true';
-        downloadBtn.innerHTML = '<i class="fas fa-check"></i>';
-        downloadBtn.classList.add('downloaded');
-        downloadBtn.title = 'Delete';
-
-        if (!isVideo) {
-          if (mediaElement) {
-            mediaElement.dataset.highQualityLoaded = 'true';
-            if (mediaElement.src !== localUrl) {
-              mediaElement.src = localUrl;
-            }
-          }
-
-          const previewImg = booruPreviewMediaContainer.querySelector('img');
-          if (previewImg && previewImg.dataset.postId === link.dataset.postId && previewImg.dataset.postSource === link.dataset.postSource) {
-            previewImg.src = localUrl;
-          }
-        }
-
-        // Add hover handlers to swap between check and X icons
-        const mouseEnterHandler = () => {
-          downloadBtn.innerHTML = '<i class="fas fa-times"></i>';
-        };
-        const mouseLeaveHandler = () => {
-          downloadBtn.innerHTML = '<i class="fas fa-check"></i>';
-        };
-        hoverHandlers = { mouseEnterHandler, mouseLeaveHandler };
-
-        downloadBtn.addEventListener('mouseenter', mouseEnterHandler);
-        downloadBtn.addEventListener('mouseleave', mouseLeaveHandler);
-      }
-    })
-    .catch(err => {
-      console.error('Failed to check download status:', err);
-      showToast('Error checking download status: ' + (err.message || err), 'error');
-    });
-  }
-  
-  downloadBtn.addEventListener('click', async (e) => {
-    e.preventDefault();
-    e.stopPropagation();
-    // Prevent navigation
-    if (e.button === 1) return false;
-
-    const isDownloaded = link.dataset.downloaded === 'true';
-    if (isDownloaded) {
-      // remove file and make sure database entry is deleted too
-      const filename = getFilenameFromUrl(post.imageUrl, post.id);
-      try {
-        const response = await fetch('http://localhost:3001/delete-downloaded-image', {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ filename, id: post.id })
-        });
-        const data = await response.json();
-        if (!response.ok) {
-          console.warn('HTTP error deleting file', response.status, data.error || data);
-          showToast('Failed to delete file: ' + (data.error || `HTTP ${response.status}`), 'error');
-        } else if (data.success) {
-          // also attempt client‑side removal in case server-side failed silently
-          if (typeof dbStore !== 'undefined' && dbStore && post && post.id) {
-            try { await dbStore.removeDownloadedPost(post.id); window.updateAppLoadingDownloadCount(); } catch (e) { console.warn('Failed to remove downloaded post from dbStore', e); showToast('Could not remove record from database', 'error'); }
-          }
-          link.dataset.downloaded = 'false';
-          downloadBtn.innerHTML = '<i class="fas fa-download"></i>';
-          downloadBtn.classList.remove('downloaded');
-          downloadBtn.title = 'Download';
-          if (hoverHandlers) {
-            downloadBtn.removeEventListener('mouseenter', hoverHandlers.mouseEnterHandler);
-            downloadBtn.removeEventListener('mouseleave', hoverHandlers.mouseLeaveHandler);
-            hoverHandlers = null;
-          }
-          if (window.isViewingDownloadsGallery) {
-            // Remove from UI immediately if in downloads gallery
-            downloadBtn.remove();
-            downloadBtn = null;
-            link.style.opacity = '0.25';
-          }
-        } else {
-          console.warn('Server reported deletion failure:', data.error || data);
-          showToast('Failed to delete file: ' + (data.error || 'unknown'), 'error');
-        }
-      } catch (error) {
-        console.error('Failed to delete:', error);
-        showToast('Error deleting file: ' + (error.message || error), 'error');
-      }
-    } else {
-      const currentSearchInput = document.getElementById('search-filter-input')?.value.trim();
-
-      // User requested download — create toast immediately
-      let toast = null;
-      try { toast = window.createDownloadToast(`dl-${post.id}-${Date.now()}`, String(post.id)); if (toast) toast.update(2, 'Queued'); } catch (e) { /* ignore */ }
-
-      downloadBtn.innerHTML = '<i class="fas fa-circle-notch fa-spin loading-artist"></i>';
-      downloadBtn.disabled = true;
-      progressContainer.style.display = 'block';
-
-      // Download file
-      const filename = getFilenameFromUrl(post.imageUrl, post.id);
-      
-      // Fetch artist if not known
-      if (post.artists.length === 0 || post.artists[0] === '?' || !post.artists || post.artists[0] === 'Unknown') {
-        const postId = post.id;
-        const postSource = post.source;
-        try {
-          const fetchedArtists = await fetchArtistForPost(postId, postSource, post.tags);
-          post.artists = Array.isArray(fetchedArtists)
-            ? (fetchedArtists.length ? fetchedArtists : ['Unknown'])
-            : [fetchedArtists || 'Unknown'];
-        } catch (err) {
-          console.error('Error fetching artist for download:', err);
-          showToast('Error fetching artist info: ' + (err.message || err), 'error');
-          post.artists = ['Unknown'];
-        }
-      }
-
-      let artist = "Unknown";
-      if (post.artists && post.artists.length > 0) {
-        artist = post.artists[0];
-        post.artists.forEach(a => {
-          if (a.toLowerCase() == currentSearchInput?.toLowerCase()) {
-            artist = a;
-          }
-        });
-      }
-
-      downloadBtn.innerHTML = '<i class="fas fa-circle-notch fa-spin"></i>';
-
-      try {
-        // Enqueue download through pipeline (retries handled centrally)
-        const task = {
-          postId: post.id,
-          imageUrl: post.imageUrl,
-          filename,
-          postDiv: link,
-          downloadBtn,
-          progressBar,
-          progressContainer,
-          toast
-        };
-
-        await downloadQueue.enqueue(task);
-
-        // On success: Save post to dbStore and update preview UI
-        if (typeof dbStore !== 'undefined' && dbStore && post && post.id) {
-          const postToSave = { ...post };
-          postToSave.artist = artist;
-          postToSave.downloadedAt = Date.now();
-          try { await dbStore.saveDownloadedPost(postToSave); } catch (e) { console.warn('Failed to save downloaded post to dbStore', e); }
-        }
-        const mediaElement = link.querySelector('img, video');
-        if (mediaElement) {
-          mediaElement.dataset.author = artist;
-        }
-        progressBar.style.width = '100%';
-        setTimeout(() => {
-          link.dataset.downloaded = 'true';
-          downloadBtn.innerHTML = '<i class="fas fa-check"></i>';
-          downloadBtn.classList.add('downloaded');
-          downloadBtn.title = 'Delete';
-          downloadBtn.disabled = false;
-            progressContainer.style.display = 'none';
-            progressBar.style.width = '0%';
-
-            // Add hover handlers to swap between check and X icons
-            const mouseEnterHandler = () => {
-              downloadBtn.innerHTML = '<i class="fas fa-times"></i>';
-            };
-            const mouseLeaveHandler = () => {
-              downloadBtn.innerHTML = '<i class="fas fa-check"></i>';
-            };
-            hoverHandlers = { mouseEnterHandler, mouseLeaveHandler };
-
-            downloadBtn.addEventListener('mouseenter', mouseEnterHandler);
-            downloadBtn.addEventListener('mouseleave', mouseLeaveHandler);
-
-            // finalize toast
-            if (post.imageUrl.toLowerCase().match(/\.(mp4|webm|mov)(\?|$)/)) {
-              if (task.toast) task.toast.done(true, 'Completed', post.sampleUrl);
-            } else {
-              if (task.toast) task.toast.done(true, 'Completed', post.imageUrl);
-            }
-          }, 300);    
-      } catch (error) {
-        console.error('Download failed:', error);
-        showToast('Download failed: ' + (error.message || error), 'error');
-        downloadBtn.innerHTML = '<i class="fas fa-download"></i>';
-        downloadBtn.disabled = false;
-        progressContainer.style.display = 'none';
-        progressBar.style.width = '0%';
-        // finalize toast as failed
-        if (toast) toast.done(false, 'Failed');
-      }
-    }
-  });
-  
-  link.appendChild(downloadBtn);
-  link.appendChild(progressContainer);
-  
-  return link;
-}
-
 // function createBooruImageElement(post, maxHeight = null, imageWidth = null) {
 
+//   // Use <div> instead of <a> to prevent browser navigation on middle mouse
+//   const link = document.createElement('div');
+//   link.className = 'booru-image-item';
+//   link.dataset.score = post.score || 0;
+//   link.dataset.tags = post.tags ? post.tags.join(' ') : '';
+//   link.dataset.artist = Array.isArray(post.artist) ? post.artist.join(', ') : (post.artist || (post.artists ? post.artists.join(', ') : 'Unknown'));
+//   link.dataset.postId = normalizePostId(post.id);
+//   link.dataset.postSource = post.source;
+//   const aspectRatio = post.aspectRatio || 1;
+//   link.dataset.aspectRatio = aspectRatio;
+//   // For legacy/local posts, ensure preview works by setting correct data attributes
+//   // If imageUrl is a relative path, set both imageUrl and thumbnailUrl to the same value if needed
+//   if (post.source === 'legacy' && post.imageUrl && post.imageUrl.startsWith('/')) {
+//     post.thumbnailUrl = post.thumbnailUrl || post.imageUrl;
+//   }
+//   // If post.dataIndex is present, assign it to the image later
+//   const dataIndex = post.dataIndex;
+  
 //   const loader = document.createElement('i');
 //   loader.className = 'fas fa-circle-notch fa-spin image-loader';
+//   link.appendChild(loader);
+  
+//   // Check if URL is a video
+//   const url = post?.imageUrl?.toLowerCase() || 'Unknown';
+//   const isVideo = url.endsWith('.mp4') || url.endsWith('.webm') || url.endsWith('.mov') || 
+//                   url.includes('.mp4?') || url.includes('.webm?') || url.includes('.mov?');
+//   const isGif = url.endsWith('.gif') || url.includes('.gif?');
+  
+//   // Add file type class for colored border
+//   if (isVideo) {
+//     link.classList.add('file-type-video');
+//   } else if (isGif) {
+//     link.classList.add('file-type-gif');
+//     //post.thumbnailUrl = post.imageUrl; // For GIFs, use full URL as thumbnail to preserve animation
+//   } else {
+//     link.classList.add('file-type-image');
+//   }
+  
+//   let mediaElement;
 
-//   const container = document.createElement('div');
-//   container.className = 'booru-image-item';
-//   container.dataset.score = post.score || 0;
-//   container.dataset.tags = post.tags ? post.tags.join(' ') : '';
-//   container.dataset.artist = Array.isArray(post.artist) ? post.artist.join(', ') : (post.artist || (post.artists ? post.artists.join(', ') : 'Unknown'));
-//   container.dataset.postId = normalizePostId(post.id);
-//   container.dataset.postSource = post.source;
-//   container.dataset.aspectRatio = post.aspectRatio || 1;
-//   container.appendChild(loader);
-
-//   const dataIndex = post.dataIndex;
-//   const qualityUrl = post?.imageUrl?.toLowerCase() || 'Unknown';
-//   const isVideo = qualityUrl.endsWith('.mp4') || qualityUrl.endsWith('.webm') || qualityUrl.endsWith('.mov') || qualityUrl.includes('.mp4?') || qualityUrl.includes('.webm?') || qualityUrl.includes('.mov?');
-//   const isGif = qualityUrl.endsWith('.gif') || qualityUrl.includes('.gif?');
+//   // Only apply gallery quality toggle to images, not videos
 //   const useHighQuality = (!isVideo && typeof showHighQualityGallery !== 'undefined') ? showHighQualityGallery : false;
 
-//   let mediaElement = document.createElement('img');
-//   mediaElement.alt = post.title || 'Unknown Title';
-
-//   const width = 400;
-//   const height = Math.round(width * container.dataset.aspectRatio);
-//   mediaElement.setAttribute('width', width);
-//   mediaElement.setAttribute('height', height);
-  
-//   mediaElement.style.width = '100%';
-//   mediaElement.style.height = '100%';
-//   mediaElement.style.objectFit = 'cover';
-//   mediaElement.style.opacity = '0';
-//   mediaElement.dataset.aspectRatio = container.dataset.aspectRatio;
-//   mediaElement.dataset.imageUrl = qualityUrl;
-//   mediaElement.dataset.thumbnailUrl = post.thumbnailUrl;
-//   mediaElement.dataset.sampleUrl = post.sampleUrl || '';
-//   mediaElement.dataset.tags = post.tags.join(' ');
-//   mediaElement.dataset.author = Array.isArray(post.artist) ? post.artist.join(', ') : (post.artist || post.author || 'Unknown');
-//   mediaElement.dataset.title = post.title || '';
-//   mediaElement.dataset.createdAt = post.createdAt || '';
-
 //   if (isVideo) {
-//     container.classList.add('file-type-video');
+//     // Check if thumbnail is also a video (common for downloads) or an actual image thumbnail (common for booru)
+//     const thumbnailUrl = useHighQuality ? post.imageUrl : (post.thumbnailUrl || post.imageUrl);
+
+//     // Thumbnail is an image - use img element (for booru gallery)
+//     mediaElement = document.createElement('img');
+//     mediaElement.alt = post.title || 'Video';
 //     mediaElement.dataset.isVideo = 'true';
-//   } else if (isGif) {
-//     container.classList.add('file-type-gif');
-//     mediaElement.dataset.isGif = 'true';
-//   } else {
-//     container.classList.add('file-type-image');
-//   }
-//   if (typeof dataIndex !== 'undefined') {
-//     mediaElement.setAttribute('data-index', dataIndex);
-//   }
-  
-//   mediaElement.addEventListener('load', async () => {
-//     mediaElement.style.opacity = '1';
-//     mediaElement.classList.add('loaded');
-//     loader.style.display = 'none';
     
-//     // Cache thumbnail after successful load (avoid duplicate fetch before load)
-//     const currentTabId = typeof activeTabId !== 'undefined' ? activeTabId : null;
-//     const resolvedThumbnailUrl = mediaElement.dataset.resolvedThumbnailUrl;
-//     const isVideoSource = resolvedThumbnailUrl && (resolvedThumbnailUrl.endsWith('.mp4') || resolvedThumbnailUrl.endsWith('.webm') || resolvedThumbnailUrl.endsWith('.mov'));
-//     const cacheKey = isVideoSource ? `video-thumbnail:${resolvedThumbnailUrl}` : resolvedThumbnailUrl;
-//     if (currentTabId && cacheKey && !getCachedThumbnailUrl(currentTabId, cacheKey)) {
-//       cacheThumbnailBlobForTab(currentTabId, resolvedThumbnailUrl, cacheKey).catch(() => {});
+//     const width = 400;
+//     const height = Math.round(width * aspectRatio);
+//     mediaElement.setAttribute('width', width);
+//     mediaElement.setAttribute('height', height);
+//     mediaElement.style.opacity = '0';
+    
+//     mediaElement.dataset.imageUrl = post.imageUrl;
+//     mediaElement.dataset.thumbnailUrl = post.thumbnailUrl;
+//     mediaElement.dataset.tags = post.tags.join(' ');
+//     mediaElement.dataset.author = Array.isArray(post.artist) ? post.artist.join(', ') : (post.artist || post.author || 'Unknown');
+//     mediaElement.dataset.title = post.title || '';
+//     mediaElement.dataset.createdAt = post.createdAt || '';
+
+//     if (typeof dataIndex !== 'undefined') {
+//       mediaElement.setAttribute('data-index', dataIndex);
 //     }
 
-//     // Check if mouse position is within image boundaries and show preview
-//     if (!previewFrozen && typeof showPreviewForElement === 'function') {
-//       const rect = mediaElement.getBoundingClientRect();
-//       const isHovering = lastMouseX >= rect.left && lastMouseX <= rect.right &&
-//                         lastMouseY >= rect.top && lastMouseY <= rect.bottom;
-//       if (isHovering) {
-//         if (typeof lastHoveredElement !== 'undefined') {
-//           window.booruLastHoveredElement = mediaElement;
-//         }
-//         showPreviewForElement(mediaElement);
+//     mediaElement.addEventListener('load', () => {
+//       mediaElement.style.opacity = '1';
+//       mediaElement.classList.add('loaded');
+//       loader.style.display = 'none';
+//     }, { once: true });
+    
+//     mediaElement.addEventListener('error', () => {
+//       mediaElement.src = 'data:image/svg+xml,<svg xmlns="http://www.w3.org/2000/svg" width="400" height="300"><rect width="400" height="300" fill="%23252a3a"/><text x="50%" y="50%" text-anchor="middle" fill="%23a0a0a0" font-size="16">Video</text></svg>';
+//       mediaElement.style.opacity = '1';
+//       mediaElement.classList.add('loaded');
+//       loader.style.display = 'none';
+//     }, { once: true });
+    
+//     mediaElement.loading = 'lazy';
+//     const currentTabId = typeof activeTabId !== 'undefined' ? activeTabId : null;
+//     const resolvedThumbnailUrl = getImageUrl(thumbnailUrl);
+//     mediaElement.dataset.resolvedThumbnailUrl = resolvedThumbnailUrl;
+//     const isVideoSource = thumbnailUrl.toLowerCase().endsWith('.mp4') || thumbnailUrl.toLowerCase().endsWith('.webm') || thumbnailUrl.toLowerCase().endsWith('.mov');
+//     const cacheKey = isVideoSource ? `video-thumbnail:${thumbnailUrl}` : resolvedThumbnailUrl;
+//     const cachedThumbnailUrl = currentTabId && !cacheKey.includes('?url=Unknown') ? getCachedThumbnailUrl(currentTabId, cacheKey) : null;
+//     const backendThumbnailUrl = isVideoSource && resolvedThumbnailUrl ? `http://localhost:3001/video-thumbnail?url=${encodeURIComponent(resolvedThumbnailUrl)}` : null;
+
+//     if (cachedThumbnailUrl) {
+//       mediaElement.src = cachedThumbnailUrl;
+//     } else if (isVideoSource) {
+//       if (backendThumbnailUrl) {
+//         mediaElement.src = backendThumbnailUrl;
+//         mediaElement.addEventListener('load', () => {
+//           if (currentTabId && cacheKey && !cacheKey.includes('?url=Unknown') && !getCachedThumbnailUrl(currentTabId, cacheKey)) {
+//             cacheThumbnailBlobForTab(currentTabId, backendThumbnailUrl, cacheKey).catch(() => {});
+//           }
+//         }, { once: true });
+//       } else {
+//         console.warn('No valid thumbnail URL for video post:', post);
+//         mediaElement.src = 'data:image/svg+xml,<svg xmlns="http://www.w3.org/2000/svg" width="400" height="300"><rect width="400" height="300" fill="%23252a3a"/><text x="50%" y="50%" text-anchor="middle" fill="%23a0a0a0" font-size="16">Video</text></svg>';
 //       }
+//     } else {
+//       mediaElement.src = resolvedThumbnailUrl;
+//       mediaElement.addEventListener('load', () => {
+//         if (currentTabId && cacheKey && !cacheKey.includes('?url=Unknown') && !getCachedThumbnailUrl(currentTabId, cacheKey)) {
+//           cacheThumbnailBlobForTab(currentTabId, resolvedThumbnailUrl, cacheKey).catch(() => {});
+//         }
+//       }, { once: true });
 //     }
-//   }, { once: true });
-  
-//   mediaElement.addEventListener('error', (e) => {
-//     loader.style.display = 'none';
-//     mediaElement.style.display = 'none';
-//     const errorDiv = document.createElement('div');
-//     errorDiv.style.cssText = `
-//       width: 100%;
-//       height: 100%;
-//       display: flex;
-//       align-items: center;
-//       justify-content: center;
-//       background: var(--bg-darkest);
-//       color: var(--text-secondary);
-//       font-size: 12px;
-//       text-align: center;
-//       padding: 10px;
-//     `;
-//     errorDiv.innerHTML = '<i class="fas fa-exclamation-triangle errorDivIcon"></i>Failed to load';
-//     container.appendChild(errorDiv);
-//   }, { once: true });
-  
-//   mediaElement.decoding = 'async';
-//   mediaElement.loading = 'lazy';
-//   const resolvedThumbnailUrl = getImageUrl(useHighQuality ? qualityUrl : (post.thumbnailUrl || post.sampleUrl || qualityUrl));
-//   mediaElement.dataset.resolvedThumbnailUrl = resolvedThumbnailUrl;
-//   const currentTabId = typeof activeTabId !== 'undefined' ? activeTabId : null;
-//   const isVideoSource = resolvedThumbnailUrl.endsWith('.mp4') || resolvedThumbnailUrl.endsWith('.webm') || resolvedThumbnailUrl.endsWith('.mov');
-//   const cacheKey = isVideoSource ? `video-thumbnail:${resolvedThumbnailUrl}` : resolvedThumbnailUrl;
-//   const cachedThumbnailUrl = currentTabId && cacheKey ? getCachedThumbnailUrl(currentTabId, cacheKey) : null;
-//   if (cachedThumbnailUrl) {
-//     mediaElement.src = cachedThumbnailUrl;
+    
 //   } else {
-//     mediaElement.src = resolvedThumbnailUrl;
+//     // Create image element
+//     mediaElement = document.createElement('img');
+//     mediaElement.alt = post.title || post.tags.slice(0, 5).join(' ');
+    
+//     // Set explicit dimensions for Justified Gallery to layout before image loads
+//     const width = 400;
+//     const height = Math.round(width * aspectRatio);
+//     mediaElement.setAttribute('width', width);
+//     mediaElement.setAttribute('height', height);
+    
+//     mediaElement.style.width = '100%';
+//     mediaElement.style.height = '100%';
+//     mediaElement.style.objectFit = 'cover';
+//     mediaElement.style.opacity = '0'; // Start hidden, show on load
+//     mediaElement.dataset.aspectRatio = aspectRatio;
+//     mediaElement.dataset.imageUrl = post.imageUrl;  // Store full quality URL for preview/download
+//     mediaElement.dataset.thumbnailUrl = post.thumbnailUrl;  // Store thumbnail URL
+//     if (post.sampleUrl) {
+//       mediaElement.dataset.sampleUrl = post.sampleUrl;  // Store sample/medium quality URL if available
+//     }
+//     mediaElement.dataset.tags = post.tags.join(' ');
+//     mediaElement.dataset.author = Array.isArray(post.artist) ? post.artist.join(', ') : (post.artist || post.author || 'Unknown');
+//     mediaElement.dataset.title = post.title || '';
+//     mediaElement.dataset.createdAt = post.createdAt || '';
+
+//     if (post.sampleUrl) {
+//       mediaElement.dataset.sampleUrl = post.sampleUrl;  // Store sample/medium quality URL if available
+//     }
+//     if (url.endsWith('.gif') || url.includes('.gif?')) {
+//       mediaElement.dataset.isGif = 'true';
+//     }
+//     if (typeof dataIndex !== 'undefined') {
+//       mediaElement.setAttribute('data-index', dataIndex);
+//     }
+    
+//     mediaElement.addEventListener('load', async () => {
+//       mediaElement.style.opacity = '1'; // Fade in on load
+//       mediaElement.classList.add('loaded');
+//       loader.style.display = 'none';
+      
+//       // Cache thumbnail after successful load (avoid duplicate fetch before load)
+//       const currentTabId = typeof activeTabId !== 'undefined' ? activeTabId : null;
+//       const resolvedThumbnailUrl = mediaElement.dataset.resolvedThumbnailUrl;
+//       const isVideoSource = resolvedThumbnailUrl && (resolvedThumbnailUrl.endsWith('.mp4') || resolvedThumbnailUrl.endsWith('.webm') || resolvedThumbnailUrl.endsWith('.mov'));
+//       const cacheKey = isVideoSource ? `video-thumbnail:${resolvedThumbnailUrl}` : resolvedThumbnailUrl;
+//       if (currentTabId && cacheKey && !cacheKey.includes('?url=Unknown') && !getCachedThumbnailUrl(currentTabId, cacheKey)) {
+//         cacheThumbnailBlobForTab(currentTabId, resolvedThumbnailUrl, cacheKey).catch(() => {});
+//       }
+
+//       // Check if mouse position is within image boundaries and show preview
+//       if (!previewFrozen && typeof showPreviewForElement === 'function') {
+//         const rect = mediaElement.getBoundingClientRect();
+//         const isHovering = lastMouseX >= rect.left && lastMouseX <= rect.right &&
+//                           lastMouseY >= rect.top && lastMouseY <= rect.bottom;
+//         if (isHovering) {
+//           if (typeof lastHoveredElement !== 'undefined') {
+//             window.booruLastHoveredElement = mediaElement;
+//           }
+//           showPreviewForElement(mediaElement);
+//         }
+//       }
+//     }, { once: true });
+    
+//     mediaElement.addEventListener('error', (e) => {
+//       loader.style.display = 'none';
+//       mediaElement.style.display = 'none';
+//       const errorDiv = document.createElement('div');
+//       errorDiv.style.cssText = `
+//         width: 100%;
+//         height: 100%;
+//         display: flex;
+//         align-items: center;
+//         justify-content: center;
+//         background: var(--bg-darkest);
+//         color: var(--text-secondary);
+//         font-size: 12px;
+//         text-align: center;
+//         padding: 10px;
+//       `;
+//       errorDiv.innerHTML = '<i class="fas fa-exclamation-triangle errorDivIcon"></i>Failed to load';
+//       link.appendChild(errorDiv);
+//     }, { once: true });
+    
+//     mediaElement.decoding = 'async';
+//     mediaElement.loading = 'lazy';
+//     const resolvedThumbnailUrl = getImageUrl(useHighQuality ? url : (post.thumbnailUrl || url));
+//     mediaElement.dataset.resolvedThumbnailUrl = resolvedThumbnailUrl;
+//     const currentTabId = typeof activeTabId !== 'undefined' ? activeTabId : null;
+//     const isVideoSource = resolvedThumbnailUrl.endsWith('.mp4') || resolvedThumbnailUrl.endsWith('.webm') || resolvedThumbnailUrl.endsWith('.mov');
+//     const cacheKey = isVideoSource ? `video-thumbnail:${resolvedThumbnailUrl}` : resolvedThumbnailUrl;
+//     const cachedThumbnailUrl = currentTabId && cacheKey && !cacheKey.includes('?url=Unknown') ? getCachedThumbnailUrl(currentTabId, cacheKey) : null;
+//     if (cachedThumbnailUrl) {
+//       mediaElement.src = cachedThumbnailUrl;
+//     } else if (isVideoSource) {
+//       const backendThumbnailUrl = `http://localhost:3001/video-thumbnail?url=${encodeURIComponent(resolvedThumbnailUrl)}`;
+//       mediaElement.src = backendThumbnailUrl;
+//       if (currentTabId && cacheKey && !cacheKey.includes('?url=Unknown') && !getCachedThumbnailUrl(currentTabId, cacheKey)) {
+//         cacheThumbnailBlobForTab(currentTabId, backendThumbnailUrl, cacheKey).catch(() => {});
+//       }
+//     } else {
+//       mediaElement.src = cachedThumbnailUrl || resolvedThumbnailUrl;
+//     }
 //   }
   
-//   container.appendChild(mediaElement);
+//   link.appendChild(mediaElement);
   
-//   container.addEventListener('click', (e) => { 
+//   link.addEventListener('click', (e) => { 
 //     openBooruLightbox(post.imageUrl);
 //   });
   
-//   container.addEventListener('mousedown', (e) => {
+//   link.addEventListener('mousedown', (e) => {
 //     if (e.button === 1) {
+//       // Only trigger download, do not open URL
 //       e.preventDefault();
 //       e.stopPropagation();
 //       if (downloadBtn)
@@ -5941,7 +5631,7 @@ function createBooruImageElement(post, maxHeight = null, imageWidth = null) {
 //   progressContainer.appendChild(progressBar);
   
 //   // Store download state
-//   container.dataset.downloaded = 'false';
+//   link.dataset.downloaded = 'false';
   
 //   // Store hover handlers for removal later
 //   let hoverHandlers = null;
@@ -5958,7 +5648,7 @@ function createBooruImageElement(post, maxHeight = null, imageWidth = null) {
 //     .then(data => {
 //       if (data.downloaded && data.downloaded[filename]) {
 //         const localUrl = `http://localhost:3001/serve-local-file/${encodeURIComponent(filename)}`;
-//         container.dataset.downloaded = 'true';
+//         link.dataset.downloaded = 'true';
 //         downloadBtn.innerHTML = '<i class="fas fa-check"></i>';
 //         downloadBtn.classList.add('downloaded');
 //         downloadBtn.title = 'Delete';
@@ -5972,7 +5662,7 @@ function createBooruImageElement(post, maxHeight = null, imageWidth = null) {
 //           }
 
 //           const previewImg = booruPreviewMediaContainer.querySelector('img');
-//           if (previewImg && previewImg.dataset.postId === container.dataset.postId && previewImg.dataset.postSource === container.dataset.postSource) {
+//           if (previewImg && previewImg.dataset.postId === link.dataset.postId && previewImg.dataset.postSource === link.dataset.postSource) {
 //             previewImg.src = localUrl;
 //           }
 //         }
@@ -6002,7 +5692,7 @@ function createBooruImageElement(post, maxHeight = null, imageWidth = null) {
 //     // Prevent navigation
 //     if (e.button === 1) return false;
 
-//     const isDownloaded = container.dataset.downloaded === 'true';
+//     const isDownloaded = link.dataset.downloaded === 'true';
 //     if (isDownloaded) {
 //       // remove file and make sure database entry is deleted too
 //       const filename = getFilenameFromUrl(post.imageUrl, post.id);
@@ -6021,7 +5711,7 @@ function createBooruImageElement(post, maxHeight = null, imageWidth = null) {
 //           if (typeof dbStore !== 'undefined' && dbStore && post && post.id) {
 //             try { await dbStore.removeDownloadedPost(post.id); window.updateAppLoadingDownloadCount(); } catch (e) { console.warn('Failed to remove downloaded post from dbStore', e); showToast('Could not remove record from database', 'error'); }
 //           }
-//           container.dataset.downloaded = 'false';
+//           link.dataset.downloaded = 'false';
 //           downloadBtn.innerHTML = '<i class="fas fa-download"></i>';
 //           downloadBtn.classList.remove('downloaded');
 //           downloadBtn.title = 'Download';
@@ -6034,7 +5724,7 @@ function createBooruImageElement(post, maxHeight = null, imageWidth = null) {
 //             // Remove from UI immediately if in downloads gallery
 //             downloadBtn.remove();
 //             downloadBtn = null;
-//             container.style.opacity = '0.25';
+//             link.style.opacity = '0.25';
 //           }
 //         } else {
 //           console.warn('Server reported deletion failure:', data.error || data);
@@ -6092,7 +5782,7 @@ function createBooruImageElement(post, maxHeight = null, imageWidth = null) {
 //           postId: post.id,
 //           imageUrl: post.imageUrl,
 //           filename,
-//           postDiv: container,
+//           postDiv: link,
 //           downloadBtn,
 //           progressBar,
 //           progressContainer,
@@ -6108,13 +5798,13 @@ function createBooruImageElement(post, maxHeight = null, imageWidth = null) {
 //           postToSave.downloadedAt = Date.now();
 //           try { await dbStore.saveDownloadedPost(postToSave); } catch (e) { console.warn('Failed to save downloaded post to dbStore', e); }
 //         }
-//         const mediaElement = container.querySelector('img, video');
+//         const mediaElement = link.querySelector('img, video');
 //         if (mediaElement) {
 //           mediaElement.dataset.author = artist;
 //         }
 //         progressBar.style.width = '100%';
 //         setTimeout(() => {
-//           container.dataset.downloaded = 'true';
+//           link.dataset.downloaded = 'true';
 //           downloadBtn.innerHTML = '<i class="fas fa-check"></i>';
 //           downloadBtn.classList.add('downloaded');
 //           downloadBtn.title = 'Delete';
@@ -6154,17 +5844,406 @@ function createBooruImageElement(post, maxHeight = null, imageWidth = null) {
 //     }
 //   });
   
-//   container.appendChild(downloadBtn);
-//   container.appendChild(progressContainer);
+//   link.appendChild(downloadBtn);
+//   link.appendChild(progressContainer);
   
-//   return container;
+//   return link;
 // }
 
-function openBooruLightbox(imageUrl) {
+function createBooruImageElement(post, maxHeight = null, imageWidth = null) {
+
+  const loader = document.createElement('i');
+  loader.className = 'fas fa-circle-notch fa-spin image-loader';
+
+  const container = document.createElement('div');
+  container.className = 'booru-image-item';
+  container.dataset.score = post.score || 0;
+  container.dataset.tags = post.tags ? post.tags.join(' ') : '';
+  container.dataset.artist = Array.isArray(post.artist) ? post.artist.join(', ') : (post.artist || (post.artists ? post.artists.join(', ') : 'Unknown'));
+  container.dataset.postId = normalizePostId(post.id);
+  container.dataset.postSource = post.source;
+  container.dataset.aspectRatio = post.aspectRatio || 1;
+  container.appendChild(loader);
+
+  const dataIndex = post.dataIndex;
+  const qualityUrl = post?.imageUrl?.toLowerCase() || 'Unknown';
+  const isVideo = qualityUrl.endsWith('.mp4') || qualityUrl.endsWith('.webm') || qualityUrl.endsWith('.mov') || qualityUrl.includes('.mp4?') || qualityUrl.includes('.webm?') || qualityUrl.includes('.mov?');
+  const isGif = qualityUrl.endsWith('.gif') || qualityUrl.includes('.gif?');
+  const useHighQuality = (!isVideo && typeof showHighQualityGallery !== 'undefined') ? showHighQualityGallery : false;
+
+  let mediaElement = document.createElement('img');
+  mediaElement.alt = post.title || 'Unknown Title';
+
+  const width = 400;
+  const height = Math.round(width * container.dataset.aspectRatio);
+  mediaElement.setAttribute('width', width);
+  mediaElement.setAttribute('height', height);
+  
+  mediaElement.style.width = '100%';
+  mediaElement.style.height = '100%';
+  mediaElement.style.objectFit = 'cover';
+  mediaElement.style.opacity = '0';
+  mediaElement.dataset.aspectRatio = container.dataset.aspectRatio;
+  mediaElement.dataset.imageUrl = qualityUrl;
+  mediaElement.dataset.thumbnailUrl = post.thumbnailUrl;
+  mediaElement.dataset.sampleUrl = post.sampleUrl || '';
+  mediaElement.dataset.tags = post.tags.join(' ');
+  mediaElement.dataset.author = Array.isArray(post.artist) ? post.artist.join(', ') : (post.artist || post.author || 'Unknown');
+  mediaElement.dataset.title = post.title || '';
+  mediaElement.dataset.createdAt = post.createdAt || '';
+
+  if (isVideo) {
+    container.classList.add('file-type-video');
+    mediaElement.dataset.isVideo = 'true';
+  } else if (isGif) {
+    container.classList.add('file-type-gif');
+    mediaElement.dataset.isGif = 'true';
+  } else {
+    container.classList.add('file-type-image');
+  }
+  if (typeof dataIndex !== 'undefined') {
+    mediaElement.setAttribute('data-index', dataIndex);
+  }
+  
+  mediaElement.addEventListener('load', async () => {
+    mediaElement.style.opacity = '1';
+    mediaElement.classList.add('loaded');
+    loader.style.display = 'none';
+    
+    // Cache thumbnail after successful load (avoid duplicate fetch before load)
+    const currentTabId = typeof activeTabId !== 'undefined' ? activeTabId : null;
+    const resolvedThumbnailUrl = mediaElement.dataset.resolvedThumbnailUrl;
+    const isVideoSource = resolvedThumbnailUrl && (resolvedThumbnailUrl.endsWith('.mp4') || resolvedThumbnailUrl.endsWith('.webm') || resolvedThumbnailUrl.endsWith('.mov'));
+    const cacheKey = isVideoSource ? `video-thumbnail:${resolvedThumbnailUrl}` : resolvedThumbnailUrl;
+    if (currentTabId && cacheKey && !getCachedThumbnailUrl(currentTabId, cacheKey)) {
+      cacheThumbnailBlobForTab(currentTabId, resolvedThumbnailUrl, cacheKey).catch(() => {});
+    }
+
+    // Check if mouse position is within image boundaries and show preview
+    if (!previewFrozen && typeof showPreviewForElement === 'function') {
+      const rect = mediaElement.getBoundingClientRect();
+      const isHovering = lastMouseX >= rect.left && lastMouseX <= rect.right &&
+                        lastMouseY >= rect.top && lastMouseY <= rect.bottom;
+      if (isHovering) {
+        if (typeof lastHoveredElement !== 'undefined') {
+          window.booruLastHoveredElement = mediaElement;
+        }
+        showPreviewForElement(mediaElement);
+      }
+    }
+  }, { once: true });
+  
+  mediaElement.addEventListener('error', (e) => {
+    loader.style.display = 'none';
+    mediaElement.style.display = 'none';
+    const errorDiv = document.createElement('div');
+    errorDiv.style.cssText = `
+      width: 100%;
+      height: 100%;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      background: var(--bg-darkest);
+      color: var(--text-secondary);
+      font-size: 12px;
+      text-align: center;
+      padding: 10px;
+    `;
+    errorDiv.innerHTML = '<i class="fas fa-exclamation-triangle errorDivIcon"></i>Failed to load';
+    container.appendChild(errorDiv);
+  }, { once: true });
+  
+  mediaElement.decoding = 'async';
+  mediaElement.loading = 'lazy';
+  let resolvedThumbnailUrl = "";
+  if (useHighQuality) {
+    resolvedThumbnailUrl = getImageUrl(qualityUrl);
+  } else {
+    resolvedThumbnailUrl = getImageUrl(post.thumbnailUrl || post.sampleUrl || qualityUrl);
+  }
+  mediaElement.dataset.resolvedThumbnailUrl = resolvedThumbnailUrl;
+  const currentTabId = typeof activeTabId !== 'undefined' ? activeTabId : null;
+  const isVideoSource = resolvedThumbnailUrl.endsWith('.mp4') || resolvedThumbnailUrl.endsWith('.webm') || resolvedThumbnailUrl.endsWith('.mov');
+  const cacheKey = isVideoSource ? `video-thumbnail:${resolvedThumbnailUrl}` : resolvedThumbnailUrl;
+  const cachedThumbnailUrl = currentTabId && cacheKey ? getCachedThumbnailUrl(currentTabId, cacheKey) : null;
+  if (cachedThumbnailUrl) {
+    mediaElement.src = cachedThumbnailUrl;
+  } else {
+    mediaElement.src = resolvedThumbnailUrl;
+  }
+  
+  if (useHighQuality) {
+    mediaElement.dataset.highQualityLoaded = 'true';
+    mediaElement.dataset.highQualityUrl = mediaElement.src;
+  }
+  
+  container.appendChild(mediaElement);
+  
+  container.addEventListener('click', (e) => { 
+    openBooruLightbox(post.imageUrl, post.id, post.source);
+  });
+  
+  container.addEventListener('mousedown', (e) => {
+    if (e.button === 1) {
+      e.preventDefault();
+      e.stopPropagation();
+      if (downloadBtn)
+        downloadBtn.click();
+      return false;
+    }
+  });
+  
+  // Add download button
+  let downloadBtn = document.createElement('button');
+  downloadBtn.className = 'booru-download-btn';
+  downloadBtn.innerHTML = '<i class="fas fa-download"></i>';
+  downloadBtn.title = 'Download';
+  
+  // Add progress bar (hidden by default)
+  const progressContainer = document.createElement('div');
+  progressContainer.className = 'booru-download-progress';
+  progressContainer.style.display = 'none';
+  const progressBar = document.createElement('div');
+  progressBar.className = 'booru-download-progress-bar';
+  progressBar.style.width = '0%';
+  progressContainer.appendChild(progressBar);
+  
+  // Store download state
+  container.dataset.downloaded = 'false';
+  
+  // Store hover handlers for removal later
+  let hoverHandlers = null;
+  
+  // Check if this image is already downloaded (exclude videos)
+  if (window.downloadFolder) {
+    const filename = getFilenameFromUrl(post.imageUrl, post.id);
+    fetch('http://localhost:3001/check-downloaded-images', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ filenames: [filename] })
+    })
+    .then(res => res.json())
+    .then(data => {
+      if (data.downloaded && data.downloaded[filename]) {
+        const localUrl = `http://localhost:3001/serve-local-file/${encodeURIComponent(filename)}`;
+        container.dataset.downloaded = 'true';
+        downloadBtn.innerHTML = '<i class="fas fa-check"></i>';
+        downloadBtn.classList.add('downloaded');
+        downloadBtn.title = 'Delete';
+
+        if (!isVideo) {
+          if (mediaElement) {
+            mediaElement.dataset.highQualityLoaded = 'true';
+            if (mediaElement.src !== localUrl) {
+              mediaElement.src = localUrl;
+            }
+          }
+
+          const previewImg = booruPreviewMediaContainer.querySelector('img');
+          if (previewImg && previewImg.dataset.postId === container.dataset.postId && previewImg.dataset.postSource === container.dataset.postSource) {
+            previewImg.src = localUrl;
+          }
+        }
+
+        // Add hover handlers to swap between check and X icons
+        const mouseEnterHandler = () => {
+          downloadBtn.innerHTML = '<i class="fas fa-times"></i>';
+        };
+        const mouseLeaveHandler = () => {
+          downloadBtn.innerHTML = '<i class="fas fa-check"></i>';
+        };
+        hoverHandlers = { mouseEnterHandler, mouseLeaveHandler };
+
+        downloadBtn.addEventListener('mouseenter', mouseEnterHandler);
+        downloadBtn.addEventListener('mouseleave', mouseLeaveHandler);
+      }
+    })
+    .catch(err => {
+      console.error('Failed to check download status:', err);
+      showToast('Error checking download status: ' + (err.message || err), 'error');
+    });
+  }
+  
+  downloadBtn.addEventListener('click', async (e) => {
+    e.preventDefault();
+    e.stopPropagation();
+    // Prevent navigation
+    if (e.button === 1) return false;
+
+    const isDownloaded = container.dataset.downloaded === 'true';
+    if (isDownloaded) {
+      // remove file and make sure database entry is deleted too
+      const filename = getFilenameFromUrl(post.imageUrl, post.id);
+      try {
+        const response = await fetch('http://localhost:3001/delete-downloaded-image', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ filename, id: post.id })
+        });
+        const data = await response.json();
+        if (!response.ok) {
+          console.warn('HTTP error deleting file', response.status, data.error || data);
+          showToast('Failed to delete file: ' + (data.error || `HTTP ${response.status}`), 'error');
+        } else if (data.success) {
+          // also attempt client‑side removal in case server-side failed silently
+          if (typeof dbStore !== 'undefined' && dbStore && post && post.id) {
+            try { await dbStore.removeDownloadedPost(post.id); window.updateAppLoadingDownloadCount(); } catch (e) { console.warn('Failed to remove downloaded post from dbStore', e); showToast('Could not remove record from database', 'error'); }
+          }
+          container.dataset.downloaded = 'false';
+          downloadBtn.innerHTML = '<i class="fas fa-download"></i>';
+          downloadBtn.classList.remove('downloaded');
+          downloadBtn.title = 'Download';
+          if (hoverHandlers) {
+            downloadBtn.removeEventListener('mouseenter', hoverHandlers.mouseEnterHandler);
+            downloadBtn.removeEventListener('mouseleave', hoverHandlers.mouseLeaveHandler);
+            hoverHandlers = null;
+          }
+          if (window.isViewingDownloadsGallery) {
+            // Remove from UI immediately if in downloads gallery
+            downloadBtn.remove();
+            downloadBtn = null;
+            container.style.opacity = '0.25';
+          }
+        } else {
+          console.warn('Server reported deletion failure:', data.error || data);
+          showToast('Failed to delete file: ' + (data.error || 'unknown'), 'error');
+        }
+      } catch (error) {
+        console.error('Failed to delete:', error);
+        showToast('Error deleting file: ' + (error.message || error), 'error');
+      }
+    } else {
+      const currentSearchInput = document.getElementById('search-filter-input')?.value.trim();
+
+      // User requested download — create toast immediately
+      let toast = null;
+      try { toast = window.createDownloadToast(`dl-${post.id}-${Date.now()}`, String(post.id)); if (toast) toast.update(2, 'Queued'); } catch (e) { /* ignore */ }
+
+      downloadBtn.innerHTML = '<i class="fas fa-circle-notch fa-spin loading-artist"></i>';
+      downloadBtn.disabled = true;
+      progressContainer.style.display = 'block';
+
+      // Download file
+      const filename = getFilenameFromUrl(post.imageUrl, post.id);
+      
+      // Fetch artist if not known
+      if (post.artists.length === 0 || post.artists[0] === '?' || !post.artists || post.artists[0] === 'Unknown') {
+        const postId = post.id;
+        const postSource = post.source;
+        try {
+          const fetchedArtists = await fetchArtistForPost(postId, postSource, post.tags);
+          post.artists = Array.isArray(fetchedArtists)
+            ? (fetchedArtists.length ? fetchedArtists : ['Unknown'])
+            : [fetchedArtists || 'Unknown'];
+        } catch (err) {
+          console.error('Error fetching artist for download:', err);
+          showToast('Error fetching artist info: ' + (err.message || err), 'error');
+          post.artists = ['Unknown'];
+        }
+      }
+
+      let artist = "Unknown";
+      if (post.artists && post.artists.length > 0) {
+        artist = post.artists[0];
+        post.artists.forEach(a => {
+          if (a.toLowerCase() == currentSearchInput?.toLowerCase()) {
+            artist = a;
+          }
+        });
+      }
+
+      downloadBtn.innerHTML = '<i class="fas fa-circle-notch fa-spin"></i>';
+
+      try {
+        // Enqueue download through pipeline (retries handled centrally)
+        const task = {
+          postId: post.id,
+          imageUrl: post.imageUrl,
+          filename,
+          postDiv: container,
+          downloadBtn,
+          progressBar,
+          progressContainer,
+          toast
+        };
+
+        await downloadQueue.enqueue(task);
+
+        // On success: Save post to dbStore and update preview UI
+        if (typeof dbStore !== 'undefined' && dbStore && post && post.id) {
+          const postToSave = { ...post };
+          postToSave.artist = artist;
+          postToSave.downloadedAt = Date.now();
+          try { await dbStore.saveDownloadedPost(postToSave); } catch (e) { console.warn('Failed to save downloaded post to dbStore', e); }
+        }
+        const mediaElement = container.querySelector('img, video');
+        if (mediaElement) {
+          mediaElement.dataset.author = artist;
+        }
+        progressBar.style.width = '100%';
+        setTimeout(() => {
+          container.dataset.downloaded = 'true';
+          downloadBtn.innerHTML = '<i class="fas fa-check"></i>';
+          downloadBtn.classList.add('downloaded');
+          downloadBtn.title = 'Delete';
+          downloadBtn.disabled = false;
+            progressContainer.style.display = 'none';
+            progressBar.style.width = '0%';
+
+            // Add hover handlers to swap between check and X icons
+            const mouseEnterHandler = () => {
+              downloadBtn.innerHTML = '<i class="fas fa-times"></i>';
+            };
+            const mouseLeaveHandler = () => {
+              downloadBtn.innerHTML = '<i class="fas fa-check"></i>';
+            };
+            hoverHandlers = { mouseEnterHandler, mouseLeaveHandler };
+
+            downloadBtn.addEventListener('mouseenter', mouseEnterHandler);
+            downloadBtn.addEventListener('mouseleave', mouseLeaveHandler);
+
+            // finalize toast
+            if (post.imageUrl.toLowerCase().match(/\.(mp4|webm|mov)(\?|$)/)) {
+              if (task.toast) task.toast.done(true, 'Completed', post.sampleUrl);
+            } else {
+              if (task.toast) task.toast.done(true, 'Completed', post.imageUrl);
+            }
+          }, 300);    
+      } catch (error) {
+        console.error('Download failed:', error);
+        showToast('Download failed: ' + (error.message || error), 'error');
+        downloadBtn.innerHTML = '<i class="fas fa-download"></i>';
+        downloadBtn.disabled = false;
+        progressContainer.style.display = 'none';
+        progressBar.style.width = '0%';
+        // finalize toast as failed
+        if (toast) toast.done(false, 'Failed');
+      }
+    }
+  });
+  
+  container.appendChild(downloadBtn);
+  container.appendChild(progressContainer);
+  
+  return container;
+}
+
+function openBooruLightbox(imageUrl, postId, postSource) {
   // Build array of all booru image URLs for navigation and autoplay
   redditLightboxImages = (window.booruPosts || []).map(post => getImageUrl(post.imageUrl));
-  const proxiedUrl = getImageUrl(imageUrl);
-  redditLightboxIndex = redditLightboxImages.indexOf(proxiedUrl);
+  
+  // If postId is provided, find the exact post by ID for reliable matching
+  // This prevents issues when high quality toggle changes image URLs
+  if (postId !== undefined && postSource !== undefined) {
+    redditLightboxIndex = (window.booruPosts || []).findIndex(post => 
+      String(post.id) === String(postId) && String(post.source) === String(postSource)
+    );
+  } else {
+    // Fallback to URL matching if no ID provided
+    const proxiedUrl = getImageUrl(imageUrl);
+    redditLightboxIndex = redditLightboxImages.indexOf(proxiedUrl);
+  }
+  
   if (redditLightboxIndex === -1) redditLightboxIndex = 0;
   showRedditLightboxImage(redditLightboxIndex);
   lightboxModal.classList.add('active', 'reddit-mode');

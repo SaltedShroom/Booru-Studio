@@ -1755,19 +1755,36 @@ async function loadSession() {
         this.update(100, msg || (success ? 'Completed' : 'Failed'));
         // show downloaded image inside the toast on success
         if (success && imageUrl) {
+          let removeDelay = setTimeout(() => {
+            toast.classList.remove('show');
+            setTimeout(() => toast.remove(), 300);
+          }, 7000);
+
           img.src = getImageUrl(imageUrl);
           img.onload = () => {
+            clearTimeout(removeDelay);
+            removeDelay = null;
             img.classList.add('loaded');
+            img.style.maxHeight = '200px';
+            // keep visible longer when image is shown
+            const delay = success && imageUrl ? 3000 : 2000;
+            setTimeout(() => {
+              toast.classList.remove('show');
+              setTimeout(() => toast.remove(), 300);
+            }, delay);
           }
 
-          requestAnimationFrame(() => { img.style.maxHeight = '200px'; });
+          requestAnimationFrame(() => {
+            //plaxeholder 
+          });
+        } else {
+          // keep visible longer when image is shown
+          const delay = success && imageUrl ? 4000 : 3000;
+          setTimeout(() => {
+            toast.classList.remove('show');
+            setTimeout(() => toast.remove(), 300);
+          }, delay);       
         }
-        // keep visible longer when image is shown
-        const delay = success && imageUrl ? 4000 : 3000;
-        setTimeout(() => {
-          toast.classList.remove('show');
-          setTimeout(() => toast.remove(), 300);
-        }, delay);
         updateAppLoadingDownloadCount();
         if (success === true && supportToastEnabled && supportToastEnabled.checked) {
           supportToastSuccessCount += 1;
