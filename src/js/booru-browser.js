@@ -6992,7 +6992,7 @@ function showPreviewForElement(mediaElement, forceVideoLoad = false) {
           canvas.width = mediaElement.naturalWidth;
           canvas.height = mediaElement.naturalHeight;
           const ctx = canvas.getContext('2d');
-          if (ctx) {
+          if (ctx && mediaElement.naturalWidth > 0 && mediaElement.naturalHeight > 0) {
             ctx.drawImage(mediaElement, 0, 0);
             img.src = canvas.toDataURL('image/jpeg', 0.92);
           } else {
@@ -7111,7 +7111,11 @@ function showPreviewForElement(mediaElement, forceVideoLoad = false) {
               const highQualityUrl = mediaElement.dataset.imageUrl;
               let response = null;
               try {
-                response = await proxyFetch(highQualityUrl, { method: 'HEAD', silent: true });
+                // Only attempt HEAD probe if URL is actually a remote HTTP(S) URL
+                // Skip for localhost, data URLs, or blob URLs to avoid unnecessary proxy errors
+                if (highQualityUrl && !highQualityUrl.startsWith('data:') && !highQualityUrl.includes('blob:') && !highQualityUrl.includes('localhost')) {
+                  response = await proxyFetch(highQualityUrl, { method: 'HEAD', silent: true });
+                }
               } catch (err) {
                 // optional HEAD probe failed; continue without HEAD metadata
               }

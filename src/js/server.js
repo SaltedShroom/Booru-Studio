@@ -1998,6 +1998,7 @@ const server = isWorkerMode ? null : http.createServer((req, res) => {
         });
 
         proxyReq.on('error', (error) => {
+          console.log('Proxy fetch error:', error);
           res.writeHead(502, { 'Content-Type': 'application/json' });
           res.end(JSON.stringify({ error: 'Proxy fetch failed', message: error.message }));
         });
