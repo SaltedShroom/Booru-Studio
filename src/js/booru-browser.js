@@ -5968,6 +5968,10 @@ function createBooruImageElement(post, maxHeight = null, imageWidth = null) {
   const cachedThumbnailUrl = currentTabId && cacheKey ? getCachedThumbnailUrl(currentTabId, cacheKey) : null;
   if (cachedThumbnailUrl) {
     mediaElement.src = cachedThumbnailUrl;
+  } else if (isVideoSource) {
+    // Extract thumbnail from video using backend service
+    const backendThumbnailUrl = `http://localhost:3001/video-thumbnail?url=${encodeURIComponent(resolvedThumbnailUrl)}`;
+    mediaElement.src = backendThumbnailUrl;
   } else {
     mediaElement.src = resolvedThumbnailUrl;
   }
@@ -6982,7 +6986,7 @@ function showPreviewForElement(mediaElement, forceVideoLoad = false) {
       const isGif = mediaElement.dataset.isGif === 'true';
       if (isGif) {
         img.src = gallerySrc;
-      } else if (gallerySrc && mediaElement.complete && mediaElement.naturalWidth > 0) {
+      } else {
         try {
           const canvas = document.createElement('canvas');
           canvas.width = mediaElement.naturalWidth;
@@ -6997,8 +7001,6 @@ function showPreviewForElement(mediaElement, forceVideoLoad = false) {
         } catch (err) {
           img.src = gallerySrc;
         }
-      } else {
-        img.src = gallerySrc;
       }
 
       // Normalize preview styling to fit the hover container
