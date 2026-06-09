@@ -210,37 +210,37 @@ function updateBooruTabsOrder() {
 
 // Initialize booru tabs system
 async function initBooruTabs() {
-    // Enable horizontal scroll with mouse wheel
-    const tabsContainer = document.querySelector('.booru-tabs-container');
-    const leftFade = document.getElementById('booru-tabs-left-fade');
-    if (tabsContainer) {
-      tabsContainer.addEventListener('wheel', function(e) {
-        if (e.deltaY !== 0) {
-          e.preventDefault();
-          // Use deltaY for scroll amount, multiply for faster response
-          smoothScroll(tabsContainer, e.deltaY * 1);
-        }
-      }, { passive: false });
+  // Enable horizontal scroll with mouse wheel
+  const tabsContainer = document.querySelector('.booru-tabs-container');
+  const leftFade = document.getElementById('booru-tabs-left-fade');
+  if (tabsContainer) {
+    tabsContainer.addEventListener('wheel', function(e) {
+      if (e.deltaY !== 0) {
+        e.preventDefault();
+        // Use deltaY for scroll amount, multiply for faster response
+        smoothScroll(tabsContainer, e.deltaY * 1);
+      }
+    }, { passive: false });
 
-      // Add drag and drop event listeners
-      tabsContainer.addEventListener('dragstart', handleDragStart);
-      tabsContainer.addEventListener('dragover', handleDragOver);
-      tabsContainer.addEventListener('drop', handleDrop);
-      tabsContainer.addEventListener('dragend', handleDragEnd);
+    // Add drag and drop event listeners
+    tabsContainer.addEventListener('dragstart', handleDragStart);
+    tabsContainer.addEventListener('dragover', handleDragOver);
+    tabsContainer.addEventListener('drop', handleDrop);
+    tabsContainer.addEventListener('dragend', handleDragEnd);
 
-      // Toggle left fade based on scroll position
-      const updateLeftFade = () => {
-        if (!leftFade) return;
-        if (tabsContainer.scrollLeft > 8) {
-          leftFade.classList.add('active');
-        } else {
-          leftFade.classList.remove('active');
-        }
-      };
-      tabsContainer.addEventListener('scroll', updateLeftFade);
-      // Initial state
-      updateLeftFade();
-    }
+    // Toggle left fade based on scroll position
+    const updateLeftFade = () => {
+      if (!leftFade) return;
+      if (tabsContainer.scrollLeft > 8) {
+        leftFade.classList.add('active');
+      } else {
+        leftFade.classList.remove('active');
+      }
+    };
+    tabsContainer.addEventListener('scroll', updateLeftFade);
+    // Initial state
+    updateLeftFade();
+  }
   const addBtn = document.getElementById('add-booru-tab-btn');
   if (addBtn) {
     addBtn.addEventListener('click', () => {
@@ -297,7 +297,7 @@ async function initBooruTabs() {
   const suggestionField = document.getElementById('search-suggestion'); // Assume this exists in the HTML
 
   async function updateSuggestion() {
-    const source = window.currentBooruSource || 'reddit';
+    const source = window.currentBooruSource;
     const userInput = searchInput.value.trim();
     const tokens = userInput.split(/\s+/);
     const userTag = tokens[tokens.length - 1]?.toLowerCase() || '';
@@ -387,8 +387,7 @@ function addControlChangeListeners() {
     'booru-source-select',
     'booru-sort-select', 
     'booru-limit-input',
-    'image-size-slider',
-    'subreddit-input'
+    'image-size-slider'
   ];
   
   controls.forEach(id => {
@@ -458,12 +457,11 @@ function createNewBooruTab(name = 'Search', switchToIt = false, initialSearch = 
 // Get current state from controls
 function getCurrentState() {
   return {
-    source: document.getElementById('booru-source-select')?.value || 'reddit',
+    source: document.getElementById('booru-source-select')?.value,
     sort: document.getElementById('booru-sort-select')?.value || 'hot',
     limit: parseInt(document.getElementById('booru-limit-input')?.value) || 100,
     imageSize: parseInt(document.getElementById('image-size-slider')?.value) || 250,
     searchTags: document.getElementById('search-filter-input')?.value || '',
-    subreddit: document.getElementById('subreddit-input')?.value || '',
     aiFilterEnabled: window.aiFilterEnabled || false
   };
 }
@@ -487,10 +485,9 @@ function applyState(state) {
   const limitInput = document.getElementById('booru-limit-input');
   const sizeSlider = document.getElementById('image-size-slider');
   const sizeValue = document.getElementById('image-size-value');
-  const subredditInput = document.getElementById('subreddit-input');
   
   if (sourceSelect && sourceSelect.value !== state.source) {
-    sourceSelect.value = state.source || 'reddit';
+    sourceSelect.value = state.source;
   }
   if (sortSelect && sortSelect.value !== state.sort) {
     sortSelect.value = state.sort || 'hot';
@@ -504,9 +501,6 @@ function applyState(state) {
   }
   if (sizeValue) {
     sizeValue.textContent = `${state.imageSize || 250}px`;
-  }
-  if (subredditInput && subredditInput.value !== state.subreddit) {
-    subredditInput.value = state.subreddit || '';
   }
   
   if (window.aiFilterEnabled !== state.aiFilterEnabled) {
@@ -1052,6 +1046,10 @@ async function loadBooruTabsFromSession() {
         // Recreate tab buttons
         document.getElementById('booru-tabs-container').innerHTML = '';
         booruTabs.forEach(tab => createTabButton(tab));
+        const tabsContainer = document.getElementById('booru-tabs-container');
+        if (tabsContainer) {
+          tabsContainer.scrollTo({ left: tabsContainer.scrollWidth, behavior: 'smooth' });
+        }
         
         // Load downloads search text
         window.downloadsSearchText = data.downloadsSearchText || '';

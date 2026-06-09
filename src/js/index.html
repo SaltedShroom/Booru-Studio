@@ -3,7 +3,7 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
-<meta http-equiv="Content-Security-Policy" content="default-src 'self' https:; script-src 'self' 'unsafe-inline' https://code.jquery.com https://cdnjs.cloudflare.com https://fonts.googleapis.com; style-src 'self' 'unsafe-inline' https://fonts.googleapis.com https://cdnjs.cloudflare.com; img-src 'self' data: blob: https: http:; font-src 'self' https://fonts.gstatic.com https://cdnjs.cloudflare.com; media-src 'self' data: blob: https: http:; connect-src 'self' http://localhost:* https: wss: ws:; object-src 'none';">
+<meta http-equiv="Content-Security-Policy" content="default-src 'self' https:; script-src 'self' 'unsafe-inline' 'unsafe-eval' https://code.jquery.com https://cdnjs.cloudflare.com https://fonts.googleapis.com; style-src 'self' 'unsafe-inline' https://fonts.googleapis.com https://cdnjs.cloudflare.com; img-src 'self' data: blob: https: http:; font-src 'self' https://fonts.gstatic.com https://cdnjs.cloudflare.com; media-src 'self' data: blob: https: http:; connect-src 'self' http://localhost:* https: wss: ws:; object-src 'none';" />
 <title>Booru Studio</title>
 <link rel="icon" type="image/x-icon" href="/src/assets/favicon/favicon.ico">
 <link rel="icon" type="image/png" sizes="32x32" href="/src/assets/favicon/favicon-32x32.png">
@@ -304,15 +304,6 @@
             <div class="search-right-fade"></div>
           </div>
           
-          <div class="control-section" id="subreddit-control" style="display: none;">
-            <div class="section-label">Subreddit</div>
-            <div class="subreddit-input-wrapper">
-              <span class="subreddit-prefix">r/</span>
-              <input id="subreddit-input" type="text" class="input-minimal subreddit-input" placeholder="pics" autocomplete="off" />
-              <div id="subreddit-dropdown" class="subreddit-dropdown" style="display: none;"></div>
-            </div>
-          </div>
-          
           <div class="control-section control-select control-section-sort">
             <div class="section-label">Sort</div>
             <select id="booru-sort-select" class="select-minimal">
@@ -577,14 +568,36 @@
             <div id="booru-sources-list" class="booru-sources-list">
               <!-- Source cards will be dynamically added here -->
             </div>
+
+          </div>
+
+          <div class="settings-divider"></div>
+
+          <div class="settings-group-container">
+            <h3>Custom CSS Stylesheet</h3>
+            <small style="display: block; margin-bottom: 16px; opacity: 0.7;">Create and manage custom CSS presets to customize the application appearance</small>
             
-            <div class="add-booru-button-container" style="display:flex; gap:8px; margin-top:12px;">
-              <button id="add-booru-source-btn" class="btn-primary" type="button">
-                <i class="fas fa-plus"></i> Add New Source
+            <div class="css-presets-control">
+              <button id="css-add-preset-btn" class="btn-primary" type="button">
+                <i class="fas fa-plus"></i> New Preset
               </button>
-              <button id="import-booru-source-btn" class="btn-secondary" type="button">
-                <i class="fas fa-file-import"></i> Import Source
+              <button id="css-load-presets-btn" class="btn-secondary" type="button">
+                <i class="fas fa-sync"></i> Reload Presets
               </button>
+            </div>
+
+            <div id="css-presets-list" class="css-presets-list">
+              <!-- CSS presets will be dynamically added here -->
+            </div>
+
+            <div id="css-editor-container" class="css-editor-container" style="display: none;">
+              <div class="css-editor-header">
+                <input type="text" id="css-preset-name" class="css-preset-name-input" placeholder="Preset name..." />
+                <button id="css-cancel-preset-btn" class="btn-secondary css-preset-item-btn-danger" type="button">
+                  <i class="fas fa-times"></i>
+                </button>
+              </div>
+              <div id="css-monaco-editor" class="css-monaco-editor" style="height: 400px;"></div>
             </div>
           </div>
 
@@ -596,8 +609,11 @@
             <a href="https://github.com/SaltedShroom/Booru-Studio/issues" target="_blank" rel="noopener noreferrer" class="github-issues-link">
               <i class="fa-solid fa-comment"></i> Report issues or request features
             </a>
-            <a href="https://github.com/SaltedShroom/Booru-Studio/discussions/3" target="_blank" rel="noopener noreferrer" class="github-discussions-link">
-              <i class="fas fa-comments"></i> Share or find booru sources
+            <a href="https://github.com/SaltedShroom/Booru-Studio/discussions/3" target="_blank" rel="noopener noreferrer" class="github-source-discussions-link">
+              <i class="fas fa-comments"></i> Share and find booru sources
+            </a>
+            <a href="https://github.com/SaltedShroom/Booru-Studio/discussions/4" target="_blank" rel="noopener noreferrer" class="github-preset-discussions-link">
+              <i class="fas fa-comments"></i> Share and find CSS presets
             </a>
           </div>
         </form>
@@ -640,6 +656,7 @@
           <pre id="export-source-preview" style="background:var(--bg-tertiary, #1a1a2e); border:1px solid var(--border-color, #333); border-radius:6px; padding:14px; overflow:auto; max-height:380px; font-size:0.82rem; white-space:pre; margin:0;"></pre>
         </div>
         <div class="modal-footer">
+          <button id="copy-export-source-btn" class="btn-secondary"><i class="fa-solid fa-copy"></i></button>
           <button id="download-export-source-btn" class="btn-primary"><i class="fas fa-download"></i> Download JSON</button>
           <button id="cancel-export-source-btn" class="btn-secondary">Close</button>
         </div>
@@ -1030,6 +1047,11 @@
 <script src="https://code.jquery.com/jquery-3.7.1.min.js" defer></script>
 <script src="/node_modules/justifiedGallery/dist/js/jquery.justifiedGallery.min.js" defer></script>
 <script src="/node_modules/select2/dist/js/select2.min.js" defer></script>
+<!-- CodeMirror for CSS editing -->
+<link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/codemirror/5.65.2/codemirror.min.css">
+<link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/codemirror/5.65.2/theme/material-darker.min.css">
+<script src="https://cdnjs.cloudflare.com/ajax/libs/codemirror/5.65.2/codemirror.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/codemirror/5.65.2/mode/css/css.min.js"></script>
 <script src="/src/js/cleanup-manager.js" defer></script>
 <script src="/src/js/db-store.js" defer></script>
 <script src="/src/js/virtual-gallery.js" defer></script>
@@ -1037,5 +1059,6 @@
 <script src="/src/js/index.js" defer></script>
 <script src="/src/js/booru-browser.js" defer></script>
 <script src="/src/js/booru-tabs.js" defer></script>
+<script src="/src/js/css-presets-manager.js" defer></script>
 </body>
 </html>

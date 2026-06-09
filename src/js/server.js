@@ -442,7 +442,7 @@ const isWorkerMode = !isMainThread && workerData && workerData.isWorker;
 const server = isWorkerMode ? null : http.createServer((req, res) => {
   // Enable CORS
   res.setHeader('Access-Control-Allow-Origin', '*');
-  res.setHeader('Access-Control-Allow-Methods', 'GET, POST, DELETE, OPTIONS');
+  res.setHeader('Access-Control-Allow-Methods', 'GET, POST, PUT, DELETE, OPTIONS');
   res.setHeader('Access-Control-Allow-Headers', 'Content-Type');
 
   // Prevent browser caching for all responses
@@ -1680,6 +1680,117 @@ const server = isWorkerMode ? null : http.createServer((req, res) => {
     return;
   }
 
+  // ============== CSS PRESETS API ENDPOINTS ==============
+
+  // Get active CSS presets (check before general GET)
+  if (req.method === 'GET' && req.url === '/api/css-presets/active') {
+    try {
+      const presets = database.getActiveCSSPresets();
+      res.writeHead(200, { 'Content-Type': 'application/json' });
+      res.end(JSON.stringify(presets));
+    } catch (error) {
+      console.error('❌ Error getting active CSS presets:', error.message);
+      res.writeHead(500, { 'Content-Type': 'application/json' });
+      res.end(JSON.stringify({ error: error.message }));
+    }
+    return;
+  }
+
+  // Get all CSS presets
+  if (req.method === 'GET' && req.url === '/api/css-presets') {
+    try {
+      const presets = database.getAllCSSPresets();
+      res.writeHead(200, { 'Content-Type': 'application/json' });
+      res.end(JSON.stringify(presets));
+    } catch (error) {
+      console.error('❌ Error getting all CSS presets:', error.message);
+      res.writeHead(500, { 'Content-Type': 'application/json' });
+      res.end(JSON.stringify({ error: error.message }));
+    }
+    return;
+  }
+
+  // Update CSS preset active status (check before general PUT)
+  if (req.method === 'PUT' && req.url.match(/^\/api\/css-presets\/[^/]+\/active$/)) {
+    let body = '';
+    req.on('data', chunk => body += chunk.toString());
+    req.on('end', () => {
+      try {
+        const presetId = req.url.split('/')[3];
+        const { is_active } = JSON.parse(body);
+        database.updateCSSPresetActiveStatus(presetId, is_active);
+        res.writeHead(200, { 'Content-Type': 'application/json' });
+        res.end(JSON.stringify({ success: true }));
+      } catch (error) {
+        console.error('❌ Error updating CSS preset active status:', error.message);
+        res.writeHead(500, { 'Content-Type': 'application/json' });
+        res.end(JSON.stringify({ error: error.message }));
+      }
+    });
+    return;
+  }
+
+  // Delete CSS preset
+  if (req.method === 'DELETE' && req.url.match(/^\/api\/css-presets\/[^/]+$/)) {
+    try {
+      const presetId = req.url.split('/').pop();
+      database.removeCSSPreset(presetId);
+      res.writeHead(200, { 'Content-Type': 'application/json' });
+      res.end(JSON.stringify({ success: true }));
+    } catch (error) {
+      console.error('❌ Error deleting CSS preset:', error.message);
+      res.writeHead(500, { 'Content-Type': 'application/json' });
+      res.end(JSON.stringify({ error: error.message }));
+    }
+    return;
+  }
+
+  // Update CSS preset (general PUT for ID only)
+  if (req.method === 'PUT' && req.url.match(/^\/api\/css-presets\/[^/]+$/)) {
+    let body = '';
+    req.on('data', chunk => body += chunk.toString());
+    req.on('end', () => {
+      try {
+        const presetId = req.url.split('/').pop();
+        const { name, code } = JSON.parse(body);
+        database.saveCSSPreset({ id: presetId, name, code });
+        res.writeHead(200, { 'Content-Type': 'application/json' });
+        res.end(JSON.stringify({ success: true }));
+      } catch (error) {
+        console.error('❌ Error updating CSS preset:', error.message);
+        res.writeHead(500, { 'Content-Type': 'application/json' });
+        res.end(JSON.stringify({ error: error.message }));
+      }
+    });
+    return;
+  }
+
+  // Create new CSS preset
+  if (req.method === 'POST' && req.url === '/api/css-presets') {
+    let body = '';
+    req.on('data', chunk => body += chunk.toString());
+    req.on('end', () => {
+      try {
+        const { name, code } = JSON.parse(body);
+        if (!name) {
+          res.writeHead(400, { 'Content-Type': 'application/json' });
+          res.end(JSON.stringify({ error: 'Preset name is required' }));
+          return;
+        }
+        const id = database.saveCSSPreset({ name, code });
+        res.writeHead(201, { 'Content-Type': 'application/json' });
+        res.end(JSON.stringify({ id, name, code, is_active: false, created_at: Date.now() }));
+      } catch (error) {
+        console.error('❌ Error creating CSS preset:', error.message);
+        res.writeHead(500, { 'Content-Type': 'application/json' });
+        res.end(JSON.stringify({ error: error.message }));
+      }
+    });
+    return;
+  }
+
+  // ============== END CSS PRESETS API ENDPOINTS ==============
+
   // ============== END DATABASE API ENDPOINTS ==============
 
   // Proxy image downloads via GET (for img tags in booru gallery)
@@ -2529,9 +2640,6 @@ const server = isWorkerMode ? null : http.createServer((req, res) => {
     } else {
       // Use regular HTTP for API requests (with proxy support)
       
-      // Detect if this is a Reddit request
-      const isReddit = targetUrl.includes('reddit.com');
-      
       // Follow redirects with proxy support
       const makeRequest = (reqUrl) => {
         const parsedReqUrl = new URL(reqUrl);
@@ -2551,22 +2659,20 @@ const server = isWorkerMode ? null : http.createServer((req, res) => {
           }
         };
         // if we matched a source earlier, include its cookies or UA header
-        if (isReddit === false) {
-          const sources = database.loadSetting('booru-sources') || [];
-          const matchingSource = sources.find(source => {
-            try {
-              const sourceUrlObj = new url.URL(source.baseUrl);
-              return targetUrl.includes(sourceUrlObj.hostname);
-            } catch (e) {
-              return false;
-            }
-          });
-          if (matchingSource?.cookies) {
-            options.headers['Cookie'] = matchingSource.cookies;
+        const sources = database.loadSetting('booru-sources') || [];
+        const matchingSource = sources.find(source => {
+          try {
+            const sourceUrlObj = new url.URL(source.baseUrl);
+            return targetUrl.includes(sourceUrlObj.hostname);
+          } catch (e) {
+            return false;
           }
-          if (matchingSource?.userAgent) {
-            options.headers['User-Agent'] = matchingSource.userAgent;
-          }
+        });
+        if (matchingSource?.cookies) {
+          options.headers['Cookie'] = matchingSource.cookies;
+        }
+        if (matchingSource?.userAgent) {
+          options.headers['User-Agent'] = matchingSource.userAgent;
         }
         
         if (agent) {

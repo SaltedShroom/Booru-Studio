@@ -442,10 +442,6 @@ body, html {
   height: 25.78px;
 }
 
-#subreddit-control {
-  padding: 4px 12px;
-}
-
 .control-section-primary {
   padding: 0;
   background: transparent;
@@ -971,14 +967,31 @@ body, html {
   gap: 12px;
 }
 
+.add-booru-button-container {
+  position: relative;
+  display: flex;
+  height: 100%;
+  min-height: 80px;
+  gap: 0;
+}
+
 .add-booru-button-container button {
   flex-grow: 1;
   text-align: center;
   display: flex;
   align-items: center;
   justify-content: center;
+  font-size: 26px;
+  height: 100%;
+  border-radius: 0;
 }
 
+#add-booru-source-btn {
+  background: var(--accent);
+}
+#add-booru-source-btn:hover {
+  background: var(--accent-hover);
+}
 
 
 .form-group {
@@ -1039,8 +1052,6 @@ body, html {
 
 .btn-primary:hover {
   background: var(--accent-hover);
-  transform: translateY(-1px);
-  box-shadow: 0 4px 12px rgba(233, 69, 96, 0.3);
 }
 
 .btn-primary:active {
@@ -1795,11 +1806,6 @@ body, html {
   color: var(--text-primary);
 }
 
-.btn-primary:hover { 
-  transform: translateY(-2px);
-  box-shadow: 0 4px 12px rgba(233, 69, 96, 0.4);
-}
-
 .btn-danger {
   background: linear-gradient(135deg, #dc3545, #c82333);
   color: var(--text-primary);
@@ -2078,7 +2084,7 @@ body, html {
   transition: opacity 0.3s ease;
 }
 
-.lightbox-modal.active.reddit-mode .slideshow-controls {
+.lightbox-modal.active.slideshow-mode .slideshow-controls {
   opacity: 1;
   pointer-events: all;
 }
@@ -2900,8 +2906,8 @@ body, html {
   min-height: 300px;
   display: flex;
   flex-direction: column;
-  gap: 10px;
   padding: 2px;
+  gap: 10px;
 }
 
 .downloads-gallery {
@@ -2936,21 +2942,6 @@ body, html {
   min-width: 40px;
   padding-right: 8px;
   flex-shrink: 0;
-}
-
-.booru-images-container {
-  position: relative;
-  flex: 1;
-  display: flex;
-  gap: 10px;
-  align-items: stretch;
-  width: 100%;
-  overflow: hidden;
-}
-
-.booru-images-container::after {
-  content: '';
-  flex-grow: 99999999;
 }
 
 .booru-image-wrapper {
@@ -3418,67 +3409,6 @@ body, html {
   color: white;
 }
 
-
-/* Reddit-specific styles (keep for Reddit source) */
-.reddit-content {
-  flex: 1;
-  background: var(--bg-dark);
-  padding: 16px;
-  overflow: auto;
-}
-
-.subreddit-input-wrapper {
-  position: relative;
-  display: flex;
-  align-items: center;
-  background: var(--bg-medium);
-  border: 1px solid var(--bg-light);
-  border-radius: 6px;
-  padding-left: 8px;
-  min-width: 200px;
-  letter-spacing: 1px;
-}
-
-.subreddit-prefix {
-  font-size: 13px;
-  color: var(--text-secondary);
-  font-weight: 500;
-  user-select: none;
-  pointer-events: none;
-}
-
-.subreddit-input {
-  position: relative;
-  background: transparent;
-  border: none;
-  color: var(--text-primary);
-  border-radius: 6px;
-  font-size: 13px;
-  flex: 1;
-  outline: none;
-}
-
-.subreddit-input:focus {
-  outline: none;
-  border: none;
-}
-
-.subreddit-input-wrapper:focus-within {
-  border-color: var(--accent);
-}
-
-.subreddit-input::placeholder {
-  color: var(--text-secondary);
-  opacity: 0.6;
-}
-
-#subreddit-input {
-  border: none;
-  outline: none;
-  padding: 4px 8px 4px 0;
-  letter-spacing: 1px;
-}
-
 .reload-btn {
   background: var(--border);
   border: 4px solid var(--border);
@@ -3504,114 +3434,6 @@ body, html {
 
 .reload-btn:active {
   transform: rotate(180deg) scale(0.9);
-}
-
-.reddit-gallery {
-  position: relative;
-  width: 100%;
-  display: flex;
-  flex-direction: column;
-  gap: 16px;
-  padding: 8px;
-}
-
-.reddit-images-row {
-  position: relative;
-  display: flex;
-  gap: 16px;
-  align-items: center;
-}
-
-.reddit-row-number {
-  color: var(--text-primary);
-  font-size: 16px;
-  font-weight: 600;
-  text-align: right;
-  user-select: none;
-  display: flex;
-  align-items: center;
-  justify-content: flex-end;
-  box-sizing: border-box;
-  min-width: 40px;
-  padding-right: 8px;
-  flex-shrink: 0;
-}
-
-.reddit-images-container {
-  position: relative;
-  flex: 1;
-  display: flex;
-  gap: 16px;
-  align-items: center;
-}
-
-.reddit-image-item {
-  border-radius: 4px;
-  overflow: hidden;
-  cursor: pointer;
-  transition: all 0.2s, height 0.3s ease;
-  display: flex;
-  flex-direction: column;
-  align-items: center;
-  justify-content: center;
-  position: relative;
-  min-height: 150px;
-  height: 100%;
-  flex-shrink: 0;
-  will-change: transform;
-  contain: layout style paint;
-  content-visibility: auto;
-}
-
-.reddit-image-item .image-loader {
-  position: absolute;
-  color: var(--accent);
-  font-size: calc(var(--booru-image-size) / 220 * 33);
-  z-index: 1;
-}
-
-.reddit-image-item img {
-  width: 100%;
-  height: auto;
-  object-fit: cover;
-  display: block;
-  opacity: 0;
-  transition: opacity 0.3s ease;
-  will-change: opacity;
-  backface-visibility: hidden;
-  transform: translateZ(0);
-}
-
-.reddit-image-item img.loaded {
-  opacity: 1;
-}
-
-.reddit-image-item:hover {
-  scale: 1.05;
-}
-
-.reddit-image-item:hover img {
-  box-shadow: 0 0 16px rgba(0, 0, 0, 0.4);
-}
-
-.reddit-image-info {
-  display: none;
-}
-
-.reddit-image-title {
-  color: var(--text-primary);
-  font-weight: 500;
-  margin-bottom: 4px;
-  display: -webkit-box;
-  -webkit-line-clamp: 2;
-  -webkit-box-orient: vertical;
-  overflow: hidden;
-  text-overflow: ellipsis;
-}
-
-.reddit-image-meta {
-  color: var(--text-secondary);
-  font-size: 11px;
 }
 
 #image-size-value {
@@ -3649,86 +3471,6 @@ body, html {
   box-shadow: inset 0 0 0 12px var(--accent-hover);
 }
 
-/* Subreddit Dropdown */
-.subreddit-dropdown {
-  position: absolute;
-  top: 100%;
-  left: 0;
-  right: 0;
-  margin-top: 4px;
-  border: 3px solid var(--surface-hover);
-  border-radius: 6px;
-  box-shadow: 0 4px 12px rgba(0, 0, 0, 0.3);
-  max-height: 300px;
-  overflow-y: auto;
-  z-index: 1000;
-}
-
-.subreddit-dropdown-item {
-  display: flex;
-  justify-content: space-between;
-  align-items: center;
-  padding: 4px 10px;
-  cursor: pointer;
-  transition: background 0.2s ease, box-shadow 0.2s ease;
-  border-bottom: 2px solid var(--surface-hover);
-  background: var(--border);
-  box-shadow: inset 0 0 0 0 var(--surface-hover);
-}
-
-.subreddit-dropdown-item:hover {
-  background: #404a66;
-  box-shadow: inset 0 0 0 2px var(--surface-hover)
-}
-
-.subreddit-dropdown-item:last-child {
-  border-bottom: none;
-}
-
-.subreddit-dropdown-name {
-  flex: 1;
-  color: var(--text-primary);
-  font-size: 14px;
-}
-
-.subreddit-dropdown-name::before {
-  content: 'r/';
-  color: var(--text-secondary);
-  margin-right: 2px;
-}
-
-.subreddit-dropdown-delete {
-  padding: 0 0 0 8px;
-  color: #ff3b30;
-  text-shadow: 0 0 2px var(--bg-darkest);
-  cursor: pointer;
-  opacity: 0.6;
-  transition: opacity 0.2s ease;
-  font-size: 16px;
-}
-
-.subreddit-dropdown-delete:hover {
-  opacity: 1;
-}
-
-.subreddit-dropdown-empty {
-  padding: 20px;
-  text-align: center;
-  color: var(--text-secondary);
-  font-size: 13px;
-  font-style: italic;
-}
-
-.reddit-loading {
-  display: flex;
-  flex-direction: column;
-  align-items: center;
-  justify-content: center;
-  padding: 40px;
-  color: var(--text-secondary);
-  gap: 16px;
-}
-
 .loading-spinner {
   width: 40px;
   height: 40px;
@@ -3740,55 +3482,6 @@ body, html {
 
 @keyframes spin {
   to { transform: rotate(360deg); }
-}
-
-#reddit-limit-input {
-  width: 70px;
-}
-
-.reddit-hover-preview {
-  position: fixed;
-  pointer-events: none;
-  z-index: 10000;
-  display: none;
-  background: var(--surface);
-  border: 2px solid var(--border);
-  border-radius: 8px;
-  overflow: hidden;
-  box-shadow: 0 8px 32px rgba(0, 0, 0, 0.6);
-  max-width: 1200px;
-}
-
-.reddit-hover-preview.active {
-  display: block;
-}
-
-.reddit-hover-preview img {
-  width: 100%;
-  height: auto;
-  max-height: 500px;
-  object-fit: contain;
-  display: block;
-  background: var(--bg-darkest);
-}
-
-.reddit-hover-preview-info {
-  padding: 12px;
-  background: var(--surface);
-}
-
-.reddit-hover-preview-author {
-  color: var(--accent);
-  font-size: 12px;
-  font-weight: 600;
-  margin-bottom: 6px;
-}
-
-.reddit-hover-preview-title {
-  color: var(--text-primary);
-  font-size: 13px;
-  font-weight: 500;
-  line-height: 1.4;
 }
 
 .booru-gallery-wrapper {
@@ -5452,6 +5145,27 @@ textarea.settings-input {
   text-decoration: none;
   padding: 10px 16px;
   border-radius: 4px;
+  border: 1px solid var(--accent-hover);
+  background: var(--accent-hover);
+  color: var(--bg-darker);
+  font-weight: 500;
+  transition: all 0.2s;
+  cursor: pointer;
+}
+
+.github-issues-link:hover {
+  border: 1px solid var(--accent-hover);
+  background: var(--bg-darker);
+  color: var(--accent-hover);
+}
+
+.github-source-discussions-link {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  text-decoration: none;
+  padding: 10px 16px;
+  border-radius: 4px;
   border: 1px solid var(--accent);
   background: var(--accent);
   color: var(--bg-darker);
@@ -5460,13 +5174,13 @@ textarea.settings-input {
   cursor: pointer;
 }
 
-.github-issues-link:hover {
+.github-source-discussions-link:hover {
   border: 1px solid var(--accent);
   background: var(--bg-darker);
   color: var(--accent);
 }
 
-.github-discussions-link {
+.github-preset-discussions-link {
   display: inline-flex;
   align-items: center;
   gap: 8px;
@@ -5481,8 +5195,215 @@ textarea.settings-input {
   cursor: pointer;
 }
 
-.github-discussions-link:hover {
+.github-preset-discussions-link:hover {
   border: 1px solid var(--accent-secondary);
   background: var(--bg-darker);
   color: var(--accent-secondary);
+}
+
+/* ===== CSS Presets Styling ===== */
+
+.css-presets-list {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  max-height: 400px;
+  overflow-y: auto;
+}
+
+.css-preset-item {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  background: var(--surface-hover);
+  border: 1px solid var(--border-color);
+  transition: all 0.2s;
+}
+
+.css-preset-item:hover {
+  background: var(--surface);
+}
+
+.css-preset-item-info {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  flex: 1;
+}
+
+.css-preset-item-checkbox {
+  width: 18px;
+  height: 18px;
+  cursor: pointer;
+  accent-color: var(--accent-primary);
+}
+
+.css-preset-item-name {
+  font-weight: 500;
+  color: var(--text-primary);
+  cursor: pointer;
+  flex: 1;
+}
+
+.css-preset-item-active-badge {
+  font-size: 12px;
+  padding: 2px 8px;
+  background: var(--accent-primary);
+  color: var(--bg-darker);
+  border-radius: 12px;
+  white-space: nowrap;
+}
+
+.css-preset-item-actions {
+  display: flex;
+  gap: 6px;
+}
+
+.css-preset-item-btn {
+  padding: 6px 10px;
+  border: none;
+  border-radius: 3px;
+  background: var(--accent-primary);
+  color: var(--bg-darker);
+  cursor: pointer;
+  font-size: 12px;
+  transition: all 0.2s;
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  user-select: none;
+}
+
+.css-preset-item-btn:hover {
+  background: var(--accent-secondary);
+}
+
+.css-preset-item-btn-danger {
+  background: #e74c3c;
+  border-radius: 0;
+}
+
+.css-preset-item-btn-danger:hover {
+  background: #c0392b;
+}
+
+.css-editor-container {
+  display: flex;
+  flex-direction: column;
+  background: var(--bg-secondary);
+  border: 1px solid var(--border-color);
+  border-radius: 4px;
+}
+
+.css-editor-header {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  justify-content: space-between;
+  background: var(--bg-medium);
+}
+
+.css-preset-name-input {
+  flex: 1;
+  padding: 8px 12px;
+  background: transparent;
+  border: none;
+  color: var(--text-primary);
+  font-family: inherit;
+}
+
+.css-preset-name-input:focus {
+  outline: none;
+  border-color: var(--accent-primary);
+  box-shadow: 0 0 0 2px rgba(var(--accent-primary-rgb), 0.1);
+}
+
+.css-monaco-editor {
+  border: 1px solid var(--border-color);
+  border-radius: 4px;
+  overflow: hidden;
+  background: var(--bg-medium-grayed);
+}
+
+/* CodeMirror styling to match app theme */
+.css-monaco-editor .CodeMirror {
+  background: var(--bg-medium-grayed) !important;
+  color: var(--text-primary) !important;
+  font-family: 'Monaco', 'Courier New', monospace !important;
+  font-size: 13px !important;
+  border: none;
+  border-radius: 4px;
+}
+
+.css-monaco-editor .CodeMirror-gutters {
+  background: var(--bg-secondary) !important;
+  border-right: 1px solid var(--border-color) !important;
+}
+
+.css-monaco-editor .CodeMirror-linenumber {
+  color: var(--text-secondary) !important;
+}
+
+.css-monaco-editor .CodeMirror-cursor {
+  border-left: 1px solid var(--text-primary) !important;
+}
+
+.css-monaco-editor .CodeMirror-selected {
+  background: var(--bg-medium) !important;
+}
+
+.css-monaco-editor .CodeMirror-line::selection,
+.css-monaco-editor .CodeMirror-line > span::selection {
+  background: var(--bg-medium) !important;
+}
+
+.css-monaco-editor .CodeMirror-line::-moz-selection,
+.css-monaco-editor .CodeMirror-line > span::-moz-selection {
+  background: var(--bg-medium) !important;
+}
+
+.css-monaco-editor .CodeMirror-activeline-background {
+  background: rgba(var(--accent-primary-rgb), 0.05) !important;
+}
+
+.css-presets-control {
+  display: flex;
+  gap: 0;
+}
+
+.css-presets-control button {
+  padding: 8px 12px;
+  border: none;
+  border-radius: 0px;
+  cursor: pointer;
+  font-size: 13px;
+  flex-grow: 1;
+  text-align: center;
+  align-items: center;
+  justify-content: center;
+  transition: all 0.2s;
+}
+.css-presets-control button:hover, #css-add-preset-btn:hover {
+  outline: 1px solid var(--accent);
+  color: var(--accent);
+  background: var(--surface);
+}
+#css-add-preset-btn {
+  background: var(--accent);
+  z-index: 10;
+}
+.css-preset-edit-btn {
+  background: transparent;
+}
+.css-preset-edit-btn:hover {
+  background: transparent;
+}
+#css-cancel-preset-btn {
+  border: none;
+  outline: none;
+  padding: 2px 4px;
+  margin-right: 4px;
+  align-items: center;
+  justify-content: center;
+  font-size: 18px;
 }

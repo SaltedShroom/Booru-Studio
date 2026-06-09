@@ -261,7 +261,6 @@ document.addEventListener('mouseenter', () => {
 
 // Get DOM elements
 const booruSourceSelect = document.getElementById('booru-source-select');
-const subredditControl = document.getElementById('subreddit-control');
 const booruSettingsBtn = document.getElementById('booru-settings-btn');
 const apiSettingsModal = document.getElementById('api-settings-modal');
 const closeApiModalBtn = document.getElementById('close-api-modal');
@@ -279,7 +278,6 @@ const booruLoading = document.getElementById('booru-loading');
 const booruTotalCount = document.getElementById('booru-total-count');
 
 // Global booru state - use window properties for tab persistence
-window.currentBooruSource = 'reddit';
 let booruPaginationToken = null;
 let isLoadingBooru = false;
 let aiFilterEnabled = false; // AI filter OFF by default
@@ -2717,6 +2715,24 @@ if (!window._booruPreviewFreezeMousedownListenerInstalled) {
   });
 }
 
+// Helper function to get gallery margins from CSS gap value
+function getGalleryMargins() {
+  try {
+    const gallery = document.getElementById('booru-gallery') || document.querySelector('.booru-gallery');
+    if (gallery) {
+      const gapValue = window.getComputedStyle(gallery).gap;
+      // Extract numeric value from gap (e.g., "10px" -> 10)
+      const numericValue = parseInt(gapValue, 10);
+      if (!isNaN(numericValue)) {
+        return numericValue;
+      }
+    }
+  } catch (e) {
+    console.warn('Failed to get gallery margins from CSS:', e);
+  }
+  return 10; // Fallback to default if element not found or parsing fails
+}
+
 // Initialize booru browser
 function initBooruBrowser() {
   // Tag suggestions are queried on demand to avoid loading the full table on launch.
@@ -3631,12 +3647,6 @@ function initBooruBrowser() {
         const galleryQualityToggleBtn = document.getElementById('gallery-quality-toggle');
         if (galleryQualityToggleBtn) galleryQualityToggleBtn.style.display = '';
       }
-      // Hide subreddit control if source is not reddit
-      const subredditControl = document.getElementById('subreddit-control');
-      const sourceSelect = document.getElementById('booru-source-select');
-      if (subredditControl && sourceSelect) {
-        subredditControl.style.display = (sourceSelect.value === 'reddit') ? '' : 'none';
-      }
     }
     
     if (window.isViewingDownloadsGallery) {
@@ -3709,11 +3719,6 @@ function initBooruBrowser() {
           const sourceSelect = document.getElementById('booru-source-select');
           if (sourceSelect && tab.state?.source) {
             sourceSelect.value = tab.state.source;
-          }
-          // Hide subreddit control if source is not reddit
-          const subredditControl = document.getElementById('subreddit-control');
-          if (subredditControl && sourceSelect) {
-            subredditControl.style.display = (sourceSelect.value === 'reddit') ? '' : 'none';
           }
         }
         setTimeout(() => {
@@ -3901,15 +3906,28 @@ function initBooruBrowser() {
           : (booruGallery ? [booruGallery] : []);
 
         galleryTargets.forEach((gallery) => {
-          $(gallery).justifiedGallery('norewind').justifiedGallery({
-            rowHeight: currentImageSize,
-            maxRowHeight: false,
-            margins: 10,
-            lastRow: 'nojustify',
-            captions: false,
-            waitThumbnailsLoad: false,
-            border: 0
-          });
+          try {
+            const $gallery = $(gallery);
+            const isInitialized = $gallery.data('justifiedGallery');
+            
+            if (isInitialized) {
+              // If already initialized, use norewind to update
+              $gallery.justifiedGallery('norewind');
+            }
+            
+            // Then apply the config
+            $gallery.justifiedGallery({
+              rowHeight: currentImageSize,
+              maxRowHeight: false,
+              margins: getGalleryMargins(),
+              lastRow: 'nojustify',
+              captions: false,
+              waitThumbnailsLoad: false,
+              border: 0
+            });
+          } catch (err) {
+            console.error('Error updating justified gallery on size change:', err, gallery);
+          }
         });
 
         if (_hqRestoreResizeTimeout) {
@@ -3970,17 +3988,7 @@ function initBooruBrowser() {
 }
 
 function handleSourceChange() {
-  window.currentBooruSource = booruSourceSelect ? booruSourceSelect.value : 'reddit';
-  
-  // Show/hide source-specific controls
-  const searchControl = document.getElementById('search-control');
-  if (searchControl) {
-    searchControl.style.display = window.currentBooruSource === 'reddit' ? 'none' : 'flex';
-  }
-  
-  if (subredditControl) {
-    subredditControl.style.display = window.currentBooruSource === 'reddit' ? 'flex' : 'none';
-  }
+  window.currentBooruSource = booruSourceSelect ? booruSourceSelect.value : null;
   
   // Show settings button only for sources that require authentication
   if (booruSettingsBtn) {
@@ -4006,7 +4014,7 @@ function handleSourceChange() {
   }
   
   // Close settings modal when switching to sources that don't require auth
-  if (apiSettingsModal && window.currentBooruSource !== 'reddit') {
+  if (apiSettingsModal) {
     const sourceConfig = booruSourcesManager?.getSource(window.currentBooruSource);
     const requiresAuth = sourceConfig?.auth?.required || false;
     if (!requiresAuth) {
@@ -4029,6 +4037,55 @@ function handleSourceChange() {
   // hasMoreResults = true;
   // totalResultCount = null;
 }
+
+function updateJustifiedGalleries() {
+  try {
+    let _hqRestoreResizeTimeout = null;
+    const wrapper = document.getElementById('gallery-wrapper');
+    if (typeof $.fn.justifiedGallery !== 'undefined' && wrapper && galleryWrapper && booruGallery && currentImageSize) {
+
+      const galleryTargets = galleryWrapper
+        ? Array.from(galleryWrapper.querySelectorAll('.booru-gallery'))
+        : (booruGallery ? [booruGallery] : []);
+
+      galleryTargets.forEach((gallery) => {
+        try {
+          const $gallery = $(gallery);
+          const isInitialized = $gallery.data('justifiedGallery');
+          
+          if (isInitialized) {
+            // If already initialized, use norewind to update
+            $gallery.justifiedGallery('norewind');
+          }
+          
+          // Then apply the config
+          $gallery.justifiedGallery({
+            rowHeight: currentImageSize,
+            maxRowHeight: false,
+            margins: getGalleryMargins(),
+            lastRow: 'nojustify',
+            captions: false,
+            waitThumbnailsLoad: false,
+            border: 0
+          });
+        } catch (err) {
+          console.error('Error initializing justified gallery:', err, gallery);
+        }
+      });
+
+      if (_hqRestoreResizeTimeout) {
+        clearTimeout(_hqRestoreResizeTimeout);
+      }
+      _hqRestoreResizeTimeout = setTimeout(() => {
+        restoreHighQualityGalleryImages();
+      }, 120);
+    }
+  } catch (err) {
+    console.error('Error updating justified galleries:', err);
+  }
+}
+
+window.updateJustifiedGalleries = updateJustifiedGalleries;
 
 // Toggle API settings modal
 function toggleApiSettings() {
@@ -4327,23 +4384,13 @@ function updateSortOptions(savedSort) {
   
   booruSortSelect.innerHTML = '';
   
-  // Reddit uses different sort options
-  if (window.currentBooruSource === 'reddit') {
-    ['new', 'hot', 'top'].forEach(val => {
-      const opt = document.createElement('option');
-      opt.value = val;
-      opt.textContent = val.charAt(0).toUpperCase() + val.slice(1);
-      booruSortSelect.appendChild(opt);
-    });
-  } else {
-    // All booru sources use date/score sorting
-    ['date', 'score'].forEach(val => {
-      const opt = document.createElement('option');
-      opt.value = val;
-      opt.textContent = val.charAt(0).toUpperCase() + val.slice(1);
-      booruSortSelect.appendChild(opt);
-    });
-  }
+  // All booru sources use date/score sorting
+  ['date', 'score'].forEach(val => {
+    const opt = document.createElement('option');
+    opt.value = val;
+    opt.textContent = val.charAt(0).toUpperCase() + val.slice(1);
+    booruSortSelect.appendChild(opt);
+  });
   
   // Restore saved sort if provided and valid
   if (savedSort) {
@@ -5296,7 +5343,7 @@ function renderBooruGallery(posts, append = true, addSeparators = true) {
       $(booruGallery).justifiedGallery({
         rowHeight: currentImageSize || 250,
         maxRowHeight: false, // Allow natural height variation
-        margins: 10,
+        margins: getGalleryMargins(),
         lastRow: 'nojustify',
         captions: false,
         waitThumbnailsLoad: false,
@@ -5353,7 +5400,7 @@ function renderBooruGallery(posts, append = true, addSeparators = true) {
   $(booruGallery).justifiedGallery({
     rowHeight: currentImageSize || 250,
     maxRowHeight: false, // Allow natural height variation
-    margins: 10,
+    margins: getGalleryMargins(),
     lastRow: 'nojustify',
     captions: false,
     waitThumbnailsLoad: false,
@@ -6013,12 +6060,21 @@ function createBooruImageElement(post, maxHeight = null, imageWidth = null) {
   progressContainer.appendChild(progressBar);
   
   // Store download state
-  container.dataset.downloaded = 'false';
+  // First check if post has downloadedAt flag (from restored tab data)
+  let isDownloaded = !!(post.downloadedAt || post.downloaded_at);
+  container.dataset.downloaded = isDownloaded ? 'true' : 'false';
+  
+  // Update button immediately if already downloaded
+  if (isDownloaded) {
+    downloadBtn.innerHTML = '<i class="fas fa-check"></i>';
+    downloadBtn.classList.add('downloaded');
+    downloadBtn.title = 'Delete';
+  }
   
   // Store hover handlers for removal later
   let hoverHandlers = null;
   
-  // Check if this image is already downloaded (exclude videos)
+  // Check if this image is actually downloaded on disk (to verify and update state)
   if (window.downloadFolder) {
     const filename = getFilenameFromUrl(post.imageUrl, post.id);
     fetch('http://localhost:3001/check-downloaded-images', {
@@ -6060,12 +6116,30 @@ function createBooruImageElement(post, maxHeight = null, imageWidth = null) {
 
         downloadBtn.addEventListener('mouseenter', mouseEnterHandler);
         downloadBtn.addEventListener('mouseleave', mouseLeaveHandler);
+      } else if (isDownloaded && container.dataset.downloaded === 'true') {
+        // File was marked as downloaded but is not on disk - reset state
+        container.dataset.downloaded = 'false';
+        downloadBtn.innerHTML = '<i class="fas fa-download"></i>';
+        downloadBtn.classList.remove('downloaded');
+        downloadBtn.title = 'Download';
       }
     })
     .catch(err => {
       console.error('Failed to check download status:', err);
       showToast('Error checking download status: ' + (err.message || err), 'error');
     });
+  } else if (isDownloaded) {
+    // downloadFolder not set, but post is marked as downloaded - add hover handlers anyway
+    const mouseEnterHandler = () => {
+      downloadBtn.innerHTML = '<i class="fas fa-times"></i>';
+    };
+    const mouseLeaveHandler = () => {
+      downloadBtn.innerHTML = '<i class="fas fa-check"></i>';
+    };
+    hoverHandlers = { mouseEnterHandler, mouseLeaveHandler };
+
+    downloadBtn.addEventListener('mouseenter', mouseEnterHandler);
+    downloadBtn.addEventListener('mouseleave', mouseLeaveHandler);
   }
   
   downloadBtn.addEventListener('click', async (e) => {
@@ -6234,23 +6308,23 @@ function createBooruImageElement(post, maxHeight = null, imageWidth = null) {
 
 function openBooruLightbox(imageUrl, postId, postSource) {
   // Build array of all booru image URLs for navigation and autoplay
-  redditLightboxImages = (window.booruPosts || []).map(post => getImageUrl(post.imageUrl));
+  LightboxImages = (window.booruPosts || []).map(post => getImageUrl(post.imageUrl));
   
   // If postId is provided, find the exact post by ID for reliable matching
   // This prevents issues when high quality toggle changes image URLs
   if (postId !== undefined && postSource !== undefined) {
-    redditLightboxIndex = (window.booruPosts || []).findIndex(post => 
+    LightboxIndex = (window.booruPosts || []).findIndex(post => 
       String(post.id) === String(postId) && String(post.source) === String(postSource)
     );
   } else {
     // Fallback to URL matching if no ID provided
     const proxiedUrl = getImageUrl(imageUrl);
-    redditLightboxIndex = redditLightboxImages.indexOf(proxiedUrl);
+    LightboxIndex = LightboxImages.indexOf(proxiedUrl);
   }
   
-  if (redditLightboxIndex === -1) redditLightboxIndex = 0;
-  showRedditLightboxImage(redditLightboxIndex);
-  lightboxModal.classList.add('active', 'reddit-mode');
+  if (LightboxIndex === -1) LightboxIndex = 0;
+  showLightboxImage(LightboxIndex);
+  lightboxModal.classList.add('active', 'slideshow-mode');
 }
 
 // Track shift key state for preview freezing

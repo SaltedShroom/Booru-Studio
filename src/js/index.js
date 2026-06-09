@@ -852,11 +852,11 @@ function scheduleSlideshowAdvance(delaySeconds) {
   clearSlideshowTimer();
   if (!slideshowActive) return;
   slideshowTimer = setTimeout(() => {
-    nextRedditLightboxImage();
-    if (redditLightboxIndex < redditLightboxImages.length - 1) {
-      startRedditSlideshow();
+    nextLightboxImage();
+    if (LightboxIndex < LightboxImages.length - 1) {
+      startSlideshow();
     } else {
-      stopRedditSlideshow();
+      stopSlideshow();
     }
   }, delaySeconds * 1000);
 }
@@ -869,6 +869,11 @@ navTabs.forEach(tab => {
   tab.addEventListener('click', () => {
     const targetTab = tab.dataset.tab;
     const previousTab = document.querySelector('.nav-tab.active')?.dataset.tab;
+    
+    // Log when leaving settings tab
+    if (previousTab === 'settings') {
+      window.updateJustifiedGalleries();
+    }
     
     // Clean up when leaving booru tab to prevent memory leaks
     if (previousTab === 'booru' && targetTab !== 'booru') {
@@ -893,13 +898,6 @@ navTabs.forEach(tab => {
     // Check SD status when switching to generator tab
     if (targetTab === 'generator') {
       initSDCheck();
-    }
-    
-    // Re-render reddit gallery when switching to reddit tab to fix layout
-    if (targetTab === 'reddit' && allRedditPosts.length > 0) {
-      setTimeout(() => {
-        updateGalleryImageSize();
-      }, 50);
     }
 
     // If a booru sub-tab switch was deferred at startup (because the user
@@ -1543,8 +1541,7 @@ async function saveSession() {
       // global blacklist tags
       blacklistTags: window.globalBlacklistTags || [],
       // Booru browser settings
-      booruSource: booruSourceSelect ? booruSourceSelect.value : 'reddit',
-      booruSubreddit: subredditInput ? subredditInput.value : '',
+      booruSource: booruSourceSelect ? booruSourceSelect.value : null,
       booruSort: booruSortSelect ? booruSortSelect.value : 'hot',
       booruLimit: booruLimitInput ? booruLimitInput.value : '100',
       booruImageSize: currentImageSize,
@@ -1630,9 +1627,6 @@ async function loadSession() {
       if (typeof handleSourceChange === 'function') {
         handleSourceChange();
       }
-    }
-    if (session.booruSubreddit && subredditInput) {
-      subredditInput.value = session.booruSubreddit;
     }
     if (session.booruSort && booruSortSelect) {
       booruSortSelect.value = session.booruSort;
@@ -2001,22 +1995,22 @@ document.addEventListener('keydown', (e) => {
   }
   
   if(e.key === 'ArrowLeft' || e.key === 'a' || e.key === 'A') {
-    if (isLightboxActive && redditLightboxImages.length > 0) {
-      prevRedditLightboxImage();
+    if (isLightboxActive && LightboxImages.length > 0) {
+      prevLightboxImage();
     } else {
       prevImage();
     }
   }
   else if(e.key === 'ArrowRight' || e.key === 'd' || e.key === 'D') {
-    if (isLightboxActive && redditLightboxImages.length > 0) {
-      nextRedditLightboxImage();
+    if (isLightboxActive && LightboxImages.length > 0) {
+      nextLightboxImage();
     } else {
       nextImage();
     }
   }
-  else if(e.key === ' ' && isLightboxActive && redditLightboxImages.length > 0) {
+  else if(e.key === ' ' && isLightboxActive && LightboxImages.length > 0) {
     e.preventDefault();
-    toggleRedditSlideshow();
+    toggleSlideshow();
   }
   else if(e.key === 'Delete' && !isLightboxActive) {
     // Only allow delete when not in lightbox
@@ -2030,12 +2024,12 @@ document.addEventListener('wheel', (e) => {
   const isOverImageContainer = e.target.closest('.image-container');
   const isOverLightbox = e.target.closest('.lightbox-modal');
   
-  // Reddit lightbox navigation
-  if (isLightboxActive && redditLightboxImages.length > 0) {
+  // lightbox navigation
+  if (isLightboxActive && LightboxImages.length > 0) {
     if (e.deltaY < 0) {
-      prevRedditLightboxImage();
+      prevLightboxImage();
     } else if (e.deltaY > 0) {
-      nextRedditLightboxImage();
+      nextLightboxImage();
     }
     return;
   }
@@ -2058,12 +2052,12 @@ document.addEventListener('wheel', (e) => {
 // Lightbox modal
 currentImage.addEventListener('click', () => {
   if (currentImage.src && currentImage.src !== window.location.href) {
-    redditLightboxImages = []; // Clear Reddit mode
+    LightboxImages = []; // Clear mode
     lightboxImage.dataset.hqLoaded = 'false';
     lightboxImage.src = currentImage.src;
     lightboxImage.classList.toggle('tall', currentImage.naturalHeight >= 3 * currentImage.naturalWidth);
     lightboxModal.classList.add('active');
-    lightboxModal.classList.remove('reddit-mode');
+    lightboxModal.classList.remove('slideshow-mode');
     lightboxImage.classList.remove('loading');
     stopTallLightboxScroll();
   }
@@ -2072,18 +2066,18 @@ currentImage.addEventListener('click', () => {
 lightboxBackground.addEventListener('click', closeLightbox);
 
 leftArrowLightbox.addEventListener('click', () => {
-  // Check if we're in Reddit mode (slideshow controls visible)
-  if (redditLightboxImages.length > 0) {
-    prevRedditLightboxImage();
+  // Check if we're in mode (slideshow controls visible)
+  if (LightboxImages.length > 0) {
+    prevLightboxImage();
   } else {
     prevImage();
   }
 });
 
 rightArrowLightbox.addEventListener('click', () => {
-  // Check if we're in Reddit mode (slideshow controls visible)
-  if (redditLightboxImages.length > 0) {
-    nextRedditLightboxImage();
+  // Check if we're in mode (slideshow controls visible)
+  if (LightboxImages.length > 0) {
+    nextLightboxImage();
   } else {
     nextImage();
   }
@@ -2099,17 +2093,17 @@ function closeLightbox() {
   });
   
   stopTallLightboxScroll();
-  lightboxModal.classList.remove('active', 'reddit-mode');
+  lightboxModal.classList.remove('active', 'slideshow-mode');
   lightboxImage.src = '';
   lightboxImage.classList.remove('loading');
-  stopRedditSlideshow();
-  redditLightboxImages = [];
-  redditLightboxIndex = 0;
+  stopSlideshow();
+  LightboxImages = [];
+  LightboxIndex = 0;
 }
 
-// Reddit Lightbox with Slideshow
-let redditLightboxImages = [];
-let redditLightboxIndex = 0;
+// Lightbox with Slideshow
+let LightboxImages = [];
+let LightboxIndex = 0;
 let slideshowActive = false;
 let galleryImg = null;
 
@@ -2118,9 +2112,9 @@ const slideshowIntervalInput = document.getElementById('slideshow-interval');
 const slideshowFadeDurationInput = document.getElementById('slideshow-fade-duration');
 const lightboxLoader = document.getElementById('lightbox-loader');
 
-function openRedditLightbox(imageUrl) {
+function openLightbox(imageUrl) {
   // Build array of all loaded image URLs from window.booruPosts
-  redditLightboxImages = (window.booruPosts || [])
+  LightboxImages = (window.booruPosts || [])
     .filter(post => {
       const url = post.imageUrl;
       return url && (url.match(/\.(jpeg|jpg|gif|png)$/i) || url.includes('i.redd.it') || url.includes('i.imgur.com'));
@@ -2129,12 +2123,12 @@ function openRedditLightbox(imageUrl) {
   
   // Find index of clicked image
   const proxiedUrl = getImageUrl(imageUrl);
-  redditLightboxIndex = redditLightboxImages.indexOf(proxiedUrl);
-  if (redditLightboxIndex === -1) redditLightboxIndex = 0;
+  LightboxIndex = LightboxImages.indexOf(proxiedUrl);
+  if (LightboxIndex === -1) LightboxIndex = 0;
 }
 
-function showRedditLightboxImage(idx) {
-  if (idx < 0 || idx >= redditLightboxImages.length) return;
+function showLightboxImage(idx) {
+  if (idx < 0 || idx >= LightboxImages.length) return;
 
   // Remove any previous videos
   const prevVideos = lightboxImage.parentNode.querySelectorAll('video');
@@ -2145,9 +2139,9 @@ function showRedditLightboxImage(idx) {
     v = null;
   });
   
-  redditLightboxIndex = idx;
+  LightboxIndex = idx;
 
-  const url = redditLightboxImages[idx];
+  const url = LightboxImages[idx];
   const isVideo = url.toLowerCase().endsWith('.mp4') || url.toLowerCase().endsWith('.webm') || 
                   url.toLowerCase().endsWith('.mov') || url.toLowerCase().includes('.mp4?') || 
                   url.toLowerCase().includes('.webm?') || url.toLowerCase().includes('.mov?');
@@ -2215,12 +2209,12 @@ function showRedditLightboxImage(idx) {
     // Helper to always advance on video end if slideshow is active
     function handleVideoEnded() {
       if (slideshowActive) {
-        nextRedditLightboxImage();
+        nextLightboxImage();
         // Only restart slideshow if not at end
-        if (redditLightboxIndex < redditLightboxImages.length - 1) {
-          startRedditSlideshow();
+        if (LightboxIndex < LightboxImages.length - 1) {
+          startSlideshow();
         } else {
-          stopRedditSlideshow();
+          stopSlideshow();
         }
       }
     }
@@ -2345,7 +2339,7 @@ function showRedditLightboxImage(idx) {
           lightboxImage.classList.add('tall-scroll');
         }
         if (slideshowActive) {
-          startRedditSlideshow();
+          startSlideshow();
         }
         return; // HQ already loaded and displayed, no need to proceed further
       }
@@ -2356,7 +2350,7 @@ function showRedditLightboxImage(idx) {
     tempImg.onload = () => {
       // Only update the lightbox image if the modal is active and still showing this post
       const modalActive = lightboxModal && lightboxModal.classList.contains('active');
-      const stillOnThisImage = redditLightboxImages[redditLightboxIndex] === url;
+      const stillOnThisImage = LightboxImages[LightboxIndex] === url;
       if (modalActive && stillOnThisImage) {
         lightboxImage.src = url;
         lightboxImage.classList.remove('loading');
@@ -2372,7 +2366,7 @@ function showRedditLightboxImage(idx) {
               startTallLightboxScroll();
             }
             if (slideshowActive) {
-              startRedditSlideshow();
+              startSlideshow();
             }
           });
       }
@@ -2385,7 +2379,7 @@ function showRedditLightboxImage(idx) {
     tempImg.onerror = () => {
       // If image fails, hide loader and show broken image
       const modalActive = lightboxModal && lightboxModal.classList.contains('active');
-      const stillOnThisImage = redditLightboxImages[redditLightboxIndex] === url;
+      const stillOnThisImage = LightboxImages[LightboxIndex] === url;
       if (modalActive && stillOnThisImage) {
         lightboxImage.src = url;
         lightboxImage.classList.remove('loading');
@@ -2417,10 +2411,10 @@ function showRedditLightboxImage(idx) {
 // Preload images in advance before opening lightbox (prevents showing loading on autoplay)
 let loadNextBatch = null;
 
-function nextRedditLightboxImage() {
-  redditLightboxIndex = Math.min(redditLightboxIndex, redditLightboxImages.length - 1);
-  if (redditLightboxIndex < redditLightboxImages.length - 1) {
-    showRedditLightboxImage(redditLightboxIndex + 1);
+function nextLightboxImage() {
+  LightboxIndex = Math.min(LightboxIndex, LightboxImages.length - 1);
+  if (LightboxIndex < LightboxImages.length - 1) {
+    showLightboxImage(LightboxIndex + 1);
     if (galleryImg) {
       galleryImg.scrollIntoView({
         behavior: 'smooth',
@@ -2430,17 +2424,17 @@ function nextRedditLightboxImage() {
       //simulate scroll event to trigger any lazy loading in the gallery
       document.getElementById('booru-content').dispatchEvent(new Event('scroll'));
       // Update lightbox images array with any new posts that may have loaded
-      const prevUrl = redditLightboxImages[redditLightboxIndex];
-      redditLightboxImages = window.booruPosts.map(post => getImageUrl(post.imageUrl));
-      redditLightboxIndex = Math.max(0, redditLightboxImages.indexOf(prevUrl));
+      const prevUrl = LightboxImages[LightboxIndex];
+      LightboxImages = window.booruPosts.map(post => getImageUrl(post.imageUrl));
+      LightboxIndex = Math.max(0, LightboxImages.indexOf(prevUrl));
     }
   }
 }
 
-function prevRedditLightboxImage() {
-  if (redditLightboxIndex > 0) {
-    redditLightboxIndex -= 1;
-    showRedditLightboxImage(redditLightboxIndex);
+function prevLightboxImage() {
+  if (LightboxIndex > 0) {
+    LightboxIndex -= 1;
+    showLightboxImage(LightboxIndex);
   }
   if (galleryImg) {
     galleryImg.scrollIntoView({
@@ -2451,14 +2445,14 @@ function prevRedditLightboxImage() {
   }
 }
 
-function startRedditSlideshow() {
+function startSlideshow() {
   slideshowActive = true;
   lightboxModal.classList.add('slideshow-active');
 
   slideshowPlayBtn.classList.add('playing');
   slideshowPlayBtn.innerHTML = '<i class="fas fa-pause"></i>';
 
-  const currentUrl = redditLightboxImages[redditLightboxIndex] || '';
+  const currentUrl = LightboxImages[LightboxIndex] || '';
   const currentIsVideo = currentUrl.toLowerCase().endsWith('.mp4') ||
                          currentUrl.toLowerCase().endsWith('.webm') ||
                          currentUrl.toLowerCase().endsWith('.mov') ||
@@ -2478,11 +2472,11 @@ function startRedditSlideshow() {
       }
       video.addEventListener('ended', video._slideshowEndedHandler || (() => {
         if (slideshowActive) {
-          nextRedditLightboxImage();
-          if (redditLightboxIndex < redditLightboxImages.length - 1) {
-            startRedditSlideshow();
+          nextLightboxImage();
+          if (LightboxIndex < LightboxImages.length - 1) {
+            startSlideshow();
           } else {
-            stopRedditSlideshow();
+            stopSlideshow();
           }
         }
       }));
@@ -2497,11 +2491,11 @@ function startRedditSlideshow() {
 
   const intervalSeconds = parseFloat(slideshowIntervalInput.value) || 3;
   slideshowTimer = setInterval(() => {
-    nextRedditLightboxImage();
+    nextLightboxImage();
   }, intervalSeconds * 1000);
 }
 
-function stopRedditSlideshow() {
+function stopSlideshow() {
   slideshowActive = false;
   lightboxModal.classList.remove('slideshow-active');
   clearSlideshowTimer();
@@ -2512,16 +2506,16 @@ function stopRedditSlideshow() {
   }
 }
 
-function toggleRedditSlideshow() {
+function toggleSlideshow() {
   if (slideshowActive) {
-    stopRedditSlideshow();
+    stopSlideshow();
   } else {
-    startRedditSlideshow();
+    startSlideshow();
   }
 }
 
 if (slideshowPlayBtn) {
-  slideshowPlayBtn.addEventListener('click', toggleRedditSlideshow);
+  slideshowPlayBtn.addEventListener('click', toggleSlideshow);
 }
 
 // Update slideshow interval when changed
@@ -2532,8 +2526,8 @@ if (slideshowIntervalInput) {
     
     // Restart slideshow with new interval if active
     if (slideshowActive) {
-      stopRedditSlideshow();
-      startRedditSlideshow();
+      stopSlideshow();
+      startSlideshow();
     }
   });
 }
@@ -3019,117 +3013,11 @@ deleteConfigBtn.addEventListener('click', async () => {
   }
 });
 
-// Subreddit input reference (used by both index.js and booru-browser.js)
-const subredditInput = document.getElementById('subreddit-input');
 const imageSizeSlider = document.getElementById('image-size-slider');
 const imageSizeValue = document.getElementById('image-size-value');
 const searchFilterInput = document.getElementById('search-filter-input');
-const subredditDropdown = document.getElementById('subreddit-dropdown');
 
 let currentImageSize = 250;
-
-// Subreddit history functions (shared by booru browser)
-let subredditHistory = [];
-try {
-  const saved = localStorage.getItem('subredditHistory');
-  if (saved) {
-    subredditHistory = JSON.parse(saved);
-  }
-} catch(e) {
-  console.error('Failed to load subreddit history:', e);
-  showToast('Failed to load subreddit history: ' + e.message, 'error');
-}
-
-function showSubredditDropdown() {
-  if (!subredditDropdown) return;
-  
-  subredditDropdown.innerHTML = '';
-  
-  if (subredditHistory.length === 0) {
-    const empty = document.createElement('div');
-    empty.className = 'subreddit-dropdown-empty';
-    empty.textContent = 'No saved subreddits yet';
-    subredditDropdown.appendChild(empty);
-  } else {
-    subredditHistory.forEach(subreddit => {
-      const item = document.createElement('div');
-      item.className = 'subreddit-dropdown-item';
-      
-      const name = document.createElement('div');
-      name.className = 'subreddit-dropdown-name';
-      name.textContent = subreddit;
-      
-      const deleteBtn = document.createElement('div');
-      deleteBtn.className = 'subreddit-dropdown-delete';
-      deleteBtn.innerHTML = '<i class="fas fa-times"></i>';
-      deleteBtn.title = 'Remove from history';
-      
-      deleteBtn.addEventListener('click', (e) => {
-        e.stopPropagation();
-        removeFromSubredditHistory(subreddit);
-      });
-      
-      item.addEventListener('click', (e) => {
-        if (e.target === deleteBtn || deleteBtn.contains(e.target)) return;
-        subredditInput.value = subreddit;
-        subredditDropdown.style.display = 'none';
-        if (typeof loadBooruImages === 'function') loadBooruImages();
-      });
-      
-      item.appendChild(name);
-      item.appendChild(deleteBtn);
-      subredditDropdown.appendChild(item);
-    });
-  }
-  
-  subredditDropdown.style.display = 'block';
-}
-
-function removeFromSubredditHistory(subreddit) {
-  const cleanSubreddit = subreddit.trim().toLowerCase();
-  subredditHistory = subredditHistory.filter(s => s.toLowerCase() !== cleanSubreddit);
-  
-  try {
-    localStorage.setItem('subredditHistory', JSON.stringify(subredditHistory));
-    showSubredditDropdown();
-  } catch(e) {
-    console.error('Failed to update subreddit history:', e);
-    showToast('Failed to update subreddit history: ' + e.message, 'error');
-  }
-}
-
-function addToSubredditHistory(subreddit) {
-  if (!subreddit || subreddit.trim() === '') return;
-  const cleanSubreddit = subreddit.trim().toLowerCase();
-  
-  subredditHistory = subredditHistory.filter(s => s.toLowerCase() !== cleanSubreddit);
-  subredditHistory.unshift(cleanSubreddit);
-  
-  if (subredditHistory.length > 20) {
-    subredditHistory = subredditHistory.slice(0, 20);
-  }
-  
-  try {
-    localStorage.setItem('subredditHistory', JSON.stringify(subredditHistory));
-  } catch(e) {
-    console.error('Failed to save subreddit history:', e);
-    showToast('Failed to save subreddit history: ' + e.message, 'error');
-  }
-}
-
-if (subredditInput) {
-  subredditInput.addEventListener('focus', showSubredditDropdown);
-  subredditInput.addEventListener('click', showSubredditDropdown);
-}
-
-document.addEventListener('click', (e) => {
-  if (subredditDropdown && 
-      subredditDropdown.style.display === 'block' && 
-      !subredditDropdown.contains(e.target) && 
-      e.target !== subredditInput) {
-    subredditDropdown.style.display = 'none';
-  }
-});
 
 // Shared IntersectionObserver for lazy loading
 let sharedImageObserver = null;
@@ -3182,6 +3070,3 @@ if ('IntersectionObserver' in window) {
     threshold: 0.01
   });
 }
-
-// Old Reddit-specific code removed - now handled by booru-browser.js
-// All Reddit/Booru viewer functionality is in booru-browser.js

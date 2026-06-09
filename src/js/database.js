@@ -72,6 +72,16 @@ async function initDatabase() {
       tag TEXT NOT NULL,
       PRIMARY KEY (source, tag)
     );
+    
+    CREATE TABLE IF NOT EXISTS css_presets (
+      id TEXT PRIMARY KEY,
+      name TEXT NOT NULL UNIQUE,
+      code TEXT,
+      is_active BOOLEAN DEFAULT 0,
+      order_index INTEGER,
+      created_at INTEGER,
+      updated_at INTEGER
+    );
   `);
 
   migrateDownloadedPostsSchema();
@@ -565,6 +575,74 @@ function loadDownloadSettings() {
   return { downloadFolder: '' };
 }
 
+// ============== CSS Presets operations ==============
+
+function saveCSSPreset(preset) {
+  if (!db) throw new Error('Database not initialized');
+  if (!preset || !preset.name) throw new Error('Preset must have a name');
+  
+  const id = preset.id || `css-preset-${Date.now()}-${Math.random().toString(36).substr(2, 9)}`;
+  const now = Date.now();
+  
+  try {
+    const stmt = db.prepare(`
+      INSERT OR REPLACE INTO css_presets 
+      (id, name, code, is_active, order_index, created_at, updated_at)
+      VALUES (?, ?, ?, ?, ?, ?, ?)
+    `);
+    
+    stmt.run(
+      id,
+      preset.name,
+      preset.code || '',
+      preset.is_active ? 1 : 0,
+      preset.order_index !== undefined ? preset.order_index : 0,
+      preset.created_at || now,
+      now
+    );
+    return id;
+  } catch (error) {
+    console.error('❌ saveCSSPreset FAILED:', error.message);
+    throw error;
+  }
+}
+
+function getAllCSSPresets() {
+  if (!db) throw new Error('Database not initialized');
+  
+  const stmt = db.prepare('SELECT * FROM css_presets ORDER BY order_index ASC, created_at ASC');
+  const rows = stmt.all();
+  
+  return rows || [];
+}
+
+function getActiveCSSPresets() {
+  if (!db) throw new Error('Database not initialized');
+  
+  const stmt = db.prepare('SELECT * FROM css_presets WHERE is_active = 1 ORDER BY order_index ASC, created_at ASC');
+  const rows = stmt.all();
+  
+  return rows || [];
+}
+
+function removeCSSPreset(id) {
+  if (!db) throw new Error('Database not initialized');
+  
+  const stmt = db.prepare('DELETE FROM css_presets WHERE id = ?');
+  stmt.run(id);
+  
+  return true;
+}
+
+function updateCSSPresetActiveStatus(id, isActive) {
+  if (!db) throw new Error('Database not initialized');
+  
+  const stmt = db.prepare('UPDATE css_presets SET is_active = ?, updated_at = ? WHERE id = ?');
+  stmt.run(isActive ? 1 : 0, Date.now(), id);
+  
+  return true;
+}
+
 module.exports = {
   initDatabase,
   closeDatabase,
@@ -587,5 +665,10 @@ module.exports = {
   loadTagSuggestions,
   queryTagSuggestions,
   saveDownloadSettings,
-  loadDownloadSettings
+  loadDownloadSettings,
+  saveCSSPreset,
+  getAllCSSPresets,
+  getActiveCSSPresets,
+  removeCSSPreset,
+  updateCSSPresetActiveStatus
 };

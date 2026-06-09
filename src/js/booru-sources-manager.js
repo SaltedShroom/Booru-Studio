@@ -289,11 +289,6 @@ class BooruSourcesManager {
   }
 
   setupEventListeners() {
-    // Add new source button
-    document.getElementById('add-booru-source-btn')?.addEventListener('click', () => {
-      this.openModal();
-    });
-
     // Modal close buttons
     document.getElementById('close-booru-source-modal')?.addEventListener('click', () => {
       this.closeModal();
@@ -351,11 +346,6 @@ class BooruSourcesManager {
       }
     });
 
-    // Import source button
-    document.getElementById('import-booru-source-btn')?.addEventListener('click', () => {
-      this.openImportModal();
-    });
-
     document.getElementById('close-import-source-modal')?.addEventListener('click', () => {
       this.closeImportModal();
     });
@@ -381,6 +371,9 @@ class BooruSourcesManager {
     });
     document.getElementById('export-source-modal')?.addEventListener('click', (e) => {
       if (e.target.classList.contains('modal-overlay')) this.closeExportModal();
+    });
+    document.getElementById('copy-export-source-btn')?.addEventListener('click', () => {
+      if (this._exportingSource) this.copySourceJsonToClipboard(this._exportingSource);
     });
     document.getElementById('download-export-source-btn')?.addEventListener('click', () => {
       if (this._exportingSource) this.downloadSourceJson(this._exportingSource);
@@ -415,13 +408,24 @@ class BooruSourcesManager {
     listContainer.innerHTML = '';
 
     if (this.sources.length === 0) {
-      listContainer.innerHTML = '<p style="color: var(--text-secondary); text-align: center; padding: 20px;">No sources configured. Click "Add New Source" to get started.</p>';
-      return;
+          listContainer.innerHTML = '<p style="color: var(--text-secondary); text-align: center; padding: 20px;">No sources configured. Click "Add New Source" to get started.</p>';
     }
 
     this.sources.forEach(source => {
       const card = this.createSourceCard(source);
       listContainer.appendChild(card);
+    });
+    
+    const buttonContainer = document.createElement('div');
+    buttonContainer.className = 'booru-source-card';
+    buttonContainer.innerHTML = '<div class="add-booru-button-container"><button id="add-booru-source-btn" class="btn-primary" type="button" title="Add New Source"><i class="fas fa-plus"></i></button><button id="import-booru-source-btn" class="btn-secondary" type="button" title="Import Source"><i class="fas fa-file-import"></i></button></div>';
+    listContainer.appendChild(buttonContainer);
+    
+    document.getElementById('add-booru-source-btn')?.addEventListener('click', () => {
+      this.openModal();
+    });
+    document.getElementById('import-booru-source-btn')?.addEventListener('click', () => {
+      this.openImportModal();
     });
   }
 
@@ -654,6 +658,20 @@ class BooruSourcesManager {
     a.click();
     document.body.removeChild(a);
     URL.revokeObjectURL(url);
+  }
+
+  copySourceJsonToClipboard(source) {
+    const json = JSON.stringify(source, null, 2);
+    navigator.clipboard.writeText(json).then(() => {
+      if (typeof showToast === 'function') {
+        showToast(`Source JSON copied to clipboard`, 'success');
+      }
+    }).catch(err => {
+      console.error('Failed to copy to clipboard:', err);
+      if (typeof showToast === 'function') {
+        showToast('Failed to copy to clipboard', 'error');
+      }
+    });
   }
 
   // ---- End Import / Export ----

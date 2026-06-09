@@ -86,8 +86,11 @@ function startServer() {
     const http = require('http');
     const handler = require('serve-handler');
     const webServer = http.createServer((req, res) => {
+      const urlObj = new URL(req.url, 'http://localhost:3000');
+      const pathname = urlObj.pathname;
+      
       // Serve index.html at root path
-      if (req.url === '/' || req.url === '') {
+      if (pathname === '/' || pathname === '') {
         const indexPath = path.join(__dirname, 'index.html');
         fs.readFile(indexPath, 'utf8', (err, data) => {
           if (err) {
@@ -100,8 +103,58 @@ function startServer() {
         });
         return;
       }
-      return handler(req, res, {
-        public: path.join(__dirname, '..', '..'),
+      
+      // Serve static files from workspace root (including node_modules)
+      const filePath = path.join(__dirname, '..', '..', pathname);
+      
+      // Security: prevent directory traversal
+      if (!filePath.startsWith(path.join(__dirname, '..', '..'))) {
+        res.writeHead(403, { 'Content-Type': 'text/plain' });
+        res.end('403: Forbidden');
+        return;
+      }
+      
+      // Try to serve the file
+      fs.stat(filePath, (err, stats) => {
+        if (err) {
+          // File doesn't exist, use serve-handler
+          return handler(req, res, {
+            public: path.join(__dirname, '..', '..'),
+          });
+        }
+        
+        if (stats.isDirectory()) {
+          // It's a directory, use serve-handler
+          return handler(req, res, {
+            public: path.join(__dirname, '..', '..'),
+          });
+        }
+        
+        // Serve the file
+        fs.readFile(filePath, (err, data) => {
+          if (err) {
+            res.writeHead(500, { 'Content-Type': 'text/plain' });
+            res.end('500: Internal Server Error');
+            return;
+          }
+          
+          // Determine content type
+          const ext = path.extname(filePath).toLowerCase();
+          let contentType = 'application/octet-stream';
+          if (ext === '.js') contentType = 'application/javascript';
+          else if (ext === '.css') contentType = 'text/css';
+          else if (ext === '.html') contentType = 'text/html';
+          else if (ext === '.json') contentType = 'application/json';
+          else if (ext === '.png') contentType = 'image/png';
+          else if (ext === '.jpg' || ext === '.jpeg') contentType = 'image/jpeg';
+          else if (ext === '.gif') contentType = 'image/gif';
+          else if (ext === '.svg') contentType = 'image/svg+xml';
+          else if (ext === '.woff' || ext === '.woff2') contentType = 'font/woff2';
+          else if (ext === '.ttf') contentType = 'font/ttf';
+          
+          res.writeHead(200, { 'Content-Type': contentType });
+          res.end(data);
+        });
       });
     });
     

@@ -1,6 +1,6 @@
 {
   "name": "Booru-Studio",
-  "version": "1.1.5",
+  "version": "1.1.6",
   "description": "Booru Studio",
   "author": "SaltedShroom",
   "main": "src/js/electron-main.js",
@@ -73,6 +73,7 @@
     "http-proxy-agent": "^7.0.0",
     "https-proxy-agent": "^7.0.2",
     "justifiedGallery": "^3.8.1",
+    "monaco-editor": "^0.55.1",
     "mosaic-node-generator": "^1.1.5",
     "odometer": "^0.4.8",
     "photosaic": "^0.2.1",
