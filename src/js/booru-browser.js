@@ -6030,6 +6030,11 @@ function createBooruImageElement(post, maxHeight = null, imageWidth = null) {
   
   container.appendChild(mediaElement);
   
+  // Add overlay div
+  const itemOverlay = document.createElement('div');
+  itemOverlay.className = 'item-overlay';
+  container.appendChild(itemOverlay);
+  
   container.addEventListener('click', (e) => { 
     openBooruLightbox(post.imageUrl, post.id, post.source);
   });
