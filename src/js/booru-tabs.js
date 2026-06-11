@@ -497,7 +497,9 @@ function applyState(state) {
   }
   if (sizeSlider && sizeSlider.value !== String(state.imageSize)) {
     sizeSlider.value = state.imageSize || 250;
-    document.documentElement.style.setProperty('--booru-image-size', `${Math.min(state.imageSize || 250, 300)}px`);
+    const imageSize = Math.min(state.imageSize || 250, 300);
+    document.documentElement.style.setProperty('--booru-image-size', `${imageSize}px`);
+    document.documentElement.style.setProperty('--booru-image-item-border-width', `${imageSize / 220 * 3}px`);
   }
   if (sizeValue) {
     sizeValue.textContent = `${state.imageSize || 250}px`;
@@ -523,11 +525,15 @@ function applyState(state) {
 
   const imageSizeSlider = document.getElementById('image-size-slider');
   const currentImageSize = parseInt(imageSizeSlider.value, 10);
+  const minImageSize = Math.min(currentImageSize, 300);
+  const borderWidth = minImageSize / 220 * 3;
   // Set the CSS variable for image size on the gallery wrapper instead of document root
   if (galleryWrapper) {
-    galleryWrapper.style.setProperty('--booru-image-size', `${Math.min(currentImageSize, 300)}px`);
+    galleryWrapper.style.setProperty('--booru-image-size', `${minImageSize}px`);
+    galleryWrapper.style.setProperty('--booru-image-item-border-width', `${borderWidth}px`);
   } else {
-    document.documentElement.style.setProperty('--booru-image-size', `${Math.min(currentImageSize, 300)}px`);
+    document.documentElement.style.setProperty('--booru-image-size', `${minImageSize}px`);
+    document.documentElement.style.setProperty('--booru-image-item-border-width', `${borderWidth}px`);
   }
   if (typeof imageSizeValue !== 'undefined' && imageSizeValue) {
     imageSizeValue.textContent = `${currentImageSize}px`;

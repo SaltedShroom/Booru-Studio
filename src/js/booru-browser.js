@@ -1994,7 +1994,7 @@ function updateArtistFilter() {
   if (!leftControls) return;
 
   const searchInput = document.getElementById('search-filter-input');
-  const posts = Array.isArray(window.allDownloadedPosts) ? window.allDownloadedPosts : [];
+  const posts = Array.isArray(window.downloadsGalleryOriginalPosts) ? window.downloadsGalleryOriginalPosts : [];
   const artistSelect = document.getElementById('downloads-artist-select') || document.createElement('select');
   artistSelect.id = 'downloads-artist-select';
   artistSelect.classList.add('js-example-basic-single');
@@ -2051,7 +2051,32 @@ function updateArtistFilter() {
 
   function handleArtistSelection(selectedArtist) {
     if (!searchInput) return;
-    searchInput.value = selectedArtist;
+    
+    if (selectedArtist === '') {
+      // "-" was selected, remove all artist names from search input
+      const allArtists = Array.from(artistSelect.options)
+        .map(option => option.value)
+        .filter(value => value !== ''); // Exclude the "-" option
+      
+      let searchText = searchInput.value;
+      allArtists.forEach(artist => {
+        // Remove artist as whole word, with regex escaping for special characters
+        const regex = new RegExp(`\\b${artist.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}\\b`, 'gi');
+        searchText = searchText.replace(regex, '').trim();
+      });
+      
+      searchInput.value = searchText;
+    } else {
+      if (!searchInput.value.includes(selectedArtist)) {
+        // Add selected artist to search
+        searchInput.value += " " + selectedArtist;
+      } else {
+        // Artist already in search, remove it
+        const regex = new RegExp(`\\b${selectedArtist.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}\\b`, 'gi');
+        searchInput.value = searchInput.value.replace(regex, '').trim();
+      }
+    }
+    
     searchInput.dispatchEvent(new Event('input', { bubbles: true }));
     searchInput.dispatchEvent(new Event('blur', { bubbles: true }));
   }
@@ -2073,9 +2098,53 @@ function updateArtistFilter() {
       templateResult: formatArtistOption,
       templateSelection: formatArtistSelection,
       escapeMarkup: markup => markup
+    }).off('select2:closing select2:select select2:opening');
+    
+    // Helper function to highlight selected artists
+    function highlightSelectedArtists() {
+      const searchWords = searchInput.value
+        .split(/\s+/)
+        .filter(word => word.length > 0)
+        .map(word => word.toLowerCase());
+      
+      const options = document.querySelectorAll('li.select2-results__option');
+      options.forEach(option => {
+        const artistTag = option.querySelector('span.artist-tag');
+        if (artistTag) {
+          const artistName = artistTag.textContent.trim().toLowerCase();
+          if (searchWords.includes(artistName)) {
+            option.classList.add('artist-select-selected');
+          } else {
+            option.classList.remove('artist-select-selected');
+          }
+        }
+      });
+    }
+    
+    $(artistSelect).on('select2:opening', function (e) {
+      // When dropdown opens, highlight artists that match search input words
+      setTimeout(() => {
+        highlightSelectedArtists();
+        
+        // Watch for DOM changes in the results container and re-highlight
+        const resultsContainer = document.querySelector('.select2-results');
+        if (resultsContainer && !resultsContainer._artistHighlightObserver) {
+          const observer = new MutationObserver(() => {
+            highlightSelectedArtists();
+          });
+          observer.observe(resultsContainer, { childList: true, subtree: true });
+          resultsContainer._artistHighlightObserver = observer;
+        }
+      }, 0);
     }).on('select2:select', function (e) {
-      const selectedArtist = e.params?.data?.id || $(this).val();
+      // Handle regular artist selection
+      const selectedArtist = $(this).val();
       handleArtistSelection(selectedArtist);
+      $(this).select2('open');
+      setTimeout(() => {
+        // After selection, reopen the dropdown to allow multiple selections without closing
+        $(this).select2('open');
+      }, 400);
     });
   } else {
     const artistChangeHandler = () => handleArtistSelection(artistSelect.value);
@@ -2084,6 +2153,42 @@ function updateArtistFilter() {
   }
 }
 
+// Global document click listener to catch clicks on "-" option in artist dropdown
+// Global document mousedown listener to catch clicks on "-" option in artist dropdown
+// Using mousedown instead of click because select2 may prevent click propagation
+document.addEventListener('mousedown', (e) => {
+  const clickedOption = e.target.closest('li.select2-results__option');
+  if (clickedOption && clickedOption.textContent.trim() === '-') {
+    // Check if this is the artist filter dropdown
+    const resultsContainer = clickedOption.closest('.select2-results');
+    if (resultsContainer) {
+      const select2Container = resultsContainer.closest('.select2-container');
+      if (select2Container) {
+        const artistSelect = document.getElementById('downloads-artist-select');
+        const searchInput = document.getElementById('search-filter-input');
+        if (artistSelect && searchInput) {
+          // Remove all artist names from search input
+          const allArtists = Array.from(artistSelect.options)
+            .map(option => option.value)
+            .filter(value => value !== '');
+          
+          let searchText = searchInput.value;
+          allArtists.forEach(artist => {
+            const regex = new RegExp(`\\b${artist.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}\\b`, 'gi');
+            searchText = searchText.replace(regex, '').trim();
+          });
+          
+          searchInput.value = searchText;
+          searchInput.dispatchEvent(new Event('input', { bubbles: true }));
+          searchInput.dispatchEvent(new Event('blur', { bubbles: true }));
+        }
+      }
+    }
+  }
+}, true); // Use capture phase to catch the event early
+
+
+
 
 function updateSourceFilter() {
   const controlBar = document.querySelector('header.control-bar.booru-control-bar');
@@ -2091,7 +2196,7 @@ function updateSourceFilter() {
   if (!leftControls) return;
 
   const searchInput = document.getElementById('search-filter-input');
-  const posts = Array.isArray(window.allDownloadedPosts) ? window.allDownloadedPosts : [];
+  const posts = Array.isArray(window.downloadsGalleryOriginalPosts) ? window.downloadsGalleryOriginalPosts : [];
   const sourceCounts = {};
 
   posts.forEach(post => {
@@ -3874,12 +3979,16 @@ function initBooruBrowser() {
     window._lastGalleryType = 'booru'; // 'booru' or 'downloads'
     imageSizeSlider.addEventListener('input', () => {
       currentImageSize = parseInt(imageSizeSlider.value, 10);
+      const minImageSize = Math.min(currentImageSize, 300);
+      const borderWidth = minImageSize / 220 * 3;
       // Set the CSS variable for image size on the gallery wrapper instead of document root
       const galleryWrapper = document.getElementById('gallery-wrapper');
       if (galleryWrapper) {
-        galleryWrapper.style.setProperty('--booru-image-size', `${Math.min(currentImageSize, 300)}px`);
+        galleryWrapper.style.setProperty('--booru-image-size', `${minImageSize}px`);
+        galleryWrapper.style.setProperty('--booru-image-item-border-width', `${borderWidth}px`);
       } else {
-        document.documentElement.style.setProperty('--booru-image-size', `${Math.min(currentImageSize, 300)}px`);
+        document.documentElement.style.setProperty('--booru-image-size', `${minImageSize}px`);
+        document.documentElement.style.setProperty('--booru-image-item-border-width', `${borderWidth}px`);
       }
       if (typeof imageSizeValue !== 'undefined' && imageSizeValue) {
         imageSizeValue.textContent = `${currentImageSize}px`;
@@ -7071,7 +7180,7 @@ function showPreviewForElement(mediaElement, forceVideoLoad = false) {
           canvas.width = mediaElement.naturalWidth;
           canvas.height = mediaElement.naturalHeight;
           const ctx = canvas.getContext('2d');
-          if (ctx && mediaElement.naturalWidth > 0 && mediaElement.naturalHeight > 0) {
+          if (ctx && mediaElement.naturalWidth > 0 && mediaElement.naturalHeight > 0 && mediaElement.complete) {
             ctx.drawImage(mediaElement, 0, 0);
             img.src = canvas.toDataURL('image/jpeg', 0.92);
           } else {

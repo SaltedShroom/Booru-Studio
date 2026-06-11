@@ -547,6 +547,10 @@ body, html {
   font-size: 12px;
 }
 
+.select2-dropdown .artist-select-selected {
+  background: var(--surface-dark);
+}
+
 .search-right-fade {
   position: absolute;
   pointer-events: none;
@@ -2965,7 +2969,8 @@ body, html {
   box-sizing: border-box;
   display: block;
   text-decoration: none;
-  background: var(--bg-darkest); /* Background visible while image loads */
+  background: var(--bg-darkest) !important; /* Background visible while image loads */
+  box-shadow: inset 0 0 0 1px var(--bg-dark) !important;
   filter: opacity(0);
   transition: filter 0.6s ease;
 }
@@ -3122,7 +3127,7 @@ body, html {
   width: 100%;
   height: 100%;
   pointer-events: none;
-  opacity: 1;
+  opacity: 1 !important;
   box-shadow: var(--booru-image-item-shadow);
 }
 
@@ -3151,7 +3156,7 @@ body, html {
 .booru-gallery:not(.downloads-gallery) .booru-image-item[data-downloaded="true"].file-type-image .item-overlay {
   border-color: var(--border-image) !important;
 }
-.booru-gallery:not(.downloads-gallery) .booru-image-item[data-downloaded="true"].file-type-image {
+.booru-gallery:not(.downloads-gallery) .booru-image-item[data-downloaded="true"] {
   scale: 0.93;
   filter: opacity(0.4);
 }
@@ -3160,18 +3165,10 @@ body, html {
 .booru-gallery:not(.downloads-gallery) .booru-image-item[data-downloaded="true"].file-type-gif .item-overlay {
   border-color: var(--border-gif) !important;
 }
-.booru-gallery:not(.downloads-gallery) .booru-image-item[data-downloaded="true"].file-type-gif {
-  scale: 0.93;
-  filter: opacity(0.4);
-}
 .booru-gallery:not(.downloads-gallery) .booru-image-item[data-downloaded="true"].file-type-video img,
 .booru-gallery:not(.downloads-gallery) .booru-image-item[data-downloaded="true"].file-type-video video,
 .booru-gallery:not(.downloads-gallery) .booru-image-item[data-downloaded="true"].file-type-video .item-overlay {
   border-color: var(--border-video) !important;
-}
-.booru-gallery:not(.downloads-gallery) .booru-image-item[data-downloaded="true"].file-type-video {
-  scale: 0.93;
-  filter: opacity(0.4);
 }
 
 .booru-gallery:not(.downloads-gallery) .booru-image-item[data-downloaded="true"].file-type-image::after {
