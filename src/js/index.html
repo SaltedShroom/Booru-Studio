@@ -3,7 +3,7 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
-<meta http-equiv="Content-Security-Policy" content="default-src 'self' https:; script-src 'self' 'unsafe-inline' 'unsafe-eval' https://code.jquery.com https://cdnjs.cloudflare.com https://fonts.googleapis.com; style-src 'self' 'unsafe-inline' https://fonts.googleapis.com https://cdnjs.cloudflare.com; img-src 'self' data: blob: https: http:; font-src 'self' https://fonts.gstatic.com https://cdnjs.cloudflare.com; media-src 'self' data: blob: https: http:; connect-src 'self' http://localhost:* https: wss: ws:; object-src 'none';" />
+<meta http-equiv="Content-Security-Policy" content="default-src 'self' https:; script-src 'self' 'unsafe-inline' 'unsafe-eval'; style-src 'self' 'unsafe-inline'; img-src 'self' data: blob: https: http:; font-src 'self' data:; media-src 'self' data: blob: https: http:; connect-src 'self' http://localhost:* https: wss: ws:; object-src 'none';" />
 <title>Booru Studio</title>
 <link rel="icon" type="image/x-icon" href="/src/assets/favicon/favicon.ico">
 <link rel="icon" type="image/png" sizes="32x32" href="/src/assets/favicon/favicon-32x32.png">
@@ -15,8 +15,8 @@
 <link rel="stylesheet" href="/node_modules/justifiedGallery/dist/css/justifiedGallery.min.css">
 <link rel="stylesheet" href="/node_modules/odometer/themes/odometer-theme-minimal.css">
 <link rel="stylesheet" href="/node_modules/select2/dist/css/select2.min.css">
-<link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&display=swap" rel="stylesheet">
-<link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.5.1/css/all.min.css">
+<link rel="stylesheet" href="/node_modules/@fontsource/inter/index.css">
+<link rel="stylesheet" href="/node_modules/@fortawesome/fontawesome-free/css/all.min.css">
 <script>
   // Immediately restore active tab to prevent flash
   (function() {
@@ -1042,16 +1042,16 @@
       <i class="fa-solid fa-angle-right"></i>
     </button>
   </div>
+<script src="/node_modules/jquery/dist/jquery.min.js"></script>
+<script src="/node_modules/justifiedGallery/dist/js/jquery.justifiedGallery.min.js"></script>
+<script src="/node_modules/select2/dist/js/select2.min.js"></script>
 <script src="/node_modules/chart.js/dist/chart.umd.min.js" defer></script>
 <script src="/node_modules/odometer/odometer.min.js" defer></script>
-<script src="https://code.jquery.com/jquery-3.7.1.min.js" defer></script>
-<script src="/node_modules/justifiedGallery/dist/js/jquery.justifiedGallery.min.js" defer></script>
-<script src="/node_modules/select2/dist/js/select2.min.js" defer></script>
 <!-- CodeMirror for CSS editing -->
-<link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/codemirror/5.65.2/codemirror.min.css">
-<link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/codemirror/5.65.2/theme/material-darker.min.css">
-<script src="https://cdnjs.cloudflare.com/ajax/libs/codemirror/5.65.2/codemirror.min.js"></script>
-<script src="https://cdnjs.cloudflare.com/ajax/libs/codemirror/5.65.2/mode/css/css.min.js"></script>
+<link rel="stylesheet" href="/node_modules/codemirror/lib/codemirror.css">
+<link rel="stylesheet" href="/node_modules/codemirror/theme/material-darker.css">
+<script src="/node_modules/codemirror/lib/codemirror.js"></script>
+<script src="/node_modules/codemirror/mode/css/css.js"></script>
 <script src="/src/js/cleanup-manager.js" defer></script>
 <script src="/src/js/db-store.js" defer></script>
 <script src="/src/js/virtual-gallery.js" defer></script>
