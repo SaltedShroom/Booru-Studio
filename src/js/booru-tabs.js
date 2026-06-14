@@ -557,16 +557,22 @@ function applyState(state) {
 
 // Save current tab state (called frequently, uses debouncing)
 function saveCurrentTabState() {
+  // Don't save during tab restoration - prevents corrupting the tab's state
+  if (window.isRestoringTab) {
+    return;
+  }
+  
   if (activeTabId) {
     const tab = booruTabs.find(t => t.id === activeTabId);
     if (tab) {
+ 
       tab.state = getCurrentState();
       
       // Save scroll position
       const content = document.querySelector('.booru-content');
       if (content) {
         tab.scrollPosition = content.scrollTop;
-
+       
         // Also record the first post that is at least partially visible so we
         // can restore by element anchor instead of a raw pixel offset (which
         // becomes unreliable after a full gallery re-render + JG reflow).
@@ -584,6 +590,7 @@ function saveCurrentTabState() {
       
       // Save booruPosts array (just data, no HTML)
       if (window.booruPosts) {
+        const prevLength = tab.booruPosts?.length || 0;
         tab.booruPosts = [...window.booruPosts];
       }
       
@@ -593,6 +600,9 @@ function saveCurrentTabState() {
       }
       if (window.hasMoreResults !== undefined) {
         tab.hasMoreResults = window.hasMoreResults;
+      }
+      if (window.booruPaginationToken !== undefined) {
+        tab.paginationToken = window.booruPaginationToken;
       }
       
       // Use debounced save to avoid constant writes
@@ -793,6 +803,13 @@ function switchToTab(tabId) {
   
   // (State already saved above, before cleanupGallery)
   
+  // CRITICAL: Set restoration flag BEFORE any other changes to block saves during transition
+  window.isRestoringTab = true;
+
+  // CRITICAL: Clear window.booruPosts BEFORE changing activeTabId to prevent
+  // saveCurrentTabState() from capturing old posts during async tab switch
+  window.booruPosts = [];
+  
   // Call hook for booru source change tracking BEFORE updating activeTabId
   const previousTabId = activeTabId;
   if (window._onBooruTabSwitch) {
@@ -817,11 +834,14 @@ function switchToTab(tabId) {
   const tab = booruTabs.find(t => t.id === tabId);
   if (tab) {
       const renderTab = () => {
-        // Restore booruPosts array first
+        // isRestoringTab already set to true in switchToTab before posts cleared
+        // window.booruPosts already cleared in switchToTab before activeTabId change
+        // Restore booruPosts array
         if (tab.booruPosts && tab.booruPosts.length > 0) {
           // if any post in tab.booruPosts is missing imageUrl, skip restoring and trigger a reload to fetch fresh data
           const hasMissingData = tab.booruPosts.some(post => !post.imageUrl);
           if (hasMissingData) {
+            window.isRestoringTab = false;
             document.getElementById('reload-booru-btn')?.click();
             return;
           }
@@ -836,6 +856,14 @@ function switchToTab(tabId) {
         }
         if (tab.hasMoreResults !== undefined) {
           window.hasMoreResults = tab.hasMoreResults;
+        }
+        if (tab.paginationToken !== undefined) {
+          window.booruPaginationToken = tab.paginationToken;
+        }
+        
+        // Restore pagination state to local booru-browser variables
+        if (typeof window.restoreBooruPaginationState === 'function') {
+          window.restoreBooruPaginationState();
         }
         
         // Apply state to controls
@@ -870,6 +898,8 @@ function switchToTab(tabId) {
           if (content) {
             content.classList.remove('hidden');
           }
+          // Clear restoration flag after content is revealed
+          window.isRestoringTab = false;
         };
 
         // Register jg.complete listener BEFORE calling renderBooruGallery so it
@@ -898,10 +928,14 @@ function switchToTab(tabId) {
           };
 
           if (gallery && typeof $ !== 'undefined' && typeof $.fn.justifiedGallery !== 'undefined') {
-            $(gallery).one('jg.complete', () => setTimeout(restoreScroll, 30));
+            $(gallery).one('jg.complete', () => {
+              setTimeout(restoreScroll, 30);
+            });
           }
           // Fallback: if jg.complete never fires within 800 ms, restore anyway
-          setTimeout(restoreScroll, 800);
+          setTimeout(() => {
+            restoreScroll();
+          }, 5000);
         } else {
           // No scroll to restore — just reveal after JG lays out
           if (gallery && typeof $ !== 'undefined' && typeof $.fn.justifiedGallery !== 'undefined') {

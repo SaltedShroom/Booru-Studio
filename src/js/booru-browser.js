@@ -279,7 +279,10 @@ const booruTotalCount = document.getElementById('booru-total-count');
 
 // Global booru state - use window properties for tab persistence
 let booruPaginationToken = null;
+window.booruPaginationToken = booruPaginationToken; // Make accessible for tab state saving
 let isLoadingBooru = false;
+let isRestoringTab = false; // Flag to prevent loading during tab restoration
+window.isRestoringTab = false; // Make accessible globally
 let aiFilterEnabled = false; // AI filter OFF by default
 let maxRecommendedTags = 20;
 let activeDownloadsSidebarTab = 'analytics'; // or 'mosaic'
@@ -4639,6 +4642,11 @@ function updateTagSuggestions(source, posts) {
 
 // Load images based on current source
 async function loadBooruImages(append = false) {
+  // Don't load during tab restoration - use saved posts instead
+  if (window.isRestoringTab) {
+    return;
+  }
+  
   if (!append) {
     // new gallery load, drop any existing preview cache to avoid stale thumbnails
     if (window._previewCache) window._previewCache.clear();
@@ -4916,10 +4924,16 @@ async function loadGenericBooru(sourceId, append) {
     }
     
     booruPaginationToken = page;
+    window.booruPaginationToken = booruPaginationToken; // Update window property when page changes
     
     // Check if we got fewer results than requested (likely end of results)
     if (posts.length < limit) {
       window.hasMoreResults = false;
+    }
+    
+    // Save the updated pagination state to the current tab
+    if (typeof saveCurrentTabState === 'function') {
+      saveCurrentTabState();
     }
     
     // Normalize posts using config field mappings
@@ -6454,6 +6468,19 @@ let isScrolling = false;
 let scrollBlockPreview = false;
 let scrollBlockTimer = null;
 
+// Global function to restore pagination token from window property
+window.restoreBooruPaginationState = function() {
+  if (window.booruPaginationToken !== undefined) {
+    booruPaginationToken = window.booruPaginationToken;
+  }
+  if (window.totalResultCount !== undefined) {
+    totalResultCount = window.totalResultCount;
+  }
+  if (window.hasMoreResults !== undefined) {
+    hasMoreResults = window.hasMoreResults;
+  }
+};
+
 // Global function to reset preview frozen state
 window.resetPreviewFrozen = function() {
   isShiftHeld = false;
@@ -6555,24 +6582,6 @@ document.addEventListener('keydown', (e) => {
   }
 });
 
-document.addEventListener('keyup', (e) => {
-  if (e.key === 'Shift') {
-    isShiftHeld = false;
-    previewFrozen = false;
-    booruHoverPreview.classList.remove('frozen');
-    document.body.style.userSelect = '';
-    if (booruHoverPreview.classList.contains('active')) {
-      booruHoverPreview.classList.remove('active');
-      pauseAllPreviewVideos();
-    }
-    if (tagsChangedWhileFrozen) {
-      tagsChangedWhileFrozen = false;
-      loadBooruImages(false);
-    }
-    commitPreviewFrozenTagChanges();
-  }
-});
-
 document.addEventListener('mousedown', (e) => {
   if (e.button === 2) {
     e.preventDefault();
@@ -6585,23 +6594,75 @@ document.addEventListener('mousedown', (e) => {
   }
 });
 
+document.addEventListener('keyup', (e) => {
+  if (e.key === 'Shift') {
+    e.preventDefault();
+    booruHoverPreview.classList.remove('frozen');
+    previewFrozen = false;
+    isShiftHeld = false;
+
+    // Only hide preview if not hovering over a booru post
+    const elementsUnderCursor = document.elementsFromPoint(lastMouseX, lastMouseY);
+    const mediaElement = elementsUnderCursor.find(el => 
+      el.matches('.booru-image-item img, .booru-image-item video')
+    );
+    if (mediaElement) {
+      window.booruLastHoveredElement = mediaElement;
+      showPreviewForElement(mediaElement);
+      
+      // Position preview at mouse location
+      if (booruHoverPreview.classList.contains('active')) {
+        const offset = 40;
+        const previewRect = booruHoverPreview.getBoundingClientRect();
+        let x = lastMouseX + offset;
+        let y = lastMouseY + offset;
+        
+        if (x + previewRect.width > window.innerWidth) {
+          x = lastMouseX - previewRect.width - offset;
+        }
+        if (x < 0) x = 10;
+        
+        if (y + previewRect.height > window.innerHeight) {
+          y = lastMouseY - previewRect.height - offset;
+        }
+        if (y < 0) y = 10;
+        
+        booruHoverPreview.style.left = x + 'px';
+        booruHoverPreview.style.top = y + 'px';
+      }
+    } else {
+      pauseAllPreviewVideos();
+      booruHoverPreview.classList.remove('active');
+      document.body.style.userSelect = '';
+    }
+    
+    // if (tagsChangedWhileFrozen) {
+    //   tagsChangedWhileFrozen = false;
+    //   loadBooruImages(false);
+    // }
+    // commitPreviewFrozenTagChanges();
+  }
+});
+
 document.addEventListener('mouseup', (e) => {
   if (e.button === 2) {
     e.preventDefault();
-    booruHoverPreview.classList.add('active');
-    isShiftHeld = false;
-    previewFrozen = false;
     booruHoverPreview.classList.remove('frozen');
-    document.body.style.userSelect = '';
-    if (booruHoverPreview.classList.contains('active')) {
-      booruHoverPreview.classList.remove('active');
+    previewFrozen = false;
+
+    // Only hide preview if not hovering over a booru post
+    const elementsUnderCursor = document.elementsFromPoint(lastMouseX, lastMouseY);
+    const mediaElement = elementsUnderCursor.find(el => 
+      el.matches('.booru-image-item img, .booru-image-item video')
+    );
+    if (mediaElement) {
+      window.booruLastHoveredElement = mediaElement;
+      showPreviewForElement(mediaElement);    } else {
+      isShiftHeld = false;
       pauseAllPreviewVideos();
+      booruHoverPreview.classList.remove('active');
+      document.body.style.userSelect = '';
     }
-    if (tagsChangedWhileFrozen) {
-      tagsChangedWhileFrozen = false;
-      loadBooruImages(false);
-    }
-    commitPreviewFrozenTagChanges();
   }
 });
 
@@ -7794,6 +7855,10 @@ if (booruContent) {
     clearTimeout(scrollSaveTimeout);
     scrollSaveTimeout = setTimeout(() => {
       debouncedSettingsSave();
+      // Also save the tab state to preserve scroll position
+      if (typeof saveCurrentTabState === 'function') {
+        saveCurrentTabState();
+      }
     }, 500);
 
     clearTimeout(scrollLoadTimeout);
