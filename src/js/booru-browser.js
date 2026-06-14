@@ -744,29 +744,16 @@ function applyVideoVolume(videoEl) {
 function getImageUrl(imageUrl) {
   if (!imageUrl) return '';
   // Never proxy localhost URLs - they're local files
-  if (imageUrl.includes('localhost') || imageUrl.includes('127.0.0.1')) {
-    return imageUrl;
-  }
-  // Never proxy data URLs - they're already embedded and would create huge header sizes
-  if (imageUrl.startsWith('data:')) {
+  if (imageUrl.includes('localhost') || imageUrl.includes('127.0.0.1') || imageUrl.startsWith('data:') || imageUrl.startsWith('file:')) {
     return imageUrl;
   }
   
-  const proxySettings = localStorage.getItem('proxySettings');
-  if (proxySettings) {
-    try {
-      const settings = JSON.parse(proxySettings);
-      if (settings.active && settings.host && settings.port) {
-        // Return proxied URL pointing to port 3001
-        return `http://localhost:3001/proxy-image?url=${encodeURIComponent(imageUrl)}`;
-      }
-    } catch (e) {
-      console.error('Error checking proxy settings for image:', e);
-      showToast('Error checking proxy settings: ' + e.message, 'error');
-    }
+  try {
+    return `http://localhost:3001/proxy-image?url=${encodeURIComponent(imageUrl)}`;
+  } catch (e) {
+    showToast('Failed to fetch URL: ' + e.message, 'error');
+    console.error('Failed to fetch URL:', imageUrl, e);
   }
-  // Return direct URL if proxy is not enabled
-  return imageUrl;
 }
 
 // Global listener for image load errors so we can toast proxy failures
@@ -3101,7 +3088,6 @@ function initBooruBrowser() {
                 const highQualityImg = new Image();
                 highQualityImg.onload = () => {
                   // Swap to high quality once loaded
-                  img.src = getImageUrl(highQualityUrl);
                   img.dataset.highQualityLoaded = 'true';
                   // Remove loading overlay
                   loadingOverlay.remove();
@@ -7099,6 +7085,12 @@ function showPreviewForElement(mediaElement, forceVideoLoad = false) {
     video.style.objectFit = 'contain';
     // assign src last so browsers start fetching after our cache entry exists
     video.src = getImageUrl(mediaElement.dataset.imageUrl);
+
+        
+    // Add error handler to log when video fails to load
+    video.addEventListener('error', (e) => {
+      showToast('Failed to load video preview. Try using a Proxy or attempt a different source', 'error');
+    });
 
     // Store post source and ID for middle-click handler
     video.dataset.postSource = mediaElement.closest('.booru-image-item')?.dataset.postSource;

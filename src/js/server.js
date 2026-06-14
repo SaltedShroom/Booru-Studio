@@ -225,20 +225,40 @@ async function fetchImageViaPuppeteer(imageUrl, matchingSource) {
       await page.setUserAgent(matchingSource.userAgent);
     }
 
-    const response = await page.goto(imageUrl, { waitUntil: 'networkidle0', timeout: 30000 });
-    if (!response) throw new Error('No response from Puppeteer page.goto');
+    // Navigate to a blank page first to establish the browser context
+    await page.goto('about:blank');
 
-    const status = response.status();
-    if (status >= 400) throw new Error(`Upstream returned HTTP ${status} via Puppeteer`);
+    // Use page.evaluate to fetch the image via fetch() API (works through Cloudflare TLS fingerprint check)
+    const result = await page.evaluate(async (imageUrl) => {
+      try {
+        const response = await fetch(imageUrl);
+        if (!response.ok) {
+          throw new Error(`HTTP ${response.status} from ${imageUrl}`);
+        }
 
-    const contentType = response.headers()['content-type'] || 'image/jpeg';
-    if (contentType.includes('text/html')) {
-      throw new Error('Cloudflare or other HTML block page returned even via Puppeteer');
+        const contentType = response.headers.get('content-type') || 'image/jpeg';
+        if (contentType.includes('text/html')) {
+          throw new Error('Received HTML instead of image (likely Cloudflare challenge page)');
+        }
+
+        const arrayBuffer = await response.arrayBuffer();
+        return {
+          buffer: Array.from(new Uint8Array(arrayBuffer)),
+          contentType: contentType,
+          status: response.status
+        };
+      } catch (err) {
+        throw new Error(`Fetch failed in browser context: ${err.message}`);
+      }
+    }, imageUrl);
+
+    if (!result || !result.buffer) {
+      throw new Error('Failed to fetch image data via Puppeteer');
     }
 
-    const buffer = await response.buffer();
+    const buffer = Buffer.from(result.buffer);
     await page.close();
-    return { buffer, contentType };
+    return { buffer, contentType: result.contentType };
   } catch (err) {
     await page.close();
     throw err;
@@ -1936,7 +1956,37 @@ const server = isWorkerMode ? null : http.createServer((req, res) => {
         proxyRes.pipe(res);
       });
 
-      proxyReq.on('error', (error) => {
+      proxyReq.on('error', async (error) => {
+        // If direct request fails and proxy is disabled on HTTPS, try Puppeteer to bypass TLS fingerprinting
+        if (!proxySettings.active && parsedUrl.protocol === 'https:') {
+          console.log(`🖼️ Proxy disabled with HTTPS URL — using Puppeteer to bypass TLS fingerprinting: ${parsedUrl.hostname}`);
+          try {
+            let matchingSource = null;
+            try {
+              const sources = database.loadSetting('booru-sources') || [];
+              matchingSource = sources.find(s => {
+                try { return parsedUrl.hostname.includes(new URL(s.baseUrl).hostname); } catch { return false; }
+              }) || null;
+            } catch { /* ignore */ }
+            const { buffer, contentType } = await fetchImageViaPuppeteer(imageUrl, matchingSource);
+            res.writeHead(200, {
+              'Content-Type': contentType,
+              'Content-Length': buffer.length,
+              'Access-Control-Allow-Origin': '*',
+              'Cache-Control': 'public, max-age=86400'
+            });
+            res.end(buffer);
+          } catch (puppeteerErr) {
+            console.error(`🖼️ Puppeteer fetch failed for ${parsedUrl.hostname} : ${puppeteerErr.message}`);
+            res.writeHead(502, { 'Content-Type': 'application/json', 'Access-Control-Allow-Origin': '*' });
+            res.end(JSON.stringify({ 
+              error: 'Image fetch failed', 
+              message: `Direct fetch failed and Puppeteer bypass also failed: ${puppeteerErr.message}` 
+            }));
+          }
+          return;
+        }
+        
         console.error('🖼️ Proxy image request error:', error);
         res.writeHead(502, { 'Content-Type': 'application/json', 'Access-Control-Allow-Origin': '*' });
         res.end(JSON.stringify({ error: 'Proxy image request failed', message: error.message }));
