@@ -82,7 +82,8 @@ to install, download the latest *Setup.exe*
 ## Notes
 
 > This is a solo-maintained project by SaltedShroom and will remain as such for the time beeing
-> monetization options may be maintained or be added to make continued development sustainable
+> 
+> Monetization options may be maintained or be added to make continued development sustainable
 
 ## License
 
