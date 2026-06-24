@@ -6,6 +6,7 @@ const fsPromises = require('fs').promises;
 const path = require('path');
 const url = require('url');
 const puppeteer = require('puppeteer');
+const cheerio = require('cheerio');
 const { SocksProxyAgent } = require('socks-proxy-agent');
 const HttpProxyAgent = require('http-proxy-agent');
 const HttpsProxyAgent = require('https-proxy-agent');
@@ -1177,7 +1178,7 @@ const server = isWorkerMode ? null : http.createServer((req, res) => {
       let finalTagsString = tagsString;
       
       if (filterAI) {
-        const aiBlacklistTags = ['ai_generated', 'ai', 'ai_assisted'];
+        const aiBlacklistTags = ['ai_generated', 'ai_assisted'];
         const blacklistString = aiBlacklistTags.map(tag => `-${tag}`).join(' ');
         finalTagsString = `${tagsString} ${blacklistString}`;
       }
@@ -2373,6 +2374,74 @@ const server = isWorkerMode ? null : http.createServer((req, res) => {
     return;
   }
 
+  // HTML Scraper endpoint - scrape pages and extract data
+  if (req.method === 'POST' && req.url === '/api/scraper/fetch-page') {
+    let body = '';
+    req.on('data', chunk => {
+      body += chunk.toString();
+    });
+
+    req.on('end', async () => {
+      try {
+        const { url: unParsedPageUrl, html: providedHtml, selectors, method } = JSON.parse(body);
+        const pageUrl = unParsedPageUrl ? decodeURIComponent(unParsedPageUrl) : null;
+        
+        if (!selectors) {
+          res.writeHead(400, { 'Content-Type': 'application/json' });
+          res.end(JSON.stringify({ error: 'selectors is required' }));
+          return;
+        }
+
+        // Use provided HTML or fetch from URL
+        let html = providedHtml;
+        if (!html && pageUrl) {
+          try {
+            console.log(`Fetching page for scraping: ${pageUrl} [method: ${method || 'GET'}]`);
+            // Try simple fetch first for performance
+            const response = await proxyFetchViaHttp(pageUrl);
+            html = await response.text();
+          } catch (error) {
+            console.warn('Simple fetch failed, trying Puppeteer:', error.message);
+            // Fallback to Puppeteer if simple fetch fails (JS-heavy pages)
+            if (browser) {
+              try {
+                const page = await browser.newPage();
+                await page.goto(pageUrl, { waitUntil: 'networkidle2', timeout: 30000 });
+                html = await page.content();
+                await page.close();
+              } catch (puppeteerError) {
+                res.writeHead(500, { 'Content-Type': 'application/json' });
+                res.end(JSON.stringify({ error: 'Failed to fetch page', message: puppeteerError.message }));
+                return;
+              }
+            }
+          }
+        }
+
+        if (!html) {
+          res.writeHead(400, { 'Content-Type': 'application/json' });
+          res.end(JSON.stringify({ error: 'No HTML content to parse' }));
+          return;
+        }
+
+        // Parse HTML using cheerio
+        const $ = cheerio.load(html);
+        const results = scrapePageWithSelectors($, selectors);
+
+        res.writeHead(200, {
+          'Content-Type': 'application/json',
+          'Access-Control-Allow-Origin': '*'
+        });
+        res.end(JSON.stringify({ success: true, data: results }));
+      } catch (error) {
+        console.error('Scraper error:', error);
+        res.writeHead(400, { 'Content-Type': 'application/json' });
+        res.end(JSON.stringify({ error: 'Scraper error', message: error.message }));
+      }
+    });
+    return;
+  }
+
   // Stable Diffusion API proxy disabled
   if (req.url.startsWith('/api/sd/')) {
     res.writeHead(404, {
@@ -2612,6 +2681,8 @@ const server = isWorkerMode ? null : http.createServer((req, res) => {
                 return false;
               }
             });
+
+            
             
             if (matchingSource?.safeMode?.required) {
               console.log(`Safe mode required for ${matchingSource.name} - setting safe mode first`);
@@ -3120,7 +3191,9 @@ const server = isWorkerMode ? null : http.createServer((req, res) => {
     req.on('data', chunk => body += chunk.toString());
     req.on('end', async () => {
       try {
-        const { imageUrl, filename, userAgent, cookies } = JSON.parse(body);
+        const payload = JSON.parse(body);
+        
+        const { imageUrl, filename, userAgent, cookies } = payload;
         const downloadHeaders = {};
         if (userAgent) downloadHeaders.userAgent = userAgent;
         if (cookies) downloadHeaders.cookies = cookies;
@@ -3147,7 +3220,6 @@ const server = isWorkerMode ? null : http.createServer((req, res) => {
           const protocol = parsedUrl.protocol === 'http:' ? http : https;
           const agent = requireProxyAgent(parsedUrl.protocol === 'http:' ? 'http' : 'https');
           const proxyName = `${proxySettings.type} ${proxySettings.host}:${proxySettings.port}`;
-          console.log(`📡 download proxy ${parsedUrl.hostname}${parsedUrl.pathname}${parsedUrl.search || ''} [${proxyName}]`);
           
           const options = {
             hostname: parsedUrl.hostname,
@@ -3514,6 +3586,222 @@ function ensureDirectoryExists(dirPath) {
   } catch (error) {
     console.error('Failed to create download folder:', dirPath, error);
   }
+}
+
+// HTML Scraper helper functions
+function scrapePageWithSelectors($, selectors) {
+  const results = {
+    posts: [],
+    postDetailPageUrl: null,
+    totalCount: null
+  };
+
+  // If listPageSelector is provided, we're scraping the posts list page
+  if (selectors.listPageSelector) {
+    
+    $(selectors.listPageSelector).each((index, element) => {
+      const $post = $(element);
+      
+      // Get post detail link
+      const $link = $post.find(selectors.postLinkSelector || 'a').first();
+      const postUrl = $link.attr('href');
+      
+      // Get thumbnail image URL
+      const $image = $post.find(selectors.imageUrlSelector || 'img').first();
+      const imageUrl = $image.attr(selectors.imageUrlAttribute || 'src');
+      
+      if (postUrl && imageUrl) {
+        const post = {
+          url: postUrl,
+          thumbnailUrl: imageUrl
+        };
+        
+        // Extract thumbnail dimensions if specified
+        if (selectors.thumbnailWidthAttribute || selectors.thumbnailHeightAttribute) {
+          const width = selectors.thumbnailWidthAttribute ? $image.attr(selectors.thumbnailWidthAttribute) : null;
+          const height = selectors.thumbnailHeightAttribute ? $image.attr(selectors.thumbnailHeightAttribute) : null;
+          
+          if (width && height) {
+            const w = parseInt(width, 10);
+            const h = parseInt(height, 10);
+            if (w > 0 && h > 0) {
+              post.thumbnailWidth = w;
+              post.thumbnailHeight = h;
+              post.aspectRatio = w / h;
+            }
+          }
+        }
+        
+        results.posts.push(post);
+      }
+    });
+  }
+  
+  // Extract pagination total count if selector provided
+  if (selectors.paginationLastPageSelector && selectors.postsPerPage) {
+    const $lastPageLink = $(selectors.paginationLastPageSelector).first();
+    if ($lastPageLink && $lastPageLink.length > 0) {
+      const href = $lastPageLink.attr('href');
+      if (href) {
+        // Extract pid parameter from href
+        const pidMatch = href.match(/pid=(\d+)/);
+        if (pidMatch) {
+          const lastPagePid = parseInt(pidMatch[1], 10);
+          results.totalCount = lastPagePid + 1 + "+";
+        }
+      }
+    }
+  }
+  
+  // If detailImageSelector is provided, we're scraping the post detail page
+  if (selectors.detailImageSelector) {
+    const $detailImage = $(selectors.detailImageSelector).first();
+    let detailImageUrl = null;
+    
+    // Check if this is a video element
+    if ($detailImage.prop('tagName')?.toLowerCase() === 'video') {
+      
+      // For video elements, look for source children
+      // Prefer mp4, then webm, then any source
+      const $sources = $detailImage.find('source');
+      
+      if ($sources.length > 0) {
+        // Try to find mp4 first
+        let $source = $sources.filter((i, el) => {
+          const src = $(el).attr('src');
+          return src && src.toLowerCase().includes('.mp4');
+        }).first();
+        
+        // If no mp4, try webm
+        if ($source.length === 0) {
+          $source = $sources.filter((i, el) => {
+            const src = $(el).attr('src');
+            return src && src.toLowerCase().includes('.webm');
+          }).first();
+        }
+        
+        // If still nothing, take the first source
+        if ($source.length === 0) {
+          $source = $sources.first();
+        }
+        
+        detailImageUrl = $source.attr('src');
+      }
+    } else {
+      // Regular image element - get src attribute
+      detailImageUrl = $detailImage.attr(selectors.detailImageAttribute || 'src');
+    }
+    
+    results.detailImageUrl = detailImageUrl;
+    
+    // Extract file extension from URL if present
+    if (detailImageUrl) {
+      const match = detailImageUrl.match(/\.([a-z0-9]+)($|[?#])/i);
+      results.fileExtension = match ? match[1].toLowerCase() : 'jpg';
+    } else {
+      console.warn(`[Scraper] No detail image URL found with selector: ${selectors.detailImageSelector}`);
+    }
+  }
+  
+  // Extract tags if selectors provided
+  if (selectors.detailTagsSelector) {
+    const results_tags = {
+      general: [],
+      artists: []
+    };
+    
+    const $tagsContainer = $(selectors.detailTagsSelector).first();
+    
+    // Get general tags
+    if (selectors.detailGeneralTagsSelector) {
+      $tagsContainer.find(selectors.detailGeneralTagsSelector).each((i, el) => {
+        const text = $(el).text().trim().replace(/\s+/g, '_');
+        if (text) results_tags.general.push(text);
+      });
+    }
+    
+    // Get artist tags - support multiple selectors (comma-separated or array)
+    if (selectors.detailArtistTagsSelector) {
+      
+      const artistSelectors = Array.isArray(selectors.detailArtistTagsSelector)
+        ? selectors.detailArtistTagsSelector
+        : selectors.detailArtistTagsSelector.split(',').map(s => s.trim());
+      
+      for (const selector of artistSelectors) {
+        const found = $tagsContainer.find(selector).length;
+        
+        $tagsContainer.find(selector).each((i, el) => {
+          const text = $(el).text().trim().replace(/\s+/g, '_');
+          if (text && !results_tags.artists.includes(text)) {
+            results_tags.artists.push(text);
+          }
+        });
+      }
+    }
+    
+    results.tags = results_tags;
+  }
+  
+  // Extract upload date if available (look for "Posted at" text)
+  try {
+    const pageHtml = $.html();
+    const dateMatch = pageHtml.match(/Posted\s+at\s+([A-Za-z]+,?\s+\d{1,2}\s+\d{4})/i);
+    if (dateMatch) {
+      // Parse date string like "Jun, 18 2026" or "Jun 18 2026"
+      const dateStr = dateMatch[1].replace(/,/g, '');
+      const parsedDate = new Date(dateStr);
+      if (!isNaN(parsedDate.getTime())) {
+        results.uploadDate = parsedDate.getTime(); // Store as timestamp
+      }
+    }
+  } catch (err) {
+    // Date parsing failed, ignore
+  }
+  
+  return results;
+}
+
+// HTTP wrapper for fetching with proxy support
+async function proxyFetchViaHttp(pageUrl) {
+  return new Promise((resolve, reject) => {
+    const parsedUrl = new URL(pageUrl);
+    const isHttps = parsedUrl.protocol === 'https:';
+    const httpModule = isHttps ? https : http;
+    
+    const requestOptions = {
+      hostname: parsedUrl.hostname,
+      port: parsedUrl.port,
+      path: parsedUrl.pathname + parsedUrl.search,
+      method: 'GET',
+      headers: {
+        'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36'
+      },
+      timeout: 30000
+    };
+
+    // Apply proxy if configured
+    if (proxySettings.active && proxySettings.type && proxySettings.host) {
+      if (proxySettings.type === 'HTTP' || proxySettings.type === 'HTTPS') {
+        const ProxyAgent = proxySettings.type === 'HTTPS' ? HttpsProxyAgent : HttpProxyAgent;
+        const proxyUrl = `http://${proxySettings.host}:${proxySettings.port}`;
+        requestOptions.agent = new ProxyAgent(proxyUrl);
+      } else if (proxySettings.type === 'SOCKS') {
+        requestOptions.agent = new SocksProxyAgent(`socks5://${proxySettings.host}:${proxySettings.port}`);
+      }
+    }
+
+    httpModule.get(requestOptions, (res) => {
+      let data = '';
+      res.on('data', chunk => { data += chunk; });
+      res.on('end', () => {
+        resolve({
+          text: () => Promise.resolve(data),
+          ok: res.statusCode >= 200 && res.statusCode < 300,
+          status: res.statusCode
+        });
+      });
+    }).on('error', reject);
+  });
 }
 
 // Initialize database and start server (main thread only)

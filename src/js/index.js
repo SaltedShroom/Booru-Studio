@@ -14,6 +14,21 @@ const updateBtn = document.getElementById('update-btn');
 const advertButton = document.getElementById('toggleAdverts');
 const advertsContainer = document.getElementById('adverts');
 
+// Update modal elements
+const updateModal = document.getElementById('update-modal');
+const closeUpdateModalBtn = document.getElementById('close-update-modal');
+const cancelUpdateModalBtn = document.getElementById('cancel-update-modal-btn');
+const confirmUpdateModalBtn = document.getElementById('confirm-update-modal-btn');
+const updateTitleText = document.getElementById('update-title-text');
+const updateNotesText = document.getElementById('update-notes-text');
+
+// Store update data for the modal
+let currentUpdateData = {
+  releaseTitle: null,
+  releaseNotes: null,
+  remoteVersion: null
+};
+
 // Settings management
 const settingsBtn = document.getElementById('settings-btn');
 const themeSelect = document.getElementById('theme-select');
@@ -270,6 +285,36 @@ function compareVersionStrings(a, b) {
   return 0;
 }
 
+function showUpdateModal() {
+  if (updateModal) {
+    updateModal.style.display = 'flex';
+    if (updateTitleText) {
+      updateTitleText.textContent = currentUpdateData.releaseTitle || 'New Update Available';
+    }
+    if (updateNotesText) {
+      const notes = currentUpdateData.releaseNotes || 'No release notes available.';
+      // Convert markdown-style formatting to basic HTML
+      const formattedNotes = notes
+        .split('\n')
+        .map(line => {
+          // Convert markdown bold **text** to <strong>text</strong>
+          line = line.replace(/\*\*(.*?)\*\*/g, '<strong>$1</strong>');
+          // Convert markdown links [text](url) to <a href="url" target="_blank">text</a>
+          line = line.replace(/\[(.*?)\]\((.*?)\)/g, '<a href="$2" target="_blank">$1</a>');
+          return line;
+        })
+        .join('<br>');
+      updateNotesText.innerHTML = formattedNotes;
+    }
+  }
+}
+
+function hideUpdateModal() {
+  if (updateModal) {
+    updateModal.style.display = 'none';
+  }
+}
+
 async function initVersionCheck() {
   const defaultAppVersion = '0.0.0';
   let appVersion = defaultAppVersion;
@@ -312,6 +357,15 @@ async function initVersionCheck() {
         updateBtn.innerHTML = updateBtn.innerHTML + ` ${remoteVersion}`;
       }
       updateBtn.classList.toggle('active', isUpdateAvailable);
+    }
+
+    // Store update data for the modal
+    if (isUpdateAvailable) {
+      currentUpdateData = {
+        releaseTitle: result?.releaseTitle || null,
+        releaseNotes: result?.releaseNotes || null,
+        remoteVersion: remoteVersion
+      };
     }
 
     return { local: appVersion, updateAvailable: isUpdateAvailable, remoteVersion };
@@ -387,6 +441,28 @@ if (window.electronAPI?.onUpdateProgress) {
 
 if (updateBtn) {
   updateBtn.addEventListener('click', async () => {
+    if (updateBtn.classList.contains('active')) {
+      showUpdateModal();
+    }
+  });
+}
+
+// Update modal event listeners
+if (closeUpdateModalBtn) {
+  closeUpdateModalBtn.addEventListener('click', hideUpdateModal);
+}
+
+if (cancelUpdateModalBtn) {
+  cancelUpdateModalBtn.addEventListener('click', hideUpdateModal);
+}
+
+if (updateModal) {
+  updateModal.querySelector('.modal-overlay')?.addEventListener('click', hideUpdateModal);
+}
+
+if (confirmUpdateModalBtn) {
+  confirmUpdateModalBtn.addEventListener('click', async () => {
+    hideUpdateModal();
     await startUpdateRoutine();
   });
 }
@@ -2129,6 +2205,27 @@ function openLightbox(imageUrl) {
 
 function showLightboxImage(idx) {
   if (idx < 0 || idx >= LightboxImages.length) return;
+
+  // For scraper posts, fetch quality image if not already loaded
+  const post = window.booruPosts && idx >= 0 && idx < window.booruPosts.length ? window.booruPosts[idx] : null;
+  if (post && (post._isScraperPost || (post.source && typeof booruSourcesManager !== 'undefined' && booruSourcesManager.getSource(post.source)?.type === 'scraper'))) {
+    if (post.imageUrl.toLowerCase().includes('thumbnail')) {
+      // Fetch details asynchronously
+      if (typeof fetchScraperPostDetails === 'function') {
+        fetchScraperPostDetails(post.id, post.source, true).then(detail => {
+          if (detail && detail.detailImageUrl) {
+            const normalizedUrl = detail.detailImageUrl.replace(/([^:]\/)\/+/g, '$1').trim();
+            post.imageUrl = normalizedUrl;
+            // Update the lightbox image array with the quality URL
+            LightboxImages[idx] = getImageUrl(normalizedUrl);
+            // Refresh the display with the new URL
+            showLightboxImage(idx);
+          }
+        }).catch(err => console.error('Error fetching scraper post details in lightbox:', err));
+        return; // Don't proceed yet, wait for the fetch
+      }
+    }
+  }
 
   // Remove any previous videos
   const prevVideos = lightboxImage.parentNode.querySelectorAll('video');

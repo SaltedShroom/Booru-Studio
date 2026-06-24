@@ -55,6 +55,7 @@ class BooruSourcesManager {
   getDefaultSources() {
     return [
       {
+        type: "api",
         id: "bbooru",
         name: "Bbooru.com",
         baseUrl: "https://bbooru.com",
@@ -110,6 +111,7 @@ class BooruSourcesManager {
         userAgent: ""
       },
       {
+        type: "api",
         id: "e621",
         name: "e621.net",
         baseUrl: "https://e621.net",
@@ -165,6 +167,7 @@ class BooruSourcesManager {
         userAgent: ""
       },
       {
+        type: "api",
         id: "rule34",
         name: "Rule34.xxx",
         baseUrl: "https://rule34.xxx",
@@ -226,6 +229,7 @@ class BooruSourcesManager {
         userAgent: ""
       },
       {
+        type: "api",
         id: "gelbooru",
         name: "gelbooru.com",
         baseUrl: "https://gelbooru.com",
@@ -309,6 +313,31 @@ class BooruSourcesManager {
       if (authFields) {
         authFields.style.display = e.target.checked ? 'block' : 'none';
       }
+    });
+
+    // Source type selector - show/hide API vs Scraper config
+    document.getElementById('source-type')?.addEventListener('change', (e) => {
+      const isApi = e.target.value === 'api';
+      
+      // Hide/show API configuration sections
+      const apiSections = document.querySelectorAll('[id*="source-api-"], [id*="source-response-"], [id*="source-fields-"], [id*="source-sort-"], [id*="source-artist-"]');
+      const apiConfigSection = document.querySelector('.booru-form-section:has(#source-api-basePath)');
+      const responseConfigSection = document.querySelector('.booru-form-section:has(#source-response-countParser)');
+      const fieldMappingsSection = document.querySelector('.booru-form-section:has(#source-fields-imageUrl)');
+      const sortSection = document.querySelector('.booru-form-section:has(#source-sort-scoreMethod)');
+      const artistSection = document.querySelector('.booru-form-section:has(#source-artist-tagApiUrl)');
+      const apiUrlGroup = document.getElementById('api-url-group');
+      
+      if (apiConfigSection) apiConfigSection.style.display = isApi ? 'block' : 'none';
+      if (responseConfigSection) responseConfigSection.style.display = isApi ? 'block' : 'none';
+      if (fieldMappingsSection) fieldMappingsSection.style.display = isApi ? 'block' : 'none';
+      if (sortSection) sortSection.style.display = isApi ? 'block' : 'none';
+      if (artistSection) artistSection.style.display = isApi ? 'block' : 'none';
+      if (apiUrlGroup) apiUrlGroup.style.display = isApi ? 'block' : 'none';
+      
+      // Hide/show Scraper configuration sections
+      const scraperSection = document.getElementById('scraper-config-section');
+      if (scraperSection) scraperSection.style.display = isApi ? 'none' : 'block';
     });
 
     document.getElementById('source-safeMode-required')?.addEventListener('change', (e) => {
@@ -418,7 +447,8 @@ class BooruSourcesManager {
     
     const buttonContainer = document.createElement('div');
     buttonContainer.className = 'booru-source-card';
-    buttonContainer.innerHTML = '<div class="add-booru-button-container"><button id="add-booru-source-btn" class="btn-primary" type="button" title="Add New Source"><i class="fas fa-plus"></i></button><button id="import-booru-source-btn" class="btn-secondary" type="button" title="Import Source"><i class="fas fa-file-import"></i></button></div>';
+    buttonContainer.style.gap = '0px';
+    buttonContainer.innerHTML = '<div class="add-booru-button-container"><button id="add-booru-source-btn" class="btn-primary" type="button" title="Add New Source"><i class="fas fa-plus"></i></button><button id="import-booru-source-btn" class="btn-secondary" type="button" title="Import Source"><i class="fas fa-file-import"></i></button></div><a id="browse-booru-source-btn" class="btn-secondary" href="https://github.com/SaltedShroom/Booru-Studio/discussions/3" target="_blank" rel="noopener noreferrer" title="Browse Sources Online"><i class="fas fa-search"></i>Browse Sources</a>';
     listContainer.appendChild(buttonContainer);
     
     document.getElementById('add-booru-source-btn')?.addEventListener('click', () => {
@@ -469,7 +499,7 @@ class BooruSourcesManager {
         </div>
         <div class="booru-source-card-info-item">
           <i class="fas fa-code"></i>
-          <span>${source.response.countParser.toUpperCase()}</span>
+          <span>${source.type === 'scraper' ? 'HTML Scraper' : (source.response?.countParser?.toUpperCase() || 'Unknown')}</span>
         </div>
       </div>
       <div class="booru-source-card-badges">
@@ -553,30 +583,49 @@ class BooruSourcesManager {
       errors.push('Missing or invalid field: baseUrl (must start with http/https)');
     }
 
-    // api.basePath
-    if (!obj.api || typeof obj.api !== 'object') {
-      errors.push('Missing field: api (must be an object with at least basePath)');
-    } else if (!obj.api.basePath || typeof obj.api.basePath !== 'string') {
-      errors.push('Missing or invalid field: api.basePath (must be a non-empty string)');
-    }
+    // Validate based on source type
+    const type = obj.type || 'api';
 
-    // response.countParser
-    const validParsers = ['xmlDom', 'xmlRegex', 'json'];
-    if (!obj.response || typeof obj.response !== 'object') {
-      errors.push('Missing field: response (must be an object with countParser)');
-    } else if (!validParsers.includes(obj.response.countParser)) {
-      errors.push(`Invalid response.countParser — must be one of: ${validParsers.join(', ')}`);
-    }
+    if (type === 'api') {
+      // api.basePath
+      if (!obj.api || typeof obj.api !== 'object') {
+        errors.push('Missing field: api (must be an object with at least basePath)');
+      } else if (!obj.api.basePath || typeof obj.api.basePath !== 'string') {
+        errors.push('Missing or invalid field: api.basePath (must be a non-empty string)');
+      }
 
-    // fields
-    if (!obj.fields || typeof obj.fields !== 'object') {
-      errors.push('Missing field: fields (must be an object)');
-    } else {
-      for (const f of ['imageUrl', 'previewUrl', 'tags']) {
-        if (!obj.fields[f] || typeof obj.fields[f] !== 'string') {
-          errors.push(`Missing or invalid field: fields.${f} (must be a non-empty string)`);
+      // response.countParser
+      const validParsers = ['xmlDom', 'xmlRegex', 'json'];
+      if (!obj.response || typeof obj.response !== 'object') {
+        errors.push('Missing field: response (must be an object with countParser)');
+      } else if (!validParsers.includes(obj.response.countParser)) {
+        errors.push(`Invalid response.countParser — must be one of: ${validParsers.join(', ')}`);
+      }
+
+      // fields
+      if (!obj.fields || typeof obj.fields !== 'object') {
+        errors.push('Missing field: fields (must be an object)');
+      } else {
+        for (const f of ['imageUrl', 'previewUrl', 'tags']) {
+          if (!obj.fields[f] || typeof obj.fields[f] !== 'string') {
+            errors.push(`Missing or invalid field: fields.${f} (must be a non-empty string)`);
+          }
         }
       }
+    } else if (type === 'scraper') {
+      // Scraper-specific validation
+      if (!obj.scraper || typeof obj.scraper !== 'object') {
+        errors.push('Missing field: scraper (must be an object with selectors)');
+      } else {
+        const requiredSelectors = ['listPageSelector', 'postLinkSelector', 'imageUrlSelector'];
+        for (const selector of requiredSelectors) {
+          if (!obj.scraper[selector] || typeof obj.scraper[selector] !== 'string') {
+            errors.push(`Missing or invalid field: scraper.${selector} (must be a non-empty string)`);
+          }
+        }
+      }
+    } else {
+      errors.push(`Invalid source type: "${type}". Must be "api" or "scraper".`);
     }
 
     return errors;
@@ -725,6 +774,9 @@ class BooruSourcesManager {
     document.getElementById('sort-param-field').style.display = 'none';
     document.getElementById('urlPrefix-field').style.display = 'none';
     document.getElementById('urlTemplates-fields').style.display = 'none';
+    document.getElementById('scraper-config-section').style.display = 'none';
+    // Default to API type
+    document.getElementById('source-type').value = 'api';
     // clear cookies, UA and artistTag fields if they exist
     const cookiesEl = document.getElementById('source-cookies');
     if (cookiesEl) cookiesEl.value = '';
@@ -745,6 +797,13 @@ class BooruSourcesManager {
   }
 
   populateForm(source) {
+    // Source Type
+    const sourceType = source.type || 'api';
+    document.getElementById('source-type').value = sourceType;
+    
+    // Trigger change event to show/hide appropriate sections
+    document.getElementById('source-type').dispatchEvent(new Event('change'));
+    
     // Basic Info
     document.getElementById('source-id').value = source.id;
     document.getElementById('source-name').value = source.name;
@@ -771,78 +830,122 @@ class BooruSourcesManager {
       if (authApiKeyEl) authApiKeyEl.value = source.auth.apiKey || '';
     }
 
-    // API Configuration
-    document.getElementById('source-api-basePath').value = source.api.basePath;
-    document.getElementById('source-api-countBasePath').value = source.api.countBasePath || '';
-    document.getElementById('source-api-jsonSupport').checked = source.api.jsonSupport || false;
-    document.getElementById('source-api-limitParam').value = source.api.limitParam;
-    document.getElementById('source-api-pageParam').value = source.api.pageParam;
-    document.getElementById('source-api-tagsParam').value = source.api.tagsParam;
-      document.getElementById('source-api-pageStart').value = source.api.pageStart || 0;
-    // Response Format
-    document.getElementById('source-response-countParser').value = source.response.countParser;
-    document.getElementById('source-response-countPath').value = source.response.countPath || '';
-    document.getElementById('source-response-wrapper').value = source.response.wrapper || '';
+    // API Configuration (only populate if API type)
+    if (sourceType === 'api') {
+      if (source.api) {
+        document.getElementById('source-api-basePath').value = source.api.basePath;
+        document.getElementById('source-api-countBasePath').value = source.api.countBasePath || '';
+        document.getElementById('source-api-jsonSupport').checked = source.api.jsonSupport || false;
+        document.getElementById('source-api-limitParam').value = source.api.limitParam;
+        document.getElementById('source-api-pageParam').value = source.api.pageParam;
+        document.getElementById('source-api-tagsParam').value = source.api.tagsParam;
+        document.getElementById('source-api-pageStart').value = source.api.pageStart || 0;
+      }
+      
+      // Response Format
+      if (source.response) {
+        document.getElementById('source-response-countParser').value = source.response.countParser;
+        document.getElementById('source-response-countPath').value = source.response.countPath || '';
+        document.getElementById('source-response-wrapper').value = source.response.wrapper || '';
+      }
 
-    // Field Mappings
-    document.getElementById('source-fields-imageUrl').value = source.fields.imageUrl;
-    document.getElementById('source-fields-previewUrl').value = source.fields.previewUrl;
-    document.getElementById('source-fields-sampleUrl').value = source.fields.sampleUrl;
-    document.getElementById('source-fields-tags').value = source.fields.tags;
-    document.getElementById('source-fields-artistTag').value = source.fields.artistTag || '';
-    document.getElementById('source-fields-createdAt').value = source.fields.createdAt;
-    document.getElementById('source-fields-dateType').value = source.fields.dateType;
-    document.getElementById('source-fields-tagsFilter').value = source.fields.tagsFilter || '';
-    document.getElementById('source-fields-width').value = source.fields.width || '';
-    document.getElementById('source-fields-height').value = source.fields.height || '';
+      // Field Mappings
+      if (source.fields) {
+        document.getElementById('source-fields-imageUrl').value = source.fields.imageUrl;
+        document.getElementById('source-fields-previewUrl').value = source.fields.previewUrl;
+        document.getElementById('source-fields-sampleUrl').value = source.fields.sampleUrl;
+        document.getElementById('source-fields-tags').value = source.fields.tags;
+        document.getElementById('source-fields-artistTag').value = source.fields.artistTag || '';
+        document.getElementById('source-fields-createdAt').value = source.fields.createdAt;
+        document.getElementById('source-fields-dateType').value = source.fields.dateType;
+        document.getElementById('source-fields-tagsFilter').value = source.fields.tagsFilter || '';
+        document.getElementById('source-fields-width').value = source.fields.width || '';
+        document.getElementById('source-fields-height').value = source.fields.height || '';
 
-    // URL Templates
-    const useUrlTemplates = source.fields.useUrlTemplates || false;
-    document.getElementById('source-fields-useUrlTemplates').checked = useUrlTemplates;
-    document.getElementById('urlTemplates-fields').style.display = useUrlTemplates ? 'block' : 'none';
-    if (useUrlTemplates) {
-      if (source.fields.imageUrlTemplate) {
-        document.getElementById('source-fields-imageUrlTemplate').value = source.fields.imageUrlTemplate;
+        // URL Templates
+        const useUrlTemplates = source.fields.useUrlTemplates || false;
+        document.getElementById('source-fields-useUrlTemplates').checked = useUrlTemplates;
+        document.getElementById('urlTemplates-fields').style.display = useUrlTemplates ? 'block' : 'none';
+        if (useUrlTemplates) {
+          if (source.fields.imageUrlTemplate) {
+            document.getElementById('source-fields-imageUrlTemplate').value = source.fields.imageUrlTemplate;
+          }
+          if (source.fields.sampleUrlTemplate) {
+            document.getElementById('source-fields-sampleUrlTemplate').value = source.fields.sampleUrlTemplate;
+          }
+          if (source.fields.thumbnailUrlTemplate) {
+            document.getElementById('source-fields-thumbnailUrlTemplate').value = source.fields.thumbnailUrlTemplate;
+          }
+        }
+
+        // Partial URLs
+        document.getElementById('source-fields-partialUrls').checked = source.fields.partialUrls || false;
+        const urlPrefixField = document.getElementById('urlPrefix-field');
+        if (urlPrefixField) {
+          urlPrefixField.style.display = source.fields.partialUrls ? 'block' : 'none';
+          if (source.fields.urlPrefix) {
+            document.getElementById('source-fields-urlPrefix').value = source.fields.urlPrefix;
+          }
+        }
       }
-      if (source.fields.sampleUrlTemplate) {
-        document.getElementById('source-fields-sampleUrlTemplate').value = source.fields.sampleUrlTemplate;
+
+      // Sort Options
+      const sortScoreMethod = source.sort?.scoreMethod || 'none';
+      document.getElementById('source-sort-scoreMethod').value = sortScoreMethod;
+      const sortParamField = document.getElementById('sort-param-field');
+      if (sortParamField) {
+        sortParamField.style.display = sortScoreMethod === 'param' ? 'block' : 'none';
+        if (source.sort?.paramName) {
+          document.getElementById('source-sort-paramName').value = source.sort.paramName;
+        }
       }
-      if (source.fields.thumbnailUrlTemplate) {
-        document.getElementById('source-fields-thumbnailUrlTemplate').value = source.fields.thumbnailUrlTemplate;
+
+      // Safe Mode
+      const safeModeRequired = source.safeMode?.required || false;
+      document.getElementById('source-safeMode-required').checked = safeModeRequired;
+      document.getElementById('safeMode-fields').style.display = safeModeRequired ? 'block' : 'none';
+      
+      if (safeModeRequired) {
+        document.getElementById('source-safeMode-url').value = source.safeMode.url || '';
+        document.getElementById('source-safeMode-delay').value = source.safeMode.delay || 1000;
       }
+
+      // Artist Configuration
+      document.getElementById('source-artist-tagApiUrl').value = source.artist?.tagApiUrl || '';
+      document.getElementById('source-artist-tagTypeKeyPath').value = source.artist?.tagTypeKeyPath || 'type';
+      document.getElementById('source-artist-artistTypeValue').value = source.artist?.artistTypeValue || '1';
+      document.getElementById('source-artist-tagSeparator').value = source.artist?.tagSeparator || ' ';
+      document.getElementById('source-artist-postUrlPattern').value = source.artist?.postUrlPattern || '';
+    } else if (sourceType === 'scraper' && source.scraper) {
+      // Scraper configuration
+      document.getElementById('scraper-listPageUrl').value = source.scraper.listPageUrl || '';
+      document.getElementById('scraper-listPageSelector').value = source.scraper.listPageSelector || '';
+      document.getElementById('scraper-postLinkSelector').value = source.scraper.postLinkSelector || '';
+      document.getElementById('scraper-imageUrlSelector').value = source.scraper.imageUrlSelector || '';
+      document.getElementById('scraper-imageUrlAttribute').value = source.scraper.imageUrlAttribute || 'src';
+      document.getElementById('scraper-detailImageSelector').value = source.scraper.detailImageSelector || '';
+      document.getElementById('scraper-detailImageAttribute').value = source.scraper.detailImageAttribute || 'src';
+      document.getElementById('scraper-detailTagsSelector').value = source.scraper.detailTagsSelector || '';
+      document.getElementById('scraper-detailGeneralTagsSelector').value = source.scraper.detailGeneralTagsSelector || '';
+      document.getElementById('scraper-detailArtistTagsSelector').value = source.scraper.detailArtistTagsSelector || '';
+      document.getElementById('scraper-detailTagTextExtraction').value = source.scraper.detailTagTextExtraction || 'text';
+      document.getElementById('scraper-postsPerPage').value = source.scraper.postsPerPage || '42';
+      document.getElementById('scraper-paginationStrategy').value = source.scraper.paginationStrategy || 'offset';
+      document.getElementById('scraper-paginationParam').value = source.scraper.paginationParam || '';
+      document.getElementById('scraper-paginationLastPageSelector').value = source.scraper.paginationLastPageSelector || '';
+      document.getElementById('scraper-searchTagParam').value = source.scraper.searchTagParam || '';
+      document.getElementById('scraper-searchTagSeparator').value = source.scraper.searchTagSeparator || '+';
     }
 
-    // Sort Options
-    const sortScoreMethod = source.sort?.scoreMethod || 'none';
-    document.getElementById('source-sort-scoreMethod').value = sortScoreMethod;
-    const sortParamField = document.getElementById('sort-param-field');
-    if (sortParamField) {
-      sortParamField.style.display = sortScoreMethod === 'param' ? 'block' : 'none';
-      if (source.sort?.paramName) {
-        document.getElementById('source-sort-paramName').value = source.sort.paramName;
-      }
-    }
-
-    // Safe Mode
-    const safeModeRequired = source.safeMode?.required || false;
-    document.getElementById('source-safeMode-required').checked = safeModeRequired;
-    document.getElementById('safeMode-fields').style.display = safeModeRequired ? 'block' : 'none';
-    
-    if (safeModeRequired) {
-      document.getElementById('source-safeMode-url').value = source.safeMode.url || '';
-      document.getElementById('source-safeMode-delay').value = source.safeMode.delay || 1000;
-    }
-
-    // Artist Configuration
-    document.getElementById('source-artist-tagApiUrl').value = source.artist?.tagApiUrl || '';
-    document.getElementById('source-artist-tagTypeKeyPath').value = source.artist?.tagTypeKeyPath || 'type';
-    document.getElementById('source-artist-artistTypeValue').value = source.artist?.artistTypeValue || '1';
-    document.getElementById('source-artist-tagSeparator').value = source.artist?.tagSeparator || ' ';
-    document.getElementById('source-artist-postUrlPattern').value = source.artist?.postUrlPattern || '';
+    // Gallery Display Options (applies to all source types)
+    const invertAspectRatio = source.gallery?.invertAspectRatio || false;
+    document.getElementById('source-invertAspectRatio').checked = invertAspectRatio;
   }
 
   getFormData() {
+    const sourceType = document.getElementById('source-type').value;
     const data = {
+      type: sourceType,
       id: document.getElementById('source-id').value.trim(),
       name: document.getElementById('source-name').value.trim(),
       baseUrl: document.getElementById('source-baseUrl').value.trim(),
@@ -850,22 +953,43 @@ class BooruSourcesManager {
       auth: {
         required: document.getElementById('source-auth-required').checked
       },
-      api: {
+      cookies: document.getElementById('source-cookies').value.trim(),
+      userAgent: document.getElementById('source-userAgent').value.trim(),
+      ui: {
+        defaultSort: 'new',
+        defaultLimit: 100,
+        requiresProxy: false
+      }
+    };
+
+    // Add optional auth fields
+    if (data.auth.required) {
+      data.auth.userIdKey = document.getElementById('source-auth-userIdKey').value.trim();
+      data.auth.apiKeyKey = document.getElementById('source-auth-apiKeyKey').value.trim();
+      data.auth.helpText = document.getElementById('source-auth-helpText').value.trim();
+      data.auth.userId = (document.getElementById('source-auth-userId')?.value || '').trim();
+      data.auth.apiKey = (document.getElementById('source-auth-apiKey')?.value || '').trim();
+    }
+
+    if (sourceType === 'api') {
+      // API-specific fields
+      data.api = {
         basePath: document.getElementById('source-api-basePath').value.trim(),
         countBasePath: document.getElementById('source-api-countBasePath').value.trim() || undefined,
         jsonSupport: document.getElementById('source-api-jsonSupport').checked,
         limitParam: document.getElementById('source-api-limitParam').value.trim(),
         pageParam: document.getElementById('source-api-pageParam').value.trim(),
         tagsParam: document.getElementById('source-api-tagsParam').value.trim(),
-        pageStart: parseInt(document.getElementById('source-api-pageStart').value, 10) || 0,
         pageStart: parseInt(document.getElementById('source-api-pageStart').value, 10) || 0
-      },
-      response: {
+      };
+      
+      data.response = {
         countParser: document.getElementById('source-response-countParser').value,
         countPath: document.getElementById('source-response-countPath').value.trim(),
         wrapper: document.getElementById('source-response-wrapper').value.trim()
-      },
-      fields: {
+      };
+
+      data.fields = {
         imageUrl: document.getElementById('source-fields-imageUrl').value.trim(),
         previewUrl: document.getElementById('source-fields-previewUrl').value.trim(),
         sampleUrl: document.getElementById('source-fields-sampleUrl').value.trim(),
@@ -882,87 +1006,67 @@ class BooruSourcesManager {
         imageUrlTemplate: document.getElementById('source-fields-imageUrlTemplate').value.trim() || undefined,
         sampleUrlTemplate: document.getElementById('source-fields-sampleUrlTemplate').value.trim() || undefined,
         thumbnailUrlTemplate: document.getElementById('source-fields-thumbnailUrlTemplate').value.trim() || undefined
-      },
-      sort: {
+      };
+
+      data.sort = {
         scoreMethod: document.getElementById('source-sort-scoreMethod').value
-      },
-      safeMode: {
+      };
+      if (data.sort.scoreMethod === 'param') {
+        data.sort.paramName = document.getElementById('source-sort-paramName').value.trim();
+      }
+
+      data.safeMode = {
         required: document.getElementById('source-safeMode-required').checked
-      },
-      artist: {
+      };
+      if (data.safeMode.required) {
+        data.safeMode.url = document.getElementById('source-safeMode-url').value.trim();
+        data.safeMode.delay = parseInt(document.getElementById('source-safeMode-delay').value) || 1000;
+      }
+
+      data.artist = {
         tagApiUrl: document.getElementById('source-artist-tagApiUrl').value.trim(),
         tagTypeKeyPath: document.getElementById('source-artist-tagTypeKeyPath').value.trim() || 'type',
         artistTypeValue: document.getElementById('source-artist-artistTypeValue').value.trim() || '1',
         tagSeparator: document.getElementById('source-artist-tagSeparator').value || ' ',
         postUrlPattern: document.getElementById('source-artist-postUrlPattern').value.trim()
-      },
-      ui: {
-        defaultSort: 'new',
-        defaultLimit: 100,
-        requiresProxy: false
-      }
+      };
+    } else if (sourceType === 'scraper') {
+      // Scraper-specific fields
+      data.scraper = {
+        listPageUrl: document.getElementById('scraper-listPageUrl').value.trim(),
+        listPageSelector: document.getElementById('scraper-listPageSelector').value.trim(),
+        postLinkSelector: document.getElementById('scraper-postLinkSelector').value.trim(),
+        imageUrlSelector: document.getElementById('scraper-imageUrlSelector').value.trim(),
+        imageUrlAttribute: document.getElementById('scraper-imageUrlAttribute').value.trim() || 'src',
+        detailImageSelector: document.getElementById('scraper-detailImageSelector').value.trim(),
+        detailImageAttribute: document.getElementById('scraper-detailImageAttribute').value.trim() || 'src',
+        detailTagsSelector: document.getElementById('scraper-detailTagsSelector').value.trim(),
+        detailGeneralTagsSelector: document.getElementById('scraper-detailGeneralTagsSelector').value.trim(),
+        detailArtistTagsSelector: document.getElementById('scraper-detailArtistTagsSelector').value.trim(),
+        detailTagTextExtraction: document.getElementById('scraper-detailTagTextExtraction').value,
+        postsPerPage: parseInt(document.getElementById('scraper-postsPerPage').value) || 42,
+        paginationStrategy: document.getElementById('scraper-paginationStrategy').value,
+        paginationParam: document.getElementById('scraper-paginationParam').value.trim(),
+        paginationLastPageSelector: document.getElementById('scraper-paginationLastPageSelector').value.trim(),
+        searchTagParam: document.getElementById('scraper-searchTagParam').value.trim(),
+        searchTagSeparator: document.getElementById('scraper-searchTagSeparator').value.trim() || '+'
+      };
+    }
+
+    // Gallery display options (applies to all source types)
+    data.gallery = {
+      invertAspectRatio: document.getElementById('source-invertAspectRatio').checked || false
     };
-
-    // Add optional fields
-    if (data.auth.required) {
-      data.auth.userIdKey = document.getElementById('source-auth-userIdKey').value.trim();
-      data.auth.apiKeyKey = document.getElementById('source-auth-apiKeyKey').value.trim();
-      data.auth.helpText = document.getElementById('source-auth-helpText').value.trim();
-      data.auth.userId = (document.getElementById('source-auth-userId')?.value || '').trim();
-      data.auth.apiKey = (document.getElementById('source-auth-apiKey')?.value || '').trim();
-    }
-    // cookies string
-    data.cookies = document.getElementById('source-cookies').value.trim();
-    data.userAgent = document.getElementById('source-userAgent').value.trim();
-
-    if (data.sort.scoreMethod === 'param') {
-      data.sort.paramName = document.getElementById('source-sort-paramName').value.trim();
-    }
-
-    if (data.safeMode.required) {
-      data.safeMode.url = document.getElementById('source-safeMode-url').value.trim();
-      data.safeMode.delay = parseInt(document.getElementById('source-safeMode-delay').value) || 1000;
-    }
 
     return data;
   }
 
   validateFormData(data) {
     const errors = [];
+    const sourceType = data.type || 'api';
 
     if (!data.id || !/^[a-z0-9_-]+$/.test(data.id)) {
       errors.push('Source ID must be lowercase alphanumeric with hyphens/underscores only');
-    }
-    // cookies are optional but should be a valid header string if provided
-    if (data.cookies && typeof data.cookies !== 'string') {
-      errors.push('Cookies must be a string');
-    }
-    if (data.userAgent && typeof data.userAgent !== 'string') {
-      errors.push('User-Agent must be a string');
-    }
-    if (data.fields.artistTag && typeof data.fields.artistTag !== 'string') {
-      errors.push('Artist tag field must be a string');
-    }
-    if (data.artist.tagApiUrl && typeof data.artist.tagApiUrl !== 'string') {
-      errors.push('Artist Tag API URL must be a string');
-    }
-    if (data.artist.tagTypeKeyPath && typeof data.artist.tagTypeKeyPath !== 'string') {
-      errors.push('Artist Tag Type Key Path must be a string');
-    }
-    if (data.artist.artistTypeValue && typeof data.artist.artistTypeValue !== 'string') {
-      errors.push('Artist Tag Type Value must be a string');
-    }
-    if (data.artist.tagSeparator && typeof data.artist.tagSeparator !== 'string') {
-      errors.push('Tag Separator must be a string');
-    }
-    if (data.artist.postUrlPattern && typeof data.artist.postUrlPattern !== 'string') {
-      errors.push('Post Page URL Pattern must be a string');
-    }
-    if (data.fields.width && typeof data.fields.width !== 'string') {
-      errors.push('Width field mapping must be a string');
-    }
-    if (data.fields.height && typeof data.fields.height !== 'string') {
-      errors.push('Height field mapping must be a string');
     }
 
     if (!data.name) {
@@ -973,20 +1077,61 @@ class BooruSourcesManager {
       errors.push('Valid base URL is required');
     }
 
-    if (!data.api.basePath) {
-      errors.push('API base path is required');
+    // cookies are optional but should be a valid header string if provided
+    if (data.cookies && typeof data.cookies !== 'string') {
+      errors.push('Cookies must be a string');
     }
-    if (isNaN(data.api.pageStart) || data.api.pageStart < 0) {
-      errors.push('Page start index must be a non-negative number');
-    }
-
-    if (!data.response.countParser) {
-      errors.push('Count parser type is required');
+    if (data.userAgent && typeof data.userAgent !== 'string') {
+      errors.push('User-Agent must be a string');
     }
 
     // Check for duplicate ID when adding new source
     if (!this.editingSourceId && this.sources.some(s => s.id === data.id)) {
       errors.push('Source ID already exists');
+    }
+
+    // Type-specific validation
+    if (sourceType === 'api') {
+      if (!data.api || !data.api.basePath) {
+        errors.push('API base path is required');
+      }
+      if (isNaN(data.api.pageStart) || data.api.pageStart < 0) {
+        errors.push('Page start index must be a non-negative number');
+      }
+
+      if (!data.response || !data.response.countParser) {
+        errors.push('Count parser type is required');
+      }
+
+      if (!data.fields || !data.fields.imageUrl || !data.fields.previewUrl || !data.fields.tags) {
+        errors.push('imageUrl, previewUrl, and tags field mappings are required');
+      }
+
+      if (data.fields.artistTag && typeof data.fields.artistTag !== 'string') {
+        errors.push('Artist tag field must be a string');
+      }
+      if (data.artist?.tagApiUrl && typeof data.artist.tagApiUrl !== 'string') {
+        errors.push('Artist Tag API URL must be a string');
+      }
+      if (data.fields.width && typeof data.fields.width !== 'string') {
+        errors.push('Width field mapping must be a string');
+      }
+      if (data.fields.height && typeof data.fields.height !== 'string') {
+        errors.push('Height field mapping must be a string');
+      }
+    } else if (sourceType === 'scraper') {
+      if (!data.scraper) {
+        errors.push('Scraper configuration is required');
+      } else {
+        const required = ['listPageUrl', 'listPageSelector', 'postLinkSelector', 'imageUrlSelector', 'detailImageSelector', 'detailTagsSelector', 'detailGeneralTagsSelector'];
+        for (const field of required) {
+          if (!data.scraper[field]) {
+            errors.push(`Scraper field "${field}" is required`);
+          }
+        }
+      }
+    } else {
+      errors.push(`Invalid source type: ${sourceType}`);
     }
 
     return errors;
@@ -1152,6 +1297,134 @@ class BooruSourcesManager {
 
     addLog(`Starting test for source \"${source.id}\" (${source.name})`);
 
+    // Route to appropriate test based on source type
+    const sourceType = source.type || 'api';
+    if (sourceType === 'scraper') {
+      // Test scraper source
+      if (!source.scraper || !source.scraper.listPageUrl) {
+        addLog('❌ Invalid scraper configuration: missing listPageUrl');
+        if (testBtn) {
+          testBtn.disabled = false;
+          testBtn.innerHTML = '<i class="fas fa-vial"></i>';
+        }
+        if (typeof showToast === 'function') {
+          showToast('Invalid scraper configuration', 'error');
+        }
+        return;
+      }
+
+      try {
+        addLog(`Testing list page: ${source.scraper.listPageUrl}`);
+        const response = await proxyFetch(source.scraper.listPageUrl);
+        addLog(`List page response status: ${response.status}`);
+        const htmlContent = await response.text();
+        addLog(`List page HTML length: ${htmlContent.length} bytes`);
+        addLog(`List page HTML snippet: ${htmlContent.slice(0, 200).replace(/\s+/g, ' ')}…`);
+
+        // Test parsing with configured selectors (include pagination for count extraction)
+        try {
+          addLog('Sending request to scraper endpoint...');
+          const scraperResponse = await fetch('http://localhost:3001/api/scraper/fetch-page', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+              html: htmlContent,
+              selectors: {
+                listPageSelector: source.scraper.listPageSelector,
+                postLinkSelector: source.scraper.postLinkSelector,
+                imageUrlSelector: source.scraper.imageUrlSelector,
+                imageUrlAttribute: source.scraper.imageUrlAttribute || 'src',
+                thumbnailWidthAttribute: source.scraper.thumbnailWidthAttribute || 'width',
+                thumbnailHeightAttribute: source.scraper.thumbnailHeightAttribute || 'height',
+                paginationLastPageSelector: source.scraper.paginationLastPageSelector,
+                postsPerPage: source.scraper.postsPerPage || 42
+              }
+            })
+          });
+
+          addLog(`Scraper endpoint response status: ${scraperResponse.status}`);
+          if (!scraperResponse.ok) {
+            const errorText = await scraperResponse.text();
+            addLog(`❌ Scraper endpoint error (${scraperResponse.status}): ${errorText.slice(0, 500)}`);
+            throw new Error(`Scraper endpoint returned ${scraperResponse.status}`);
+          }
+
+          const scrapedData = await scraperResponse.json();
+          if (scrapedData.success) {
+            const posts = scrapedData.data.posts || [];
+            addLog(`✓ Successfully parsed ${posts.length} posts from list page`, posts.slice(0, 3));
+            
+            if (posts.length > 0 && source.scraper.detailImageSelector) {
+              // Try fetching a detail page if configured
+              const firstPost = posts[0];
+              let postUrl = firstPost.url;
+              if (postUrl && !postUrl.startsWith('http')) {
+                const baseUrl = new URL(source.scraper.listPageUrl);
+                postUrl = baseUrl.origin + (postUrl.startsWith('/') ? '' : '/') + postUrl;
+              }
+              
+              addLog(`Testing detail page: ${postUrl}`);
+              const detailResp = await proxyFetch(postUrl);
+              const detailHtml = await detailResp.text();
+              addLog(`Detail page HTML length: ${detailHtml.length} bytes`);
+
+              const detailScrapeResp = await fetch('http://localhost:3001/api/scraper/fetch-page', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({
+                  html: detailHtml,
+                  selectors: {
+                    detailImageSelector: source.scraper.detailImageSelector,
+                    detailImageAttribute: source.scraper.detailImageAttribute || 'src',
+                    detailTagsSelector: source.scraper.detailTagsSelector,
+                    detailGeneralTagsSelector: source.scraper.detailGeneralTagsSelector,
+                    detailArtistTagsSelector: source.scraper.detailArtistTagsSelector
+                  }
+                })
+              });
+
+              if (!detailScrapeResp.ok) {
+                addLog(`⚠️ Detail page scraper endpoint error (${detailScrapeResp.status})`);
+              } else {
+                const detailData = await detailScrapeResp.json();
+                if (detailData.success) {
+                  addLog('✓ Successfully parsed detail page', detailData.data);
+                } else {
+                  addLog('⚠️ Failed to parse detail page: ' + detailData.error);
+                }
+              }
+            }
+
+            addLog('Test finished - scraper configuration appears valid');
+            if (typeof showToast === 'function') {
+              showToast('Scraper test successful – check logs for details', 'success');
+            }
+          } else {
+            addLog(`❌ Scraper parsing failed: ${scrapedData.error}`);
+            if (typeof showToast === 'function') {
+              showToast('Scraper parsing failed – check logs for details', 'error');
+            }
+          }
+        } catch (err) {
+          addLog(`❌ Scraper test failed: ${err.message}`);
+          if (typeof showToast === 'function') {
+            showToast('Scraper test failed: ' + err.message, 'error');
+          }
+        }
+      } catch (err) {
+        addLog(`❌ Failed to fetch list page: ${err.message}`);
+        if (typeof showToast === 'function') {
+          showToast('Failed to fetch list page: ' + err.message, 'error');
+        }
+      }
+
+      if (testBtn) {
+        testBtn.disabled = false;
+        testBtn.innerHTML = '<i class="fas fa-vial"></i>';
+      }
+      return;
+    }
+
     // credentials if required
     if (source.auth && source.auth.required) {
       const userId = window.userIdInput ? window.userIdInput.value.trim() : '';
@@ -1292,7 +1565,8 @@ class BooruSourcesManager {
 }
 
 // Create global instance
-const booruSourcesManager = new BooruSourcesManager();
+window.booruSourcesManager = new BooruSourcesManager();
+const booruSourcesManager = window.booruSourcesManager;
 
 // Initialize when DOM is ready
 if (document.readyState === 'loading') {

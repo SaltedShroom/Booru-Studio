@@ -385,6 +385,32 @@
         </div>
       </div>
 
+      <!-- Update Available Modal -->
+      <div id="update-modal" class="modal" style="display: none;">
+        <div class="modal-overlay"></div>
+        <div class="modal-content" style="max-width: 600px;">
+          <div class="modal-header">
+            <h3><i class="fas fa-code-branch"></i> New Update Available</h3>
+            <button class="modal-close" id="close-update-modal"><i class="fas fa-times"></i></button>
+          </div>
+          <div class="modal-body">
+            <div class="update-title-section">
+              <h4 id="update-title-text"></h4>
+            </div>
+            <div class="update-notes-section">
+              <h5>Release Notes</h5>
+              <div id="update-notes-text" class="update-notes-content"></div>
+            </div>
+          </div>
+          <div class="modal-footer">
+            <button id="cancel-update-modal-btn" class="btn-secondary">Cancel</button>
+            <button id="confirm-update-modal-btn" class="btn-primary">
+              <i class="fas fa-download"></i> Update Now
+            </button>
+          </div>
+        </div>
+      </div>
+
     </div>
 
     <!-- Config Editor Tab -->
@@ -674,6 +700,19 @@
         <div class="modal-body booru-source-modal-body">
           <form id="booru-source-form">
             
+            <!-- Source Type -->
+            <div class="booru-form-section">
+              <h4><i class="fas fa-code-branch"></i> Source Type</h4>
+              <div class="form-group">
+                <label>Data Source Type <span class="required">*</span></label>
+                <select id="source-type" required>
+                  <option value="api">API (JSON/XML)</option>
+                  <option value="scraper">HTML Scraper</option>
+                </select>
+                <small>API sources fetch JSON/XML data. HTML Scraper sources parse HTML pages using CSS selectors.</small>
+              </div>
+            </div>
+
             <!-- Basic Information -->
             <div class="booru-form-section">
               <h4><i class="fas fa-info-circle"></i> Basic Information</h4>
@@ -694,7 +733,7 @@
                 <input type="url" id="source-baseUrl" required placeholder="e.g., https://rule34.xxx" />
                 <small>Main domain for web pages (artist pages, post views)</small>
               </div>
-              <div class="form-group">
+              <div id="api-url-group" class="form-group">
                 <label>API URL</label>
                 <input type="url" id="source-apiUrl" placeholder="e.g., https://api.rule34.xxx" />
                 <small>API endpoint (leave empty if same as Base URL)</small>
@@ -993,6 +1032,116 @@
                 <label>Post Page URL Pattern</label>
                 <input type="text" id="source-artist-postUrlPattern" placeholder="e.g., /index.php?page=post&s=view&id={id}" />
                 <small>URL pattern for opening the source post when middle-clicking preview.</small>
+              </div>
+            </div>
+
+            <!-- HTML Scraper Configuration -->
+            <div id="scraper-config-section" class="booru-form-section" style="display: none;">
+              <h4><i class="fas fa-spider"></i> HTML Scraper Configuration</h4>
+              <div class="form-group">
+                <label>List Page URL <span class="required">*</span></label>
+                <input type="text" id="scraper-listPageUrl" placeholder="e.g., https://example.com/posts" />
+                <small>Base URL for the list/search page</small>
+              </div>
+              <div class="form-group">
+                <label>Posts List Page Selector <span class="required">*</span></label>
+                <input type="text" id="scraper-listPageSelector" placeholder="e.g., .col.thumb" />
+                <small>CSS selector for each post item in the list page (e.g., .post-item, div[data-post])</small>
+              </div>
+              <div class="form-group">
+                <label>Post Detail Link Selector <span class="required">*</span></label>
+                <input type="text" id="scraper-postLinkSelector" placeholder="e.g., a" />
+                <small>CSS selector for the link to post details, relative to post item (e.g., a, a.post-link)</small>
+              </div>
+              <div class="form-group">
+                <label>Thumbnail URL Selector <span class="required">*</span></label>
+                <input type="text" id="scraper-imageUrlSelector" placeholder="e.g., img" />
+                <small>CSS selector for thumbnail image, relative to post item (e.g., img, img.thumb)</small>
+              </div>
+              <div class="form-group">
+                <label>Image Attribute for URL</label>
+                <input type="text" id="scraper-imageUrlAttribute" placeholder="e.g., src" value="src" />
+                <small>Attribute to extract URL from (usually src or data-src)</small>
+              </div>
+              <div class="form-group">
+                <label>Post Detail Page - Image/Video Selector <span class="required">*</span></label>
+                <input type="text" id="scraper-detailImageSelector" placeholder="e.g., #image, #gelcomVideoPlayer" />
+                <small>CSS selector for the main image or video element on post detail page</small>
+              </div>
+              <div class="form-group">
+                <label>Post Detail Page - Image Attribute</label>
+                <input type="text" id="scraper-detailImageAttribute" placeholder="e.g., src" value="src" />
+                <small>Attribute to extract URL from on detail page (src for img/video, data-src for lazy-loaded)</small>
+              </div>
+              <div class="form-group">
+                <label>Post Detail Page - Tags Container Selector</label>
+                <input type="text" id="scraper-detailTagsSelector" placeholder="e.g., #tagLink" />
+                <small>CSS selector for the container holding all tags on detail page</small>
+              </div>
+              <div class="form-group">
+                <label>Post Detail Page - General Tags Selector</label>
+                <input type="text" id="scraper-detailGeneralTagsSelector" placeholder="e.g., a.tag-type-general" />
+                <small>CSS selector for general tags within the tags container (relative path)</small>
+              </div>
+              <div class="form-group">
+                <label>Post Detail Page - Artist Tags Selector</label>
+                <input type="text" id="scraper-detailArtistTagsSelector" placeholder="e.g., a.model or a.model, a.artist" />
+                <small>CSS selector for artist/model tags within the tags container (relative path)</small>
+              </div>
+              <div class="form-group">
+                <label>Post Detail Page Tag Text Extraction</label>
+                <select id="scraper-detailTagTextExtraction">
+                  <option value="text">Text Content</option>
+                  <option value="innerText">Inner Text</option>
+                  <option value="textContent">Text Content (Normalized)</option>
+                </select>
+                <small>How to extract tag text from tag elements</small>
+              </div>
+              <div class="form-group">
+                <label>Posts Per Page</label>
+                <input type="number" id="scraper-postsPerPage" placeholder="e.g., 42" value="42" min="1" />
+                <small>Number of posts displayed per page for pagination</small>
+              </div>
+              <div class="form-group">
+                <label>Pagination Strategy</label>
+                <select id="scraper-paginationStrategy">
+                  <option value="offset">Offset (pid=0, pid=42, pid=84...)</option>
+                  <option value="next-link">Next Link (find next page link in HTML)</option>
+                  <option value="page-number">Page Number (?page=1, ?page=2...)</option>
+                </select>
+                <small>How pagination is handled on the source</small>
+              </div>
+              <div class="form-group">
+                <label>Pagination Parameter / Pattern</label>
+                <input type="text" id="scraper-paginationParam" placeholder="e.g., pid or ?page={page}" />
+                <small>For offset: parameter name. For next-link: CSS selector. For page-number: URL pattern with {page}</small>
+              </div>
+              <div class="form-group">
+                <label>Last Page Link Selector (for total count extraction)</label>
+                <input type="text" id="scraper-paginationLastPageSelector" placeholder="e.g., a[alt='last page']" />
+                <small>CSS selector for the 'last page' link to extract total post count</small>
+              </div>
+              <div class="form-group">
+                <label>Search Tag Parameter Name</label>
+                <input type="text" id="scraper-searchTagParam" placeholder="e.g., tags or q" />
+                <small>URL parameter name for tag search (e.g., ?tags=value or ?q=value)</small>
+              </div>
+              <div class="form-group">
+                <label>Search Tag Separator</label>
+                <input type="text" id="scraper-searchTagSeparator" placeholder="e.g., + or space" value="+" />
+                <small>Character(s) used to separate multiple tags in search URL</small>
+              </div>
+            </div>
+
+            <!-- Gallery Display Options (applies to both API and Scraper) -->
+            <div class="booru-form-section">
+              <h4><i class="fas fa-images"></i> Gallery Display Options</h4>
+              <div class="form-group checkbox-group">
+                <label class="checkbox-label">
+                  <input type="checkbox" id="source-invertAspectRatio" />
+                  <span>Invert Aspect Ratio</span>
+                </label>
+                <small>Check this if image aspect ratios (width/height) are displayed incorrectly (vertical images appearing horizontal or vice versa)</small>
               </div>
             </div>
 

@@ -319,7 +319,9 @@ function fetchLatestGitHubRelease() {
           try {
             const obj = JSON.parse(data);
             const remoteVersion = obj.tag_name || obj.name || null;
-            resolve({ error: false, remoteVersion, raw: obj });
+            const releaseTitle = obj.name || null;
+            const releaseNotes = obj.body || null;
+            resolve({ error: false, remoteVersion, releaseTitle, releaseNotes, raw: obj });
           } catch (err) {
             resolve({ error: true, message: err.message || String(err), remoteVersion: null });
           }
@@ -353,6 +355,8 @@ ipcMain.handle('check-for-updates', async () => {
       error: false,
       updateInfo: updateCheck?.updateInfo || null,
       remoteVersion: githubRelease.remoteVersion || null,
+      releaseTitle: githubRelease.releaseTitle || null,
+      releaseNotes: githubRelease.releaseNotes || null,
       githubError: githubRelease.error ? githubRelease.message : null,
     };
   } catch (err) {
@@ -365,6 +369,8 @@ ipcMain.handle('check-for-updates', async () => {
         updateInfo: null,
         noReleases: true,
         remoteVersion: githubRelease.remoteVersion || null,
+        releaseTitle: githubRelease.releaseTitle || null,
+        releaseNotes: githubRelease.releaseNotes || null,
         githubError: githubRelease.error ? githubRelease.message : null,
       };
     }
@@ -373,6 +379,8 @@ ipcMain.handle('check-for-updates', async () => {
       error: true,
       message,
       remoteVersion: githubRelease.remoteVersion || null,
+      releaseTitle: githubRelease.releaseTitle || null,
+      releaseNotes: githubRelease.releaseNotes || null,
       githubError: githubRelease.error ? githubRelease.message : null,
     };
   }

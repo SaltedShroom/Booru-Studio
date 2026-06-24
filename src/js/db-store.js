@@ -122,6 +122,16 @@ class DBStore {
     }
   }
 
+  async getDownloadedPostsBySource(sourceId) {
+    try {
+      const allPosts = await this.getAllDownloadedPosts();
+      return allPosts.filter(p => p.source === sourceId);
+    } catch (error) {
+      console.error('DBStore.getDownloadedPostsBySource error:', error);
+      throw error;
+    }
+  }
+
   async getDownloadedPostCount() {
     try {
       const response = await fetch(`${DB_API_BASE}/posts/count`);

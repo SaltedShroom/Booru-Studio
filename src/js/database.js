@@ -93,6 +93,8 @@ async function initDatabase() {
     CREATE INDEX IF NOT EXISTS idx_downloaded_posts_source ON downloaded_posts(source);
   `);
   
+  ensureDefaultCSSPresets();
+  
   console.log('✓ SQLite database initialized at:', DB_PATH);
   return db;
 }
@@ -550,6 +552,58 @@ function migrateTagSuggestionsSchema() {
   }
 }
 
+// ============== Ensure Default CSS Presets ==============
+
+function ensureDefaultCSSPresets() {
+  if (!db) throw new Error('Database not initialized');
+  
+  const defaultPresetName = 'Gallery | noGaps';
+  const defaultPresetCode = `.booru-gallery {
+  gap: 0px;
+}
+.booru-image-item .item-overlay {
+  opacity: 0;
+}
+.booru-gallery:not(.downloads-gallery) .booru-image-item[data-downloaded="true"] {
+  scale: 1;
+}`;
+
+  try {
+    // Check if we've already attempted to install the default preset
+    const flagStmt = db.prepare('SELECT value FROM settings WHERE key = ?');
+    const installed = flagStmt.get('default_preset_installed');
+
+    if (!installed) {
+      // Install the default preset on first run only
+      const id = 'preset_' + Date.now() + '_' + Math.random().toString(36).substr(2, 9);
+      const now = Date.now();
+
+      const insertStmt = db.prepare(`
+        INSERT INTO css_presets (id, name, code, is_active, order_index, created_at, updated_at)
+        VALUES (?, ?, ?, ?, ?, ?, ?)
+      `);
+
+      insertStmt.run(
+        id,
+        defaultPresetName,
+        defaultPresetCode,
+        0,
+        0,
+        now,
+        now
+      );
+
+      // Mark as installed so it won't be reinstalled on future app restarts
+      const settingStmt = db.prepare('INSERT OR REPLACE INTO settings (key, value) VALUES (?, ?)');
+      settingStmt.run('default_preset_installed', '1');
+
+      console.log('✓ Default CSS preset installed:', defaultPresetName);
+    }
+  } catch (error) {
+    console.error('❌ ensureDefaultCSSPresets FAILED:', error.message);
+  }
+}
+
 // ============== Download Settings operations ==============
 
 function saveDownloadSettings(settingsData) {
@@ -670,5 +724,6 @@ module.exports = {
   getAllCSSPresets,
   getActiveCSSPresets,
   removeCSSPreset,
-  updateCSSPresetActiveStatus
+  updateCSSPresetActiveStatus,
+  ensureDefaultCSSPresets
 };

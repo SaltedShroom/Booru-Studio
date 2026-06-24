@@ -965,6 +965,54 @@ body, html {
   border-color: var(--bg-darkest);
 }
 
+.update-title-section {
+  margin-bottom: 20px;
+}
+
+.update-title-section h4 {
+  margin: 0;
+  font-size: 16px;
+  font-weight: 600;
+  color: var(--text-primary);
+}
+
+.update-notes-section h5 {
+  margin: 0 0 12px 0;
+  font-size: 14px;
+  font-weight: 600;
+  color: var(--text-secondary);
+  text-transform: uppercase;
+  letter-spacing: 0.5px;
+}
+
+.update-notes-content {
+  background: var(--bg-medium);
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  padding: 14px;
+  font-size: 13px;
+  color: var(--text-secondary);
+  line-height: 1.6;
+  max-height: 300px;
+  overflow-y: auto;
+  white-space: pre-wrap;
+  word-wrap: break-word;
+}
+
+.update-notes-content a {
+  color: var(--accent);
+  text-decoration: none;
+}
+
+.update-notes-content a:hover {
+  text-decoration: underline;
+}
+
+.update-notes-content strong {
+  color: var(--text-primary);
+  font-weight: 600;
+}
+
 .modal-footer {
   padding: 16px 24px;
   border-top: 1px solid var(--border);
@@ -2005,7 +2053,7 @@ body, html {
   }
 }
 
-#lightbox-image.loaded, .lightbox-modal video {
+#lightbox-image.loaded, .lightbox-modal.active video {
   opacity: 1;
   pointer-events: all;
 }
@@ -3131,6 +3179,7 @@ body, html {
   pointer-events: none;
   opacity: 1 !important;
   box-shadow: var(--booru-image-item-shadow);
+  transition: border-color 0.3s ease;
 }
 
 .booru-image-item img.loaded,
@@ -3171,6 +3220,10 @@ body, html {
 .booru-gallery:not(.downloads-gallery) .booru-image-item[data-downloaded="true"].file-type-video video,
 .booru-gallery:not(.downloads-gallery) .booru-image-item[data-downloaded="true"].file-type-video .item-overlay {
   border-color: var(--border-video) !important;
+}
+
+.booru-gallery:not(.downloads-gallery) .booru-image-item .item-overlay.scraper-post-overlay {
+  border-color: var(--border) !important;
 }
 
 .booru-gallery:not(.downloads-gallery) .booru-image-item[data-downloaded="true"].file-type-image::after {
@@ -3280,6 +3333,7 @@ body, html {
 .booru-hover-preview-media img {
   width: 100%;
   height: auto;
+  min-width: 250px;
   max-height: 520px;
   object-fit: contain;
   display: block;
@@ -3288,6 +3342,7 @@ body, html {
 /* Videos - constrain to prevent overflow */
 .booru-hover-preview-media video {
   max-width: 100%;
+  min-width: 250px;
   max-height: 520px;
   width: auto;
   height: auto;
@@ -5446,4 +5501,21 @@ textarea.settings-input {
   align-items: center;
   justify-content: center;
   font-size: 18px;
+}
+#browse-booru-source-btn {
+  border-radius: 0;
+  background: #2976c7;
+  border-color: #368fef;
+  color: white;
+  font-size: 18px;
+  text-align: center;
+  display: flex;
+  position: relative;
+  align-items: center;
+  justify-content: center;
+  text-decoration: none;
+  width: 100%;
+}
+#browse-booru-source-btn:hover {
+  border-color: white;
 }

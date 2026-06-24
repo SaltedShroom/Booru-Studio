@@ -898,6 +898,74 @@ function switchToTab(tabId) {
           if (content) {
             content.classList.remove('hidden');
           }
+          
+          // For scraper sources: skip gallery reinitialization here because renderBooruGallery
+          // needs to wait for images to load first via waitForGalleryImagesToLoad().
+          // Reinitializing here would use images with naturalWidth=0, causing 1:1 aspect ratios.
+          // Just restore HQ images after images have loaded and gallery is settled.
+          const currentSource = document.getElementById('booru-source-select')?.value;
+          let sourceConfig = null;
+          if (currentSource && typeof booruSourcesManager !== 'undefined' && booruSourcesManager.sources) {
+            sourceConfig = booruSourcesManager.sources.find(s => s.id === currentSource);
+          }
+          
+          if (sourceConfig && sourceConfig.type === 'scraper') {
+            // For scraper sources: don't touch the gallery - renderBooruGallery handles it with proper timing
+            // Just restore HQ after renderBooruGallery completes its initialization
+            if (window._hqRestoreResizeTimeout) {
+              clearTimeout(window._hqRestoreResizeTimeout);
+            }
+            window._hqRestoreResizeTimeout = setTimeout(() => {
+              if (typeof restoreHighQualityGalleryImages === 'function') {
+                restoreHighQualityGalleryImages();
+              }
+              document.getElementById('image-size-slider')?.dispatchEvent(new Event('input'));
+            }, 350); // Longer delay to ensure renderBooruGallery + waitForGalleryImagesToLoad completes
+          } else if (typeof $.fn.justifiedGallery !== 'undefined') {
+            // For non-scraper sources: update gallery normally
+            const galleryWrapper = document.getElementById('gallery-wrapper');
+            const booruGallery = document.getElementById('booru-gallery');
+            const wrapper = galleryWrapper || booruGallery;
+            const galleryTargets = galleryWrapper
+              ? Array.from(galleryWrapper.querySelectorAll('.booru-gallery'))
+              : (booruGallery ? [booruGallery] : []);
+
+            galleryTargets.forEach((gal) => {
+              try {
+                const $gallery = $(gal);
+                const isInitialized = $gallery.data('justifiedGallery');
+                
+                if (isInitialized) {
+                  // If already initialized, use norewind to update
+                  $gallery.justifiedGallery('norewind');
+                }
+                
+                // Then apply the config
+                const currentImageSize = parseInt(document.getElementById('image-size-slider')?.value || 250, 10);
+                $gallery.justifiedGallery({
+                  rowHeight: currentImageSize,
+                  maxRowHeight: false,
+                  margins: typeof getGalleryMargins === 'function' ? getGalleryMargins() : 4,
+                  lastRow: 'nojustify',
+                  captions: false,
+                  waitThumbnailsLoad: false,
+                  border: 0
+                });
+              } catch (err) {
+                console.error('Error updating justified gallery on tab reveal:', err, gal);
+              }
+            });
+
+            if (window._hqRestoreResizeTimeout) {
+              clearTimeout(window._hqRestoreResizeTimeout);
+            }
+            window._hqRestoreResizeTimeout = setTimeout(() => {
+              if (typeof restoreHighQualityGalleryImages === 'function') {
+                restoreHighQualityGalleryImages();
+              }
+            }, 120);
+          }
+          
           // Clear restoration flag after content is revealed
           window.isRestoringTab = false;
         };
@@ -941,7 +1009,7 @@ function switchToTab(tabId) {
           if (gallery && typeof $ !== 'undefined' && typeof $.fn.justifiedGallery !== 'undefined') {
             $(gallery).one('jg.complete', () => setTimeout(revealContent, 30));
           }
-          setTimeout(revealContent, 800);
+          setTimeout(revealContent, 100);
         }
 
         if (window.booruPosts.length > 0) {
@@ -951,6 +1019,10 @@ function switchToTab(tabId) {
           }
         } else {
           if (gallery) gallery.innerHTML = '';
+          setTimeout(() => {
+          document.getElementById('reload-booru-btn')?.dispatchEvent(new Event('click'));
+          document.getElementById('reload-booru-btn')?.dispatchEvent(new Event('blur'));
+          }, 200);
         }
 
         // Update total count display
@@ -971,6 +1043,7 @@ function switchToTab(tabId) {
   const searchInput = document.getElementById('search-filter-input');
   if (searchInput.value.toLowerCase() == 'search' || searchInput.value.toLowerCase() == 'new tab') { searchInput.value = ''; };
   
+  saveCurrentTabState();
   saveBooruTabsToSession();
 
   const booruGallery = document.getElementById('booru-gallery');

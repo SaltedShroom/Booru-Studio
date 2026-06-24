@@ -51,8 +51,10 @@ function updateBooruGalleryCounter() {
   function formatNumber(num) {
     if (num === null || num === undefined) return '?';
     let s = num.toString();
-    if (s.length > 6) s = s.slice(0, s.length - 6) + 'M+';
-    else if (s.length > 3) s = s.slice(0, s.length - 3) + 'k+';
+    const stringLength = s.replace('+', '').length;
+    
+    if (stringLength > 6) s = s.slice(0, stringLength - 6) + 'M+';
+    else if (stringLength > 3) s = s.slice(0, stringLength - 3) + 'k+';
     return s;
   }
 
@@ -279,10 +281,7 @@ const booruTotalCount = document.getElementById('booru-total-count');
 
 // Global booru state - use window properties for tab persistence
 let booruPaginationToken = null;
-window.booruPaginationToken = booruPaginationToken; // Make accessible for tab state saving
 let isLoadingBooru = false;
-let isRestoringTab = false; // Flag to prevent loading during tab restoration
-window.isRestoringTab = false; // Make accessible globally
 let aiFilterEnabled = false; // AI filter OFF by default
 let maxRecommendedTags = 20;
 let activeDownloadsSidebarTab = 'analytics'; // or 'mosaic'
@@ -402,6 +401,47 @@ const loadingQueue = {
   }
 };
 
+// Scraper post detail fetching queue - async background scraping of post details
+window.scraperDetailConcurrency = window.scraperDetailConcurrency || 2;
+const scraperDetailQueue = {
+  _queue: [],
+  _active: 0,
+  _processing: false,
+  enqueue(postId, sourceId) {
+    return new Promise((resolve, reject) => {
+      if (!this._queue.some(item => item.postId === postId && item.sourceId === sourceId)) {
+        this._queue.push({ postId, sourceId, resolve, reject });
+        this._process();
+      } else {
+        resolve();
+      }
+    });
+  },
+  async _process() {
+    if (this._processing) return;
+    this._processing = true;
+    
+    const concurrency = parseInt(window.scraperDetailConcurrency, 10) || 2;
+    while (this._active < concurrency && this._queue.length > 0) {
+      const item = this._queue.shift();
+      this._active++;
+      (async () => {
+        try {
+          await fetchScraperPostDetails(item.postId, item.sourceId, false);
+          item.resolve();
+        } catch (err) {
+          item.reject(err);
+        } finally {
+          this._active--;
+          setTimeout(() => this._process(), 0);
+        }
+      })();
+    }
+    
+    this._processing = false;
+  }
+};
+
 async function runDownloadWithRetries(task, maxAttempts = 3, onProgress) {
   let lastError = null;
   for (let attempt = 1; attempt <= maxAttempts; attempt++) {
@@ -448,6 +488,7 @@ async function runDownloadWithRetries(task, maxAttempts = 3, onProgress) {
 
 // Expose for testing
 window._downloadQueue = downloadQueue;
+window._scraperDetailQueue = scraperDetailQueue;
 
 // Initialize window properties if not exists
 window.booruPosts = window.booruPosts || [];
@@ -744,16 +785,29 @@ function applyVideoVolume(videoEl) {
 function getImageUrl(imageUrl) {
   if (!imageUrl) return '';
   // Never proxy localhost URLs - they're local files
-  if (imageUrl.includes('localhost') || imageUrl.includes('127.0.0.1') || imageUrl.startsWith('data:') || imageUrl.startsWith('file:')) {
+  if (imageUrl.includes('localhost') || imageUrl.includes('127.0.0.1')) {
+    return imageUrl;
+  }
+  // Never proxy data URLs - they're already embedded and would create huge header sizes
+  if (imageUrl.startsWith('data:')) {
     return imageUrl;
   }
   
-  try {
-    return `http://localhost:3001/proxy-image?url=${encodeURIComponent(imageUrl)}`;
-  } catch (e) {
-    showToast('Failed to fetch URL: ' + e.message, 'error');
-    console.error('Failed to fetch URL:', imageUrl, e);
+  const proxySettings = localStorage.getItem('proxySettings');
+  if (proxySettings) {
+    try {
+      const settings = JSON.parse(proxySettings);
+      if (settings.active && settings.host && settings.port) {
+        // Return proxied URL pointing to port 3001
+        return `http://localhost:3001/proxy-image?url=${encodeURIComponent(imageUrl)}`;
+      }
+    } catch (e) {
+      console.error('Error checking proxy settings for image:', e);
+      showToast('Error checking proxy settings: ' + e.message, 'error');
+    }
   }
+  // Return direct URL if proxy is not enabled
+  return imageUrl;
 }
 
 // Global listener for image load errors so we can toast proxy failures
@@ -1984,7 +2038,7 @@ function updateArtistFilter() {
   if (!leftControls) return;
 
   const searchInput = document.getElementById('search-filter-input');
-  const posts = Array.isArray(window.downloadsGalleryOriginalPosts) ? window.downloadsGalleryOriginalPosts : [];
+  const posts = Array.isArray(window.allDownloadedPosts) ? window.allDownloadedPosts : [];
   const artistSelect = document.getElementById('downloads-artist-select') || document.createElement('select');
   artistSelect.id = 'downloads-artist-select';
   artistSelect.classList.add('js-example-basic-single');
@@ -2041,32 +2095,7 @@ function updateArtistFilter() {
 
   function handleArtistSelection(selectedArtist) {
     if (!searchInput) return;
-    
-    if (selectedArtist === '') {
-      // "-" was selected, remove all artist names from search input
-      const allArtists = Array.from(artistSelect.options)
-        .map(option => option.value)
-        .filter(value => value !== ''); // Exclude the "-" option
-      
-      let searchText = searchInput.value;
-      allArtists.forEach(artist => {
-        // Remove artist as whole word, with regex escaping for special characters
-        const regex = new RegExp(`\\b${artist.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}\\b`, 'gi');
-        searchText = searchText.replace(regex, '').trim();
-      });
-      
-      searchInput.value = searchText;
-    } else {
-      if (!searchInput.value.includes(selectedArtist)) {
-        // Add selected artist to search
-        searchInput.value += " " + selectedArtist;
-      } else {
-        // Artist already in search, remove it
-        const regex = new RegExp(`\\b${selectedArtist.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}\\b`, 'gi');
-        searchInput.value = searchInput.value.replace(regex, '').trim();
-      }
-    }
-    
+    searchInput.value = selectedArtist;
     searchInput.dispatchEvent(new Event('input', { bubbles: true }));
     searchInput.dispatchEvent(new Event('blur', { bubbles: true }));
   }
@@ -2088,53 +2117,9 @@ function updateArtistFilter() {
       templateResult: formatArtistOption,
       templateSelection: formatArtistSelection,
       escapeMarkup: markup => markup
-    }).off('select2:closing select2:select select2:opening');
-    
-    // Helper function to highlight selected artists
-    function highlightSelectedArtists() {
-      const searchWords = searchInput.value
-        .split(/\s+/)
-        .filter(word => word.length > 0)
-        .map(word => word.toLowerCase());
-      
-      const options = document.querySelectorAll('li.select2-results__option');
-      options.forEach(option => {
-        const artistTag = option.querySelector('span.artist-tag');
-        if (artistTag) {
-          const artistName = artistTag.textContent.trim().toLowerCase();
-          if (searchWords.includes(artistName)) {
-            option.classList.add('artist-select-selected');
-          } else {
-            option.classList.remove('artist-select-selected');
-          }
-        }
-      });
-    }
-    
-    $(artistSelect).on('select2:opening', function (e) {
-      // When dropdown opens, highlight artists that match search input words
-      setTimeout(() => {
-        highlightSelectedArtists();
-        
-        // Watch for DOM changes in the results container and re-highlight
-        const resultsContainer = document.querySelector('.select2-results');
-        if (resultsContainer && !resultsContainer._artistHighlightObserver) {
-          const observer = new MutationObserver(() => {
-            highlightSelectedArtists();
-          });
-          observer.observe(resultsContainer, { childList: true, subtree: true });
-          resultsContainer._artistHighlightObserver = observer;
-        }
-      }, 0);
     }).on('select2:select', function (e) {
-      // Handle regular artist selection
-      const selectedArtist = $(this).val();
+      const selectedArtist = e.params?.data?.id || $(this).val();
       handleArtistSelection(selectedArtist);
-      $(this).select2('open');
-      setTimeout(() => {
-        // After selection, reopen the dropdown to allow multiple selections without closing
-        $(this).select2('open');
-      }, 400);
     });
   } else {
     const artistChangeHandler = () => handleArtistSelection(artistSelect.value);
@@ -2143,42 +2128,6 @@ function updateArtistFilter() {
   }
 }
 
-// Global document click listener to catch clicks on "-" option in artist dropdown
-// Global document mousedown listener to catch clicks on "-" option in artist dropdown
-// Using mousedown instead of click because select2 may prevent click propagation
-document.addEventListener('mousedown', (e) => {
-  const clickedOption = e.target.closest('li.select2-results__option');
-  if (clickedOption && clickedOption.textContent.trim() === '-') {
-    // Check if this is the artist filter dropdown
-    const resultsContainer = clickedOption.closest('.select2-results');
-    if (resultsContainer) {
-      const select2Container = resultsContainer.closest('.select2-container');
-      if (select2Container) {
-        const artistSelect = document.getElementById('downloads-artist-select');
-        const searchInput = document.getElementById('search-filter-input');
-        if (artistSelect && searchInput) {
-          // Remove all artist names from search input
-          const allArtists = Array.from(artistSelect.options)
-            .map(option => option.value)
-            .filter(value => value !== '');
-          
-          let searchText = searchInput.value;
-          allArtists.forEach(artist => {
-            const regex = new RegExp(`\\b${artist.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}\\b`, 'gi');
-            searchText = searchText.replace(regex, '').trim();
-          });
-          
-          searchInput.value = searchText;
-          searchInput.dispatchEvent(new Event('input', { bubbles: true }));
-          searchInput.dispatchEvent(new Event('blur', { bubbles: true }));
-        }
-      }
-    }
-  }
-}, true); // Use capture phase to catch the event early
-
-
-
 
 function updateSourceFilter() {
   const controlBar = document.querySelector('header.control-bar.booru-control-bar');
@@ -2186,7 +2135,7 @@ function updateSourceFilter() {
   if (!leftControls) return;
 
   const searchInput = document.getElementById('search-filter-input');
-  const posts = Array.isArray(window.downloadsGalleryOriginalPosts) ? window.downloadsGalleryOriginalPosts : [];
+  const posts = Array.isArray(window.allDownloadedPosts) ? window.allDownloadedPosts : [];
   const sourceCounts = {};
 
   posts.forEach(post => {
@@ -2604,6 +2553,13 @@ async function showDownloadsGallery(forceReload = false) {
       if (p.artist && p.artist !== 'Unknown') {
         p.author = p.artist;
       }
+      // Mark scraper posts so downloads always refetch full details
+      if (p.source) {
+        const sourceConfig = booruSourcesManager.getSource(p.source);
+        if (sourceConfig && sourceConfig.type === 'scraper') {
+          p._isScraperPost = true;
+        }
+      }
       // Convert remote URLs to local URLs for downloaded files
       // Store original URLs for reference but use local serving for display
       if (p.imageUrl) {
@@ -2640,6 +2596,22 @@ async function showDownloadsGallery(forceReload = false) {
     // Load initial batch based on limit input
     const limit = parseInt(document.getElementById('booru-limit-input')?.value) || 100;
     const initialPosts = downloadedPosts.slice(0, limit);
+    
+    // For scraper posts without aspect ratio, preload from thumbnails to extract correct aspect ratio
+    const scraperPostsToPreload = initialPosts.filter(p => p._isScraperPost && !p.aspectRatio);
+    if (scraperPostsToPreload.length > 0) {
+      // Group scraper posts by source and preload each group
+      const postsBySource = {};
+      scraperPostsToPreload.forEach(p => {
+        if (!postsBySource[p.source]) postsBySource[p.source] = [];
+        postsBySource[p.source].push(p);
+      });
+      // Preload for each source
+      for (const [sourceId, posts] of Object.entries(postsBySource)) {
+        await preloadScraperThumbnailsForAspectRatio(posts, sourceId);
+      }
+    }
+    
     window.booruPosts = initialPosts;
     window.downloadsPaginationIndex = limit;
     window.hasMoreResults = limit < downloadedPosts.length;
@@ -3088,6 +3060,7 @@ function initBooruBrowser() {
                 const highQualityImg = new Image();
                 highQualityImg.onload = () => {
                   // Swap to high quality once loaded
+                  img.src = getImageUrl(highQualityUrl);
                   img.dataset.highQualityLoaded = 'true';
                   // Remove loading overlay
                   loadingOverlay.remove();
@@ -3235,6 +3208,49 @@ function initBooruBrowser() {
                 let toast = null;
                 try { toast = window.createDownloadToast(`dl-${post.id}-${Date.now()}`, String(post.id)); if (toast) toast.update(2, 'Queued'); } catch (e) { /* ignore if not available */ }
 
+                // For scraper sources: ALWAYS fetch fresh full details and quality image before downloading
+                // Detect by: (1) flag set, OR (2) source is configured as scraper type
+                // This ensures we get the best quality regardless of whether details were loaded before
+                const sourceConfig = post.source ? booruSourcesManager.getSource(post.source) : null;
+                const isScraperPost = post._isScraperPost === true || (sourceConfig && sourceConfig.type === 'scraper');
+                
+                if (isScraperPost) {
+                  try {
+                    if (toast) toast.update(2, 'Fetching details...');
+                    const detail = await fetchScraperPostDetails(post.id, post.source);
+                    
+                    // Use returned detail data to update post object
+                    if (detail) {
+                      if (detail.detailImageUrl) {
+                        // Normalize URL: remove double slashes
+                        const normalizedUrl = detail.detailImageUrl.replace(/([^:]\/)\/+/g, '$1').trim();
+                        post.imageUrl = normalizedUrl;
+                      }
+                      if (detail.tags && detail.tags.artist && detail.tags.artist.length > 0) {
+                        post.artist = detail.tags.artist;
+                      }
+                      if (detail.tags && detail.tags.artists && detail.tags.artists.length > 0) {
+                        post.artist = detail.tags.artists;
+                      }
+                      if (detail.tags && detail.tags.general && detail.tags.general.length > 0) {
+                        post.tags = detail.tags.general;
+                      }
+                    }
+                  } catch (err) {
+                    console.error('[Download] Error fetching scraper post details:', err);
+                    if (toast) toast.update(2, 'Failed to fetch details');
+                    // Continue anyway with what we have
+                  }
+                }
+                
+                // Ensure artist is always an array
+                if (!Array.isArray(post.artist)) {
+                  post.artist = [];
+                }
+                if (!Array.isArray(post.tags)) {
+                  post.tags = [];
+                }
+
                 // Download file -> enqueue into download pipeline (with retries)
                 const filename = getFilenameFromUrl(post.imageUrl, post.id);
 
@@ -3290,6 +3306,10 @@ function initBooruBrowser() {
                     const postToSave = { ...post };
                     postToSave.artist = artist;
                     postToSave.downloadedAt = Date.now();
+                    // Explicitly ensure all important fields are included (especially for scraper posts)
+                    postToSave.imageUrl = post.imageUrl;
+                    postToSave.tags = post.tags;
+                    postToSave.artist = post.artist;
                     try { await dbStore.saveDownloadedPost(postToSave); } catch (e) { console.warn('Failed to save downloaded post to dbStore', e); }
                   }
 
@@ -3912,6 +3932,24 @@ function initBooruBrowser() {
         const limit = parseInt(document.getElementById('booru-limit-input')?.value) || 100;
         const initialPosts = window.allDownloadedPosts.slice(0, limit);
         const seperateByArtist = document.getElementById('downloads-sort-artist-btn')?.classList.contains('btn-accent');
+        
+        // For scraper posts, always preload from local files to get correct aspect ratio on reload
+        const scraperPostsToPreload = initialPosts.filter(p => p._isScraperPost);
+        if (scraperPostsToPreload.length > 0) {
+          // Group scraper posts by source and preload each group
+          const postsBySource = {};
+          scraperPostsToPreload.forEach(p => {
+            if (!postsBySource[p.source]) postsBySource[p.source] = [];
+            postsBySource[p.source].push(p);
+          });
+          // Preload for each source - this clears cached aspect ratios and recalculates from local files
+          for (const [sourceId, posts] of Object.entries(postsBySource)) {
+            // Clear existing aspect ratios to force fresh calculation
+            posts.forEach(p => delete p.aspectRatio);
+            await preloadScraperThumbnailsForAspectRatio(posts, sourceId);
+          }
+        }
+        
         document.getElementById('search-filter-input')?.dispatchEvent(new Event('input', { bubbles: true }));
         document.getElementById('search-filter-input')?.dispatchEvent(new Event('blur', { bubbles: true }));
         reloadBooruBtn.disabled = false;
@@ -3947,7 +3985,7 @@ function initBooruBrowser() {
         }
         
         debouncedSettingsSave();
-        loadBooruImages(false);
+        await loadBooruImages(false);
       }
     });
   }
@@ -4374,6 +4412,9 @@ function updateGalleryImageQuality() {
     // Only update if not a video post
     if (img.dataset.isVideo === 'true' || img.dataset.isGif === 'true') return;
 
+    // Skip if already loaded in high quality - don't blur or reload previously loaded posts
+    if (img.dataset.highQualityLoaded === 'true') return;
+
     let downloadBtn = img?.parentElement?.querySelector('.booru-download-btn');
     let originalDownloadHTML = null;
     if (downloadBtn) {
@@ -4381,7 +4422,38 @@ function updateGalleryImageQuality() {
       downloadBtn.innerHTML = '<i class="fas fa-circle-notch fa-spin"></i>';
       img.style.filter = 'blur(5px)'; // Blur while loading
     }
-    const timeoutId = setTimeout(() => {
+    const timeoutId = setTimeout(async () => {
+      // For scraper posts: fetch details first to get quality image URL
+      if (showHighQualityGallery && img.dataset.isScraperPost === 'true') {
+        const postId = img.closest('.booru-image-item')?.dataset.postId;
+        const postSource = img.closest('.booru-image-item')?.dataset.postSource;
+        
+        if (postId && postSource && typeof fetchScraperPostDetails === 'function') {
+          try {
+            const detail = await fetchScraperPostDetails(postId, postSource, true);
+            if (detail && detail.detailImageUrl) {
+              const normalizedUrl = detail.detailImageUrl.replace(/([^:]\/)\/+/g, '$1').trim();
+              img.dataset.imageUrl = normalizedUrl;
+              // if url is video or gif, mark it so we don't try to load HQ preview again
+              if (detail.isVideo) {
+                img.dataset.isVideo = 'true';
+              } else if (detail.isGif) {
+                img.dataset.isGif = 'true';
+              }
+            }
+          } catch (err) {
+            console.error('Error fetching scraper details for quality toggle:', err);
+          }
+        }
+        if (img.dataset.isVideo === 'true' || img.dataset.isGif === 'true') {
+          if (downloadBtn && originalDownloadHTML) {
+            downloadBtn.innerHTML = originalDownloadHTML;
+          }
+          img.style.filter = ''; 
+          return;
+        }
+      }
+
       const high = img.dataset.imageUrl;
       // Prefer sampleUrl if available (better quality than thumbnail), otherwise fall back to thumbnail
       const low = img.dataset.resolvedThumbnailUrl || img.dataset.sampleUrl || img.dataset.thumbnailUrl;
@@ -4403,6 +4475,9 @@ function updateGalleryImageQuality() {
             downloadBtn.innerHTML = originalDownloadHTML;
           }
           img.style.filter = '';
+
+          img.dataset.highQualityLoaded = true;
+          img.dataset.highQualityUrl = img.src;
 
           // --- Update tab cache with new quality ---
           try {
@@ -4501,6 +4576,132 @@ function updateSortOptions(savedSort) {
 
 // Expose updateSortOptions globally
 window.updateSortOptions = updateSortOptions;
+
+// Preload scraper thumbnails to extract aspect ratios BEFORE rendering gallery
+// This ensures createBooruImageElement is called with correct aspect ratio data
+// instead of having to default to 1:1 and wait for images to load
+async function preloadScraperThumbnailsForAspectRatio(posts, sourceId) {
+  if (!posts || posts.length === 0) return;
+  
+  // Get source config to check if aspect ratio should be inverted
+  let sourceConfig = null;
+  if (sourceId && typeof booruSourcesManager !== 'undefined' && booruSourcesManager.sources) {
+    sourceConfig = booruSourcesManager.sources.find(s => s.id === sourceId);
+  }
+  
+  // Create promises to preload all thumbnail images/videos
+  const preloadPromises = posts.map(post => {
+    return new Promise((resolve) => {
+      if (!post.thumbnailUrl || post.aspectRatio) {
+        // Skip if no thumbnail URL or already has aspect ratio
+        resolve();
+        return;
+      }
+      
+      // Detect if this is a video by file extension
+      const thumbnailUrl = getImageUrl(post.thumbnailUrl);
+      const isVideo = /\.(mp4|webm|ogv|mov|avi|flv|mkv)$/i.test(thumbnailUrl);
+      
+      if (isVideo) {
+        // For videos, use video element to extract dimensions
+        const video = document.createElement('video');
+        
+        const onLoadedMetadata = () => {
+          if (video.videoWidth && video.videoHeight) {
+            let aspectRatio = video.videoWidth / video.videoHeight;
+            
+            // Invert aspect ratio if the source config specifies it
+            if (sourceConfig && sourceConfig.gallery?.invertAspectRatio) {
+              aspectRatio = video.videoHeight / video.videoWidth;
+            }
+            
+            post.aspectRatio = aspectRatio;
+          }
+          cleanup();
+        };
+        
+        const onError = () => {
+          // If video fails to load, keep default aspect ratio
+          cleanup();
+        };
+        
+        const cleanup = () => {
+          video.removeEventListener('loadedmetadata', onLoadedMetadata);
+          video.removeEventListener('error', onError);
+          video.src = '';
+          resolve();
+        };
+        
+        video.addEventListener('loadedmetadata', onLoadedMetadata);
+        video.addEventListener('error', onError);
+        video.crossOrigin = 'anonymous';
+        video.src = thumbnailUrl;
+      } else {
+        // For images, use image element (existing logic)
+        const img = new Image();
+        img.onload = () => {
+          // Extract and store aspect ratio from natural dimensions
+          if (img.naturalWidth && img.naturalHeight) {
+            let aspectRatio = img.naturalWidth / img.naturalHeight;
+            
+            // Invert aspect ratio if the source config specifies it
+            if (sourceConfig && sourceConfig.gallery?.invertAspectRatio) {
+              aspectRatio = img.naturalHeight / img.naturalWidth;
+            }
+            
+            post.aspectRatio = aspectRatio;
+          }
+          resolve();
+        };
+        img.onerror = () => {
+          // If thumbnail fails to load, keep default aspect ratio
+          resolve();
+        };
+        
+        // Start loading thumbnail
+        img.src = thumbnailUrl;
+      }
+    });
+  });
+  
+  // Wait for all thumbnails to load (with timeout to prevent hanging)
+  try {
+    await Promise.race([
+      Promise.all(preloadPromises),
+      new Promise((_, reject) => setTimeout(() => reject(new Error('Timeout')), 5000))
+    ]);
+  } catch (err) {
+    // Continue anyway - some aspect ratios may be extracted, others will default to 1:1
+    // and be corrected when images load in the gallery
+  }
+}
+
+// Start background async fetching of post details for all scraper posts in the gallery
+// This ensures tags, artists, and full-quality images are available without requiring hover
+function startBackgroundScraperDetailFetching(posts) {
+  const scraperPostsToFetch = [];
+  
+  posts.forEach(post => {
+    if (!post.source) return;
+    
+    const sourceConfig = booruSourcesManager?.getSource(post.source);
+    if (sourceConfig?.type !== 'scraper') return;
+    
+    const domElement = document.querySelector(`[data-post-id="${normalizePostId(post.id)}"][data-post-source="${post.source}"]`);
+    const mediaElement = domElement?.querySelector('img');
+    
+    if (!domElement || !mediaElement) return;
+    
+    const hasTags = mediaElement.dataset.tags && mediaElement.dataset.tags !== 'loading...';
+    if (hasTags) return;
+    
+    scraperPostsToFetch.push({ id: post.id, source: post.source });
+  });
+  
+  scraperPostsToFetch.forEach(({ id, source }) => {
+    scraperDetailQueue.enqueue(id, source).catch(() => {});
+  });
+}
 
 // Parse tags to separate blacklist tags (with !) from regular tags
 function parseTagsAndBlacklist(searchTags) {
@@ -4628,11 +4829,6 @@ function updateTagSuggestions(source, posts) {
 
 // Load images based on current source
 async function loadBooruImages(append = false) {
-  // Don't load during tab restoration - use saved posts instead
-  if (window.isRestoringTab) {
-    return;
-  }
-  
   if (!append) {
     // new gallery load, drop any existing preview cache to avoid stale thumbnails
     if (window._previewCache) window._previewCache.clear();
@@ -4668,6 +4864,10 @@ async function loadBooruImages(append = false) {
     setTimeout(() => {
       isLoadingBooru = false;
     }, 1500);
+  }
+
+  if (localStorage.getItem('showHighQualityGallery') === 'true') {
+    updateGalleryImageQuality();
   }
 }
 
@@ -4738,6 +4938,285 @@ async function fetchArtistForPost(postId, sourceId, tags) {
   }
 }
 
+// ============== SCRAPER BOORU LOADER ==============
+
+/**
+ * Load booru images from a scraper-type source
+ */
+async function loadScraperBooru(sourceId, append) {
+  if (!booruGallery) return;
+  if (booruGallery.classList.contains('downloads-gallery')) return;
+
+  // Capture the current abort controller - use this throughout the function
+  // so that we have a stable reference even if currentAbortController changes
+  const abortSignal = currentAbortController?.signal;
+
+  const sourceConfig = booruSourcesManager.getSource(sourceId);
+  if (!sourceConfig || sourceConfig.type !== 'scraper' || !sourceConfig.scraper) {
+    showToast(`Invalid scraper configuration for ${sourceId}`, 'error');
+    return;
+  }
+
+  const scraper = sourceConfig.scraper;
+  const currentTabId = activeTabId;
+  const rawSearchTags = searchFilterInput ? searchFilterInput.value.trim() : '';
+  const { searchTagsArray, blacklistTags } = parseTagsAndBlacklist(rawSearchTags);
+
+  if (!append) {
+    showToast(`Loading images from ${sourceConfig.name}...`, 'info');
+    document.getElementById('load-more-icon')?.remove();
+    booruGallery.innerHTML = '<i class="fas fa-circle-notch fa-spin image-loader" style="position: relative; color: var(--accent); font-size: 60px; width: 100%; height: 200px; line-height: 200px; text-align: center;"></i>';
+    booruGallery.style.height = '300px';
+    booruPaginationToken = null;
+    window.booruPosts = [];
+    window.hasMoreResults = true;
+  } else {
+    const endMessage = booruGallery.querySelector('.booru-end-message');
+    if (endMessage) endMessage.remove();
+    document.getElementById('load-more-icon')?.remove();
+    if (booruLoading) booruLoading.style.display = 'flex';
+  }
+
+  document.getElementById('image-size-slider')?.dispatchEvent(new Event('input'));
+
+  try {
+    // Build list page URL with search tags
+    let listUrl = scraper.listPageUrl;
+    
+    if (searchTagsArray && searchTagsArray.length > 0) {
+      const tagString = searchTagsArray.join(scraper.searchTagSeparator || '+');
+      const separator = listUrl.includes('?') ? '&' : '?';
+      const tagParam = scraper.searchTagParam || 'tags';
+      listUrl = `${listUrl}${separator}${tagParam}=${encodeURIComponent(tagString)}`;
+    }
+
+    // Add pagination if we're appending (Load More)
+    if (append && booruPaginationToken) {
+      const paginationSeparator = listUrl.includes('?') ? '&' : '?';
+      if (scraper.paginationStrategy === 'offset') {
+        const param = scraper.paginationParam || 'pid';
+        listUrl = `${listUrl}${paginationSeparator}${param}=${booruPaginationToken}`;
+      }
+    }
+
+    // Fetch the HTML from the server scraper endpoint
+    const scrapeResponse = await fetch('http://localhost:3001/api/scraper/fetch-page', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        url: listUrl,
+        selectors: {
+          listPageSelector: scraper.listPageSelector,
+          postLinkSelector: scraper.postLinkSelector,
+          imageUrlSelector: scraper.imageUrlSelector,
+          imageUrlAttribute: scraper.imageUrlAttribute || 'src',
+          thumbnailWidthAttribute: scraper.thumbnailWidthAttribute || 'width',
+          thumbnailHeightAttribute: scraper.thumbnailHeightAttribute || 'height',
+          paginationLastPageSelector: scraper.paginationLastPageSelector,
+          postsPerPage: scraper.postsPerPage || 42
+        }
+      }),
+      signal: abortSignal
+    });
+
+    if (!scrapeResponse.ok) {
+      throw new Error(`Server returned ${scrapeResponse.status}`);
+    }
+
+    const scrapeData = await scrapeResponse.json();
+    if (!scrapeData.success) {
+      throw new Error(scrapeData.error || 'Failed to scrape list page');
+    }
+
+    const scrapedPosts = scrapeData.data.posts || [];
+    let totalCount = scrapeData.data.totalCount || window.booruPosts.length + scrapedPosts.length;
+    const postDetailPageUrl = scrapeData.data.postDetailPageUrl;
+
+    // Store detail page URL for later use when fetching post details
+    if (postDetailPageUrl) {
+      window._scraperDetailPageUrl = postDetailPageUrl;
+    }
+
+    // Update total count if available (including 0 as valid)
+    if (totalCount !== undefined && totalCount !== null) {
+      window.totalResultCount = totalCount;
+    } else if (!append) {
+      // No total count available - set to null so display shows "?"
+      window.totalResultCount = null;
+    }
+
+    updateTotalCountDisplay();
+
+    totalCount = parseInt(totalCount.toString().replace('+', ''));
+
+    if (scrapedPosts.length === 0) {
+      showToast('No matching images', 'error');
+      if (booruLoading) booruLoading.style.display = 'none';
+      return;
+    }
+
+    // Check if we got fewer results than expected (possibly end of pagination)
+    // Use offset-aware logic: next offset < total available
+    const postsPerPage = scraper.postsPerPage || 42;
+    
+    if (scrapedPosts.length === 0) {
+      // No posts returned = definitely end of results
+      window.hasMoreResults = false;
+    } else if (totalCount) {
+      // Will set token below, then check if it's less than total
+      if (append) {
+        // Token is being incremented below
+        window.hasMoreResults = (booruPaginationToken + postsPerPage) < totalCount;
+      } else {
+        // First load: token will be set to postsPerPage below
+        window.hasMoreResults = postsPerPage < totalCount;
+      }
+    } else if (scrapedPosts.length > 0) {
+      // No total count available, but we got posts - assume there might be more
+      window.hasMoreResults = true;
+    } else {
+      window.hasMoreResults = false;
+    }
+
+    // Normalize posts for gallery display
+    const normalizedPosts = [];
+    
+    for (let i = 0; i < scrapedPosts.length; i++) {
+      if (currentTabId !== activeTabId) {
+        showToast('Tab changed during load, discarding results', 'warning');
+        return;
+      }
+
+      const post = scrapedPosts[i];
+      let postUrl = post.url;
+
+      // Make URL absolute if relative
+      if (postUrl && !postUrl.startsWith('http')) {
+        const baseUrl = new URL(scraper.listPageUrl.split('?')[0]);
+        postUrl = baseUrl.origin + (postUrl.startsWith('/') ? '' : '/') + postUrl;
+      }
+
+      // Extract post ID from URL
+      let postId = null;
+      if (postUrl) {
+        const urlObj = new URL(postUrl);
+        postId = urlObj.searchParams.get('id');
+        if (!postId) {
+          const pathMatch = postUrl.match(/(?:post|image)[/?#](\d+)/i);
+          if (pathMatch) postId = pathMatch[1];
+        }
+      }
+      if (!postId) {
+        postId = i;
+      }
+
+      let normalizedPost = {
+        id: postId,
+        source: sourceId,
+        url: postUrl,
+        thumbnailUrl: post.thumbnailUrl,
+        tags: [],
+        artists: [],
+        imageUrl: post.thumbnailUrl,
+        mediaType: 'image',
+        _scraperDetailsLoaded: false,
+        _isScraperPost: true
+      };
+      
+      // Include aspect ratio from server if available
+      if (post.aspectRatio) {
+        normalizedPost.aspectRatio = post.aspectRatio;
+      }
+
+      normalizedPosts.push(normalizedPost);
+    }
+
+    // Update pagination token for next load (offset-based pagination)
+    // Use postsPerPage as the increment, not the actual returned count
+    if (append) {
+      // If we're appending, increment the offset by postsPerPage
+      if (booruPaginationToken !== null && typeof booruPaginationToken !== 'undefined') {
+        booruPaginationToken += postsPerPage;
+      }
+    } else {
+      // First load: set initial offset for next load (postsPerPage, not actual count)
+      booruPaginationToken = postsPerPage;
+    }
+
+    // Merge downloaded posts from database into freshly loaded posts
+    // This adds the downloadedAt flag so the gallery shows them as downloaded
+    if (typeof dbStore !== 'undefined' && dbStore) {
+      try {
+        const downloadedBySource = await dbStore.getDownloadedPostsBySource(sourceId);
+        const downloadedMap = new Map(downloadedBySource.map(p => [String(p.id), p]));
+        
+        normalizedPosts = normalizedPosts.map(post => {
+          const dbEntry = downloadedMap.get(String(post.id));
+          if (dbEntry) {
+            // Merge database fields: use downloadedAt and full-quality imageUrl from database
+            post.downloadedAt = dbEntry.downloadedAt;
+            post.imageUrl = dbEntry.imageUrl; // Full quality URL saved at download time
+            post.tags = dbEntry.tags || post.tags;
+            post.artists = dbEntry.artists || post.artists;
+          }
+          return post;
+        });
+      } catch (err) {
+        // Continue anyway - UI will still work, just won't show existing downloads as downloaded
+      }
+    }
+
+    if (append) {
+      window.booruPosts = window.booruPosts.concat(normalizedPosts);
+    } else {
+      window.booruPosts = normalizedPosts;
+    }
+
+    booruGallery.classList.remove('downloads-gallery');
+    const artistSection = document.querySelector('.control-section-artist');
+    if (artistSection) artistSection.style.display = 'none';
+    const sourceSection = document.querySelector('.control-section-source');
+    if (sourceSection) sourceSection.style.display = 'none';
+
+    // CRITICAL: Preload thumbnails to extract aspect ratios BEFORE rendering
+    // This ensures createBooruImageElement is called with correct aspectRatio data
+    await preloadScraperThumbnailsForAspectRatio(normalizedPosts, sourceId);
+
+    renderBooruGallery(normalizedPosts, append);
+
+    document.getElementById('image-size-slider')?.dispatchEvent(new Event('input'));
+
+    if (typeof saveCurrentTabState === 'function') {
+      saveCurrentTabState(true);
+    }
+
+    if (booruLoading) booruLoading.style.display = 'none';
+
+    if (!append) {
+      showToast(`Loaded ${normalizedPosts.length} images from ${sourceConfig.name}`, 'success');
+      updateTotalCountDisplay();
+    }
+
+    debouncedSettingsSave();
+  } catch (err) {
+    // Silently handle AbortError - user just switched tabs or cancelled the load
+    if (err.name === 'AbortError') {
+      if (booruLoading) booruLoading.style.display = 'none';
+      return;
+    }
+    
+    console.error(`Scraper load error for ${sourceConfig.name}:`, err);
+    if (!append) {
+      document.getElementById('load-more-icon')?.remove();
+      booruGallery.innerHTML = `<div style="color: var(--text-secondary); text-align: center; margin-top: 100px; width: 100%; font-size: 30px;">Error loading images from ${sourceConfig.name}.</div>`;
+    }
+    if (booruLoading) booruLoading.style.display = 'none';
+    const _proxyHint = getProxyDownHint(null, err.message);
+    showToast(_proxyHint ? `Failed to load ${sourceConfig.name} images: ${_proxyHint}` : `Failed to load ${sourceConfig.name} images: ` + err.message, 'error');
+    throw err;
+  }
+}
+
 // ============== GENERIC BOORU LOADER (Configuration-Driven) ==============
 
 /**
@@ -4754,6 +5233,11 @@ async function loadGenericBooru(sourceId, append) {
     showToast(`Source configuration not found: ${sourceId}`, 'error');
     console.error('Source not found in database:', sourceId);
     return;
+  }
+  
+  // Route scraper sources to the scraper loader
+  if (sourceConfig.type === 'scraper') {
+    return loadScraperBooru(sourceId, append);
   }
   
   // Check for API credentials if required
@@ -4910,16 +5394,10 @@ async function loadGenericBooru(sourceId, append) {
     }
     
     booruPaginationToken = page;
-    window.booruPaginationToken = booruPaginationToken; // Update window property when page changes
     
     // Check if we got fewer results than requested (likely end of results)
     if (posts.length < limit) {
       window.hasMoreResults = false;
-    }
-    
-    // Save the updated pagination state to the current tab
-    if (typeof saveCurrentTabState === 'function') {
-      saveCurrentTabState();
     }
     
     // Normalize posts using config field mappings
@@ -4931,13 +5409,35 @@ async function loadGenericBooru(sourceId, append) {
       normalizedPosts = filterBlacklistedPosts(normalizedPosts, window.globalBlacklistTags);
       const filteredOut = before - normalizedPosts.length;
       if (filteredOut > 0) {
-        console.log(`[BLACKLIST] filtered out ${filteredOut} posts`);
         showToast(`Filtered out ${filteredOut} blacklisted posts`, 'info');
         // adjust total count display if we know the overall count
         if (!append && window.totalResultCount != null) {
           window.totalResultCount = Math.max(0, window.totalResultCount - filteredOut);
           updateTotalCountDisplay();
         }
+      }
+    }
+    
+    // Merge downloaded posts from database into freshly loaded posts
+    // This adds the downloadedAt flag so the gallery shows them as downloaded
+    if (typeof dbStore !== 'undefined' && dbStore) {
+      try {
+        const downloadedBySource = await dbStore.getDownloadedPostsBySource(sourceId);
+        const downloadedMap = new Map(downloadedBySource.map(p => [String(p.id), p]));
+        
+        normalizedPosts = normalizedPosts.map(post => {
+          const dbEntry = downloadedMap.get(String(post.id));
+          if (dbEntry) {
+            // Merge database fields: use downloadedAt and full-quality imageUrl from database
+            post.downloadedAt = dbEntry.downloadedAt;
+            post.imageUrl = dbEntry.imageUrl; // Full quality URL saved at download time
+            post.tags = dbEntry.tags || post.tags;
+            post.artists = dbEntry.artists || post.artists;
+          }
+          return post;
+        });
+      } catch (err) {
+        // Continue anyway - UI will still work, just won't show existing downloads as downloaded
       }
     }
     
@@ -5364,7 +5864,11 @@ function updateTotalCountDisplay() {
   if (!booruTotalCount) return;
   
   if (totalResultCount !== null) {
-    const displayText = `${booruSourceSelect.value.charAt(0).toUpperCase() + booruSourceSelect.value.slice(1)} <b>${totalResultCount.toLocaleString('de-DE')} found</b>`;
+    const containsPlusSign = totalResultCount.toString().includes('+');
+    const totalCountIsString = typeof totalResultCount === 'string';
+    // totalcount is either a number or a string with a plus sign (e.g., "100+")
+    const totalCount = totalCountIsString ? Number(totalResultCount.replace('+', '')).toLocaleString('de-DE') + (containsPlusSign ? '+' : '') : totalResultCount.toLocaleString('de-DE') + (containsPlusSign ? '+' : '');
+    const displayText = `${booruSourceSelect.value.charAt(0).toUpperCase() + booruSourceSelect.value.slice(1)} <b>${totalCount} found</b>`;
     booruTotalCount.innerHTML = displayText;
     booruTotalCount.style.display = 'block';
     saveTotalCount(); // Save to localStorage
@@ -5373,6 +5877,65 @@ function updateTotalCountDisplay() {
     booruTotalCount.innerHTML = displayText;
     booruTotalCount.style.display = 'block';
   }
+}
+
+// Wait for all images currently in the gallery to load and extract aspect ratios
+function waitForGalleryImagesToLoad() {
+  return new Promise((resolve) => {
+    const gallery = document.getElementById('booru-gallery');
+    if (!gallery) {
+      resolve();
+      return;
+    }
+    
+    const images = gallery.querySelectorAll('img');
+    if (images.length === 0) {
+      resolve();
+      return;
+    }
+    
+    let loadedCount = 0;
+    let errorCount = 0;
+    
+    const checkComplete = () => {
+      if (loadedCount + errorCount >= images.length) {
+        // Small delay to let load event handlers finish updating aspect ratios
+        setTimeout(() => {
+          resolve();
+        }, 100);
+      }
+    };
+    
+    images.forEach((img) => {
+      if (img.complete) {
+        // Already loaded or errored
+        if (img.naturalWidth > 0) {
+          loadedCount++;
+        } else {
+          errorCount++;
+        }
+      } else {
+        // Not yet loaded, add listeners
+        img.addEventListener('load', () => {
+          loadedCount++;
+          checkComplete();
+        }, { once: true });
+        
+        img.addEventListener('error', () => {
+          errorCount++;
+          checkComplete();
+        }, { once: true });
+      }
+    });
+    
+    // Check if all were already complete
+    checkComplete();
+    
+    // Safety timeout - don't wait more than 30 seconds
+    setTimeout(() => {
+      resolve();
+    }, 30000);
+  });
 }
 
 // Render booru gallery using Justified Gallery
@@ -5415,8 +5978,6 @@ function renderBooruGallery(posts, append = true, addSeparators = true) {
     }
   }
 
-
-
   // Get current image size from slider
   currentImageSize = parseInt(imageSizeSlider.value, 10);
   
@@ -5425,6 +5986,46 @@ function renderBooruGallery(posts, append = true, addSeparators = true) {
     window.booruPosts = limitArraySize(window.booruPosts, 1000);
   }
   
+  // For scraper sources on first load: add to DOM then wait for images to load before gallery init
+  const isScraperLoad = posts.length > 0 && posts[0]._scraperDetailsLoaded !== undefined;
+  
+  if (isScraperLoad && !append) {
+    renderGalleryDOM();
+    
+    // Wait for all images in gallery to load their aspect ratios
+    waitForGalleryImagesToLoad().then(() => {
+      initializeGallery();
+    });
+  } else if (isScraperLoad && append) {
+    renderGalleryDOM();
+    
+    // Wait for newly appended images to load their aspect ratios
+    waitForGalleryImagesToLoad().then(() => {
+      // Refresh gallery with new items
+      $(booruGallery).justifiedGallery('norewindItems');
+    });
+  } else {
+    renderGalleryDOM();
+    initializeGallery();
+  }
+  
+  function initializeGallery() {
+    const firstFewAspectRatios = Array.from(booruGallery.querySelectorAll('.booru-image-item')).slice(0, 3).map(el => el.dataset.aspectRatio);
+    
+    $(booruGallery).justifiedGallery({
+      rowHeight: currentImageSize || 250,
+      maxRowHeight: false, // Allow natural height variation
+      margins: getGalleryMargins(),
+      lastRow: 'nojustify',
+      captions: false,
+      waitThumbnailsLoad: false,
+      border: 0
+    });
+    restoreHighQualityGalleryImages();
+    $(booruGallery).one('jg.complete', restoreHighQualityGalleryImages);
+  }
+  
+  function renderGalleryDOM() {
   // Create image elements with data-index for fast counter lookup
   let startIndex = 0;
   if (append && booruGallery.children.length > 0) {
@@ -5438,8 +6039,14 @@ function renderBooruGallery(posts, append = true, addSeparators = true) {
     if (artistSection)
       artistSection.style.display = 'none';
   }
+  
+  let processedCount = 0;
   posts.forEach((post, i) => {
-    if (post?.imageUrl === undefined) return; // Skip posts without imageUrl
+    if (post?.imageUrl === undefined) {
+      return; // Skip posts without imageUrl
+    }
+    
+    processedCount++;
 
     if (lastArtist == null && window.downloadsPaginationIndex == parseInt(document.getElementById('booru-limit-input')?.value) && post.artist && addSeparators) {
       const seperator = document.createElement('div');
@@ -5505,20 +6112,15 @@ function renderBooruGallery(posts, append = true, addSeparators = true) {
     if (loadIcon) loadIcon.style.opacity = '1';
   }, 1000 * (1 - Math.exp(-0.05 * posts.length)));
   
-  // Initialize or update Justified Gallery
-  $(booruGallery).justifiedGallery({
-    rowHeight: currentImageSize || 250,
-    maxRowHeight: false, // Allow natural height variation
-    margins: getGalleryMargins(),
-    lastRow: 'nojustify',
-    captions: false,
-    waitThumbnailsLoad: false,
-    border: 0
-  });
-  restoreHighQualityGalleryImages();
-  $(booruGallery).one('jg.complete', restoreHighQualityGalleryImages);
-
+  // Gallery initialization is now handled by initializeGallery() function above
+  // This delay allows load events to extract aspect ratios before gallery renders
+  
   // No post-layout separator logic needed; separators are now real gallery items.
+  
+  // Start background scraping of post details for all scraper posts
+  if (!isDownloadsGallery) {
+    // startBackgroundScraperDetailFetching(posts);
+  }
 
   // Add end-of-results message if no more content available
   if (!window.hasMoreResults && booruPosts.length > 0) {
@@ -5531,6 +6133,7 @@ function renderBooruGallery(posts, append = true, addSeparators = true) {
     booruContent.appendChild(endMessage);
     fillBooruEndTags();
   }
+  } // End of renderGalleryDOM function
 }
 
 // function createBooruImageElement(post, maxHeight = null, imageWidth = null) {
@@ -6018,6 +6621,7 @@ function createBooruImageElement(post, maxHeight = null, imageWidth = null) {
   container.dataset.artist = Array.isArray(post.artist) ? post.artist.join(', ') : (post.artist || (post.artists ? post.artists.join(', ') : 'Unknown'));
   container.dataset.postId = normalizePostId(post.id);
   container.dataset.postSource = post.source;
+  container.dataset.url = post.url;
   container.dataset.aspectRatio = post.aspectRatio || 1;
   container.appendChild(loader);
 
@@ -6026,6 +6630,10 @@ function createBooruImageElement(post, maxHeight = null, imageWidth = null) {
   const isVideo = qualityUrl.endsWith('.mp4') || qualityUrl.endsWith('.webm') || qualityUrl.endsWith('.mov') || qualityUrl.includes('.mp4?') || qualityUrl.includes('.webm?') || qualityUrl.includes('.mov?');
   const isGif = qualityUrl.endsWith('.gif') || qualityUrl.includes('.gif?');
   const useHighQuality = (!isVideo && typeof showHighQualityGallery !== 'undefined') ? showHighQualityGallery : false;
+
+  // Determine if this is a scraper post
+  const sourceConfig = post.source ? booruSourcesManager.getSource(post.source) : null;
+  const isScraperPost = post._isScraperPost === true || (sourceConfig && sourceConfig.type === 'scraper');
 
   let mediaElement = document.createElement('img');
   mediaElement.alt = post.title || 'Unknown Title';
@@ -6038,12 +6646,14 @@ function createBooruImageElement(post, maxHeight = null, imageWidth = null) {
   mediaElement.style.width = '100%';
   mediaElement.style.height = '100%';
   mediaElement.style.objectFit = 'cover';
+  mediaElement.style.opacity = '1';
   mediaElement.style.opacity = '0';
   mediaElement.dataset.aspectRatio = container.dataset.aspectRatio;
   mediaElement.dataset.imageUrl = qualityUrl;
   mediaElement.dataset.thumbnailUrl = post.thumbnailUrl;
   mediaElement.dataset.sampleUrl = post.sampleUrl || '';
   mediaElement.dataset.tags = post.tags.join(' ');
+  mediaElement.dataset.isScraperPost = isScraperPost ? 'true' : 'false';
   mediaElement.dataset.author = Array.isArray(post.artist) ? post.artist.join(', ') : (post.artist || post.author || 'Unknown');
   mediaElement.dataset.title = post.title || '';
   mediaElement.dataset.createdAt = post.createdAt || '';
@@ -6065,6 +6675,55 @@ function createBooruImageElement(post, maxHeight = null, imageWidth = null) {
     mediaElement.style.opacity = '1';
     mediaElement.classList.add('loaded');
     loader.style.display = 'none';
+    
+    // Extract actual aspect ratio from loaded thumbnail
+    if (mediaElement.naturalWidth && mediaElement.naturalHeight) {
+      const postId = container.dataset.postId;
+      const postSource = container.dataset.postSource;
+      
+      let post = null;
+      let sourceConfig = null;
+      if (window.booruPosts && postId && postSource) {
+        post = window.booruPosts.find(p => normalizePostId(p.id) === postId && p.source === postSource);
+      }
+      
+      // Get source config to check if aspect ratio should be inverted
+      if (postSource && typeof booruSourcesManager !== 'undefined' && booruSourcesManager.sources) {
+        sourceConfig = booruSourcesManager.sources.find(s => s.id === postSource);
+      }
+      
+      let actualAspectRatio = mediaElement.naturalWidth / mediaElement.naturalHeight;
+      
+      // Invert aspect ratio if the source config specifies it
+      if (sourceConfig && sourceConfig.gallery?.invertAspectRatio) {
+        actualAspectRatio = mediaElement.naturalHeight / mediaElement.naturalWidth;
+
+        const preloadedRatio = parseFloat(container.dataset.aspectRatio) || 1;
+        
+        // Update if aspect ratio changed
+        if (Math.abs(actualAspectRatio - preloadedRatio) > 0.01) {
+          container.dataset.aspectRatio = actualAspectRatio;
+          mediaElement.dataset.aspectRatio = actualAspectRatio;
+          
+          // Update height attribute for gallery layout
+          const width = 400;
+          const newHeight = Math.round(width * actualAspectRatio);
+          mediaElement.setAttribute('width', width);
+          mediaElement.setAttribute('height', newHeight);
+          
+          // CRITICAL: Update the post object in window.booruPosts so it gets saved to database
+          const postId = container.dataset.postId;
+          const postSource = container.dataset.postSource;
+          if (window.booruPosts && postId && postSource) {
+            const postIndex = window.booruPosts.findIndex(p => normalizePostId(p.id) === postId && p.source === postSource);
+            if (postIndex >= 0) {
+              window.booruPosts[postIndex].aspectRatio = actualAspectRatio;
+            }
+          }
+          
+        }
+      }
+    }
     
     // Cache thumbnail after successful load (avoid duplicate fetch before load)
     const currentTabId = typeof activeTabId !== 'undefined' ? activeTabId : null;
@@ -6111,25 +6770,26 @@ function createBooruImageElement(post, maxHeight = null, imageWidth = null) {
   
   mediaElement.decoding = 'async';
   mediaElement.loading = 'lazy';
-  let resolvedThumbnailUrl = "";
-  if (useHighQuality) {
-    resolvedThumbnailUrl = getImageUrl(qualityUrl);
-  } else {
-    resolvedThumbnailUrl = getImageUrl(post.thumbnailUrl || post.sampleUrl || qualityUrl);
-  }
+  // Always store the LOW quality (thumbnail) URL in resolvedThumbnailUrl
+  // This is crucial for updateGalleryImageQuality() to work correctly
+  let resolvedThumbnailUrl = getImageUrl(post.thumbnailUrl || post.sampleUrl || qualityUrl);
   mediaElement.dataset.resolvedThumbnailUrl = resolvedThumbnailUrl;
+  
+  // Determine which URL to use for initial display based on current quality toggle state
+  let initialDisplayUrl = useHighQuality ? getImageUrl(qualityUrl) : resolvedThumbnailUrl;
+  
   const currentTabId = typeof activeTabId !== 'undefined' ? activeTabId : null;
-  const isVideoSource = resolvedThumbnailUrl.endsWith('.mp4') || resolvedThumbnailUrl.endsWith('.webm') || resolvedThumbnailUrl.endsWith('.mov');
-  const cacheKey = isVideoSource ? `video-thumbnail:${resolvedThumbnailUrl}` : resolvedThumbnailUrl;
+  const isVideoSource = initialDisplayUrl.endsWith('.mp4') || initialDisplayUrl.endsWith('.webm') || initialDisplayUrl.endsWith('.mov');
+  const cacheKey = isVideoSource ? `video-thumbnail:${initialDisplayUrl}` : initialDisplayUrl;
   const cachedThumbnailUrl = currentTabId && cacheKey ? getCachedThumbnailUrl(currentTabId, cacheKey) : null;
   if (cachedThumbnailUrl) {
     mediaElement.src = cachedThumbnailUrl;
   } else if (isVideoSource) {
     // Extract thumbnail from video using backend service
-    const backendThumbnailUrl = `http://localhost:3001/video-thumbnail?url=${encodeURIComponent(resolvedThumbnailUrl)}`;
+    const backendThumbnailUrl = `http://localhost:3001/video-thumbnail?url=${encodeURIComponent(initialDisplayUrl)}`;
     mediaElement.src = backendThumbnailUrl;
   } else {
-    mediaElement.src = resolvedThumbnailUrl;
+    mediaElement.src = initialDisplayUrl;
   }
   
   if (useHighQuality) {
@@ -6142,6 +6802,10 @@ function createBooruImageElement(post, maxHeight = null, imageWidth = null) {
   // Add overlay div
   const itemOverlay = document.createElement('div');
   itemOverlay.className = 'item-overlay';
+
+  if (isScraperPost)
+    itemOverlay.classList.add(mediaElement.dataset.isScraperPost === 'true' ? 'scraper-post-overlay' : '');;
+  
   container.appendChild(itemOverlay);
   
   container.addEventListener('click', (e) => { 
@@ -6315,6 +6979,50 @@ function createBooruImageElement(post, maxHeight = null, imageWidth = null) {
       downloadBtn.disabled = true;
       progressContainer.style.display = 'block';
 
+      // For scraper sources: ALWAYS fetch fresh full details and quality image before downloading
+      // Detect by: (1) flag set, OR (2) source is configured as scraper type
+      // This ensures we get the best quality regardless of whether details were loaded before
+      const sourceConfig = post.source ? booruSourcesManager.getSource(post.source) : null;
+      const isScraperPost = post._isScraperPost === true || (sourceConfig && sourceConfig.type === 'scraper');
+      
+      if (isScraperPost) {
+        try {
+          if (toast) toast.update(2, 'Fetching details...');
+          const detail = await fetchScraperPostDetails(post.id, post.source);
+          
+          // Use returned detail data to update post object
+          if (detail) {
+            if (detail.detailImageUrl) {
+              // Normalize URL: remove double slashes
+              post.imageUrl = detail.detailImageUrl.replace(/([^:]\/)\/+/g, '$1').trim();
+            }
+            if (detail.tags && detail.tags.artist && detail.tags.artist.length > 0) {
+              post.artists = detail.tags.artist;
+            }
+            if (detail.tags && detail.tags.artists && detail.tags.artists.length > 0) {
+              post.artists = detail.tags.artists;
+            }
+            if (detail.tags && detail.tags.general && detail.tags.general.length > 0) {
+              post.tags = detail.tags.general;
+            }
+            if (detail.uploadDate) {
+              post.createdAt = detail.uploadDate;
+            }
+          }
+        } catch (err) {
+          if (toast) toast.update(2, 'Failed to fetch details');
+          // Continue anyway with what we have
+        }
+      }
+      
+      // Ensure artists is always an array
+      if (!Array.isArray(post.artists)) {
+        post.artists = [];
+      }
+      if (!Array.isArray(post.tags)) {
+        post.tags = [];
+      }
+
       // Download file
       const filename = getFilenameFromUrl(post.imageUrl, post.id);
       
@@ -6366,6 +7074,10 @@ function createBooruImageElement(post, maxHeight = null, imageWidth = null) {
           const postToSave = { ...post };
           postToSave.artist = artist;
           postToSave.downloadedAt = Date.now();
+          // Explicitly ensure all important fields are included (especially for scraper posts)
+          postToSave.imageUrl = post.imageUrl;
+          postToSave.tags = post.tags;
+          postToSave.artists = post.artists;
           try { await dbStore.saveDownloadedPost(postToSave); } catch (e) { console.warn('Failed to save downloaded post to dbStore', e); }
         }
         const mediaElement = container.querySelector('img, video');
@@ -6437,6 +7149,48 @@ function openBooruLightbox(imageUrl, postId, postSource) {
   }
   
   if (LightboxIndex === -1) LightboxIndex = 0;
+  
+  // IMPORTANT: For scraper sources, fetch details if not already loaded
+  // This ensures video/quality URLs are available when opening lightbox
+  const currentPost = window.booruPosts && LightboxIndex >= 0 && LightboxIndex < window.booruPosts.length 
+    ? window.booruPosts[LightboxIndex] 
+    : null;
+  
+  if (currentPost && (currentPost._isScraperPost || (currentPost.source && booruSourcesManager?.getSource(currentPost.source)?.type === 'scraper'))) {
+    // Check if details have been fetched (imageUrl would no longer be a thumbnail)
+    if (currentPost.imageUrl.toLowerCase().includes('thumbnail')) {
+      // Fetch details asynchronously but show lightbox immediately with what we have
+      fetchScraperPostDetails(currentPost.id, currentPost.source, true).then(detail => {
+        if (detail && detail.detailImageUrl) {
+          const normalizedUrl = detail.detailImageUrl.replace(/([^:]\/)\/+/g, '$1').trim();
+          currentPost.imageUrl = normalizedUrl;
+          
+          // Only update gallery DOM if it's NOT a video (can't use video src in img element)
+          const isVideo = normalizedUrl.toLowerCase().endsWith('.mp4') || normalizedUrl.toLowerCase().endsWith('.webm') ||
+                         normalizedUrl.toLowerCase().endsWith('.mov') || normalizedUrl.toLowerCase().includes('.mp4?') ||
+                         normalizedUrl.toLowerCase().includes('.webm?') || normalizedUrl.toLowerCase().includes('.mov?');
+          
+          if (!isVideo) {
+            // Find the img element in the gallery by post ID and source
+            const galleryImg = document.querySelector(
+              `.booru-image-item[data-post-id="${currentPost.id}"][data-post-source="${currentPost.source}"] img`
+            );
+            if (galleryImg) {
+              galleryImg.dataset.imageUrl = normalizedUrl;
+              // Update src to show quality version in gallery (proxied through localhost)
+              galleryImg.src = getImageUrl(normalizedUrl);
+            }
+          }
+          
+          // Rebuild LightboxImages with updated URL
+          LightboxImages = (window.booruPosts || []).map(post => getImageUrl(post.imageUrl));
+          // Refresh the lightbox display with the new URL
+          showLightboxImage(LightboxIndex);
+        }
+      }).catch(err => console.error('Error fetching scraper post details:', err));
+    }
+  }
+  
   showLightboxImage(LightboxIndex);
   lightboxModal.classList.add('active', 'slideshow-mode');
 }
@@ -6453,19 +7207,6 @@ let lastMouseY = 0;
 let isScrolling = false;
 let scrollBlockPreview = false;
 let scrollBlockTimer = null;
-
-// Global function to restore pagination token from window property
-window.restoreBooruPaginationState = function() {
-  if (window.booruPaginationToken !== undefined) {
-    booruPaginationToken = window.booruPaginationToken;
-  }
-  if (window.totalResultCount !== undefined) {
-    totalResultCount = window.totalResultCount;
-  }
-  if (window.hasMoreResults !== undefined) {
-    hasMoreResults = window.hasMoreResults;
-  }
-};
 
 // Global function to reset preview frozen state
 window.resetPreviewFrozen = function() {
@@ -6568,6 +7309,37 @@ document.addEventListener('keydown', (e) => {
   }
 });
 
+document.addEventListener('keyup', (e) => {
+  if (e.key === 'Shift') {
+    isShiftHeld = false;
+    previewFrozen = false;
+    booruHoverPreview.classList.remove('frozen');
+    document.body.style.userSelect = '';
+    
+    // Check if mouse is over another post element
+    const elementsUnderCursor = document.elementsFromPoint(lastMouseX, lastMouseY);
+    const mediaElement = elementsUnderCursor.find(el => 
+      el.matches('.booru-image-item img, .booru-image-item video')
+    );
+    
+    if (mediaElement && typeof showPreviewForElement === 'function') {
+      // Transition to showing the post under the cursor
+      window.booruLastHoveredElement = mediaElement;
+      showPreviewForElement(mediaElement);
+    } else if (booruHoverPreview.classList.contains('active')) {
+      // Hide preview only if no post is under the cursor
+      booruHoverPreview.classList.remove('active');
+      pauseAllPreviewVideos();
+    }
+    
+    if (tagsChangedWhileFrozen) {
+      tagsChangedWhileFrozen = false;
+      loadBooruImages(false);
+    }
+    commitPreviewFrozenTagChanges();
+  }
+});
+
 document.addEventListener('mousedown', (e) => {
   if (e.button === 2) {
     e.preventDefault();
@@ -6580,75 +7352,34 @@ document.addEventListener('mousedown', (e) => {
   }
 });
 
-document.addEventListener('keyup', (e) => {
-  if (e.key === 'Shift') {
-    e.preventDefault();
-    booruHoverPreview.classList.remove('frozen');
-    previewFrozen = false;
-    isShiftHeld = false;
-
-    // Only hide preview if not hovering over a booru post
-    const elementsUnderCursor = document.elementsFromPoint(lastMouseX, lastMouseY);
-    const mediaElement = elementsUnderCursor.find(el => 
-      el.matches('.booru-image-item img, .booru-image-item video')
-    );
-    if (mediaElement) {
-      window.booruLastHoveredElement = mediaElement;
-      showPreviewForElement(mediaElement);
-      
-      // Position preview at mouse location
-      if (booruHoverPreview.classList.contains('active')) {
-        const offset = 40;
-        const previewRect = booruHoverPreview.getBoundingClientRect();
-        let x = lastMouseX + offset;
-        let y = lastMouseY + offset;
-        
-        if (x + previewRect.width > window.innerWidth) {
-          x = lastMouseX - previewRect.width - offset;
-        }
-        if (x < 0) x = 10;
-        
-        if (y + previewRect.height > window.innerHeight) {
-          y = lastMouseY - previewRect.height - offset;
-        }
-        if (y < 0) y = 10;
-        
-        booruHoverPreview.style.left = x + 'px';
-        booruHoverPreview.style.top = y + 'px';
-      }
-    } else {
-      pauseAllPreviewVideos();
-      booruHoverPreview.classList.remove('active');
-      document.body.style.userSelect = '';
-    }
-    
-    // if (tagsChangedWhileFrozen) {
-    //   tagsChangedWhileFrozen = false;
-    //   loadBooruImages(false);
-    // }
-    // commitPreviewFrozenTagChanges();
-  }
-});
-
 document.addEventListener('mouseup', (e) => {
   if (e.button === 2) {
     e.preventDefault();
-    booruHoverPreview.classList.remove('frozen');
+    isShiftHeld = false;
     previewFrozen = false;
-
-    // Only hide preview if not hovering over a booru post
-    const elementsUnderCursor = document.elementsFromPoint(lastMouseX, lastMouseY);
+    booruHoverPreview.classList.remove('frozen');
+    document.body.style.userSelect = '';
+    
+    // Check if mouse is over another post element
+    const elementsUnderCursor = document.elementsFromPoint(e.clientX, e.clientY);
     const mediaElement = elementsUnderCursor.find(el => 
       el.matches('.booru-image-item img, .booru-image-item video')
     );
-    if (mediaElement) {
+    
+    if (mediaElement && typeof showPreviewForElement === 'function') {
       window.booruLastHoveredElement = mediaElement;
-      showPreviewForElement(mediaElement);    } else {
-      isShiftHeld = false;
-      pauseAllPreviewVideos();
+      showPreviewForElement(mediaElement);
+    } else if (booruHoverPreview.classList.contains('active')) {
+      // Hide preview only if no post is under the cursor
       booruHoverPreview.classList.remove('active');
-      document.body.style.userSelect = '';
+      pauseAllPreviewVideos();
     }
+    
+    if (tagsChangedWhileFrozen) {
+      tagsChangedWhileFrozen = false;
+      loadBooruImages(false);
+    }
+    commitPreviewFrozenTagChanges();
   }
 });
 
@@ -6834,6 +7565,146 @@ function pauseAllPreviewVideos() {
   }
 }
 
+// ============== SCRAPER POST DETAIL FETCHER ==============
+
+/**
+ * Fetch detail page for a scraper post (full image URL, tags, artists)
+ * Runs on-demand when user hovers over a scraper post or downloads it
+ * @param {string} postId - The post ID
+ * @param {string} sourceId - The source ID
+ * @param {boolean} forceFresh - If true, always fetch fresh details even if cached (default: true for downloads)
+ */
+async function fetchScraperPostDetails(postId, sourceId, forceFresh = true) {
+  try {
+    // Find the post in DOM
+    const previewItem = document.querySelector(`[data-post-id="${postId}"][data-post-source="${sourceId}"]`);
+    if (!previewItem) {
+      return null;
+    }
+
+    const mediaElement = previewItem.querySelector('img');
+    if (!mediaElement) {
+      return null;
+    }
+
+    // Get the actual post URL (not the image URL)
+    const postUrl = previewItem.dataset.url;
+    if (!postUrl) {
+      return null;
+    }
+
+    // Skip if already loaded (ONLY if not forcing fresh fetch)
+    if (!forceFresh && previewItem.dataset.tags && previewItem.dataset.tags !== 'loading...') {
+      return { tags: previewItem.dataset.tags };
+    }
+
+    const sourceConfig = booruSourcesManager?.getSource(sourceId);
+    if (!sourceConfig || !sourceConfig.scraper) {
+      return null;
+    }
+
+    const scraper = sourceConfig.scraper;
+
+    // Fetch detail page HTML
+    const detailResponse = await proxyFetch(postUrl);
+    const detailHtml = await detailResponse.text();
+
+    // Send to scraper endpoint for parsing
+    const scrapeResponse = await fetch('http://localhost:3001/api/scraper/fetch-page', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        html: detailHtml,
+        selectors: {
+          detailImageSelector: scraper.detailImageSelector,
+          detailImageAttribute: scraper.detailImageAttribute || 'src',
+          detailTagsSelector: scraper.detailTagsSelector,
+          detailGeneralTagsSelector: scraper.detailGeneralTagsSelector,
+          detailArtistTagsSelector: scraper.detailArtistTagsSelector
+        }
+      })
+    });
+
+    if (!scrapeResponse.ok) {
+      throw new Error(`Scraper endpoint returned ${scrapeResponse.status}`);
+    }
+
+    const scrapeData = await scrapeResponse.json();
+    if (!scrapeData.success) {
+      throw new Error(scrapeData.error || 'Failed to parse detail page');
+    }
+
+    const detail = scrapeData.data || {};
+
+    // Update the DOM element's dataset with fetched details
+    if (detail.detailImageUrl) {
+      previewItem.dataset.imageUrl = detail.detailImageUrl;
+      
+      // Also update the media element if it exists
+      if (mediaElement) {
+        mediaElement.dataset.imageUrl = detail.detailImageUrl;
+        
+        // Check if this is a video and set the isVideo flag
+        const isVideo = detail.detailImageUrl.toLowerCase().endsWith('.mp4') || 
+                       detail.detailImageUrl.toLowerCase().endsWith('.webm') ||
+                       detail.detailImageUrl.toLowerCase().endsWith('.mov');
+        if (isVideo) {
+          mediaElement.dataset.isVideo = 'true';
+          previewItem.classList.add('file-type-video');
+        }
+
+        // Check if this is a gif
+        const isGif = detail.detailImageUrl.toLowerCase().endsWith('.gif');
+        if (isGif) {
+          previewItem.classList.add('file-type-gif');
+        }
+      }
+    }
+    
+    if (detail.tags) {
+      if (detail.tags.general) {
+        previewItem.dataset.tags = detail.tags.general.join(' ');
+        if (mediaElement) {
+          mediaElement.dataset.tags = detail.tags.general.join(' ');
+        }
+      }
+    }
+
+    if (detail.tags && detail.tags.artist) {
+      previewItem.dataset.artist = detail.tags.artist.join(', ');
+      if (mediaElement) {
+        mediaElement.dataset.author = detail.tags.artist.join(', ');
+      }
+    }
+    
+    // Also check for plural form (artists)
+    if (detail.tags && detail.tags.artists) {
+      previewItem.dataset.artist = detail.tags.artists.join(', ');
+      if (mediaElement) {
+        mediaElement.dataset.author = detail.tags.artists.join(', ');
+      }
+    }
+
+    // Set upload date if available
+    if (detail.uploadDate) {
+      previewItem.dataset.createdAt = detail.uploadDate;
+      if (mediaElement) {
+        mediaElement.dataset.createdAt = detail.uploadDate;
+      }
+    }
+
+    // Remove scraper-post-overlay class since details are now loaded
+    const itemOverlay = previewItem.querySelector('.item-overlay');
+    if (itemOverlay) {
+      itemOverlay.classList.remove('scraper-post-overlay');
+    }
+
+    return detail;
+  } catch (err) {
+    return null;
+  }
+}
+
 // Function to show preview for a media element
 function showPreviewForElement(mediaElement, forceVideoLoad = false) {
   // Don't show preview if lightbox is open or any modal overlay is actually visible to the user
@@ -6863,7 +7734,42 @@ function showPreviewForElement(mediaElement, forceVideoLoad = false) {
     }
   }
   
-  if (!mediaElement || !mediaElement.dataset.tags) return;
+  if (!mediaElement) return;
+  
+  // For scraper posts without tags, fetch details on-demand
+  const previewItem = mediaElement.closest('.booru-image-item');
+  const postId = previewItem?.dataset.postId;
+  const postSource = previewItem?.dataset.postSource;
+  
+  if (postId && postSource && !mediaElement.dataset.tags) {
+    // This might be a scraper post - check if source is scraper type
+    const sourceConfig = booruSourcesManager?.getSource(postSource);
+    if (sourceConfig?.type === 'scraper') {
+      // Show the thumbnail immediately, then update as data arrives
+      // We'll temporarily give it a tags dataset so it shows the preview
+      mediaElement.dataset.tags = 'loading...';
+      
+      // Call showPreviewForElement to display the thumbnail now
+      showPreviewForElement(mediaElement);
+      
+      // Fetch details in background
+      fetchScraperPostDetails(postId, postSource).then((detailData) => {
+        if (detailData) {
+          // Check if user is still hovering over this element before showing updated preview
+          const elementsUnderCursor = document.elementsFromPoint(lastMouseX, lastMouseY);
+          const isStillHovering = elementsUnderCursor.some(el => el === mediaElement);
+          
+          if (isStillHovering) {
+            // Re-call showPreviewForElement to display the updated preview with all data
+            showPreviewForElement(mediaElement);
+          }
+        }
+      });
+      return;
+    }
+  }
+  
+  if (!mediaElement.dataset.tags) return;
   // For legacy/local images, allow preview even if imageUrl is a relative path
   // (the rest of the preview logic will work as long as data attributes are set)
   if (previewFrozen && booruHoverPreview.classList.contains('active')) return;
@@ -6874,10 +7780,10 @@ function showPreviewForElement(mediaElement, forceVideoLoad = false) {
   booruPreviewMediaContainer.parentNode.classList.add('active');
 
   // Set post id in metadata
-  const previewItem = mediaElement.closest('.booru-image-item');
+  const galleryItem = mediaElement.closest('.booru-image-item');
   if (booruPreviewId) {
-    const postId = previewItem?.dataset.postId || '';
-    booruPreviewId.textContent = postId;
+    const displayPostId = galleryItem?.dataset.postId || '';
+    booruPreviewId.textContent = displayPostId;
   }
   if (booruPreviewSource) {
     const sourceName = previewItem?.dataset.postSource || '';
@@ -7085,12 +7991,6 @@ function showPreviewForElement(mediaElement, forceVideoLoad = false) {
     video.style.objectFit = 'contain';
     // assign src last so browsers start fetching after our cache entry exists
     video.src = getImageUrl(mediaElement.dataset.imageUrl);
-
-        
-    // Add error handler to log when video fails to load
-    video.addEventListener('error', (e) => {
-      showToast('Failed to load video preview. Try using a Proxy or attempt a different source', 'error');
-    });
 
     // Store post source and ID for middle-click handler
     video.dataset.postSource = mediaElement.closest('.booru-image-item')?.dataset.postSource;
@@ -7546,6 +8446,14 @@ function showPreviewForElement(mediaElement, forceVideoLoad = false) {
     }
   }
   
+  // Verify user is still hovering over this element before displaying details
+  const elementsUnderCursor = document.elementsFromPoint(lastMouseX, lastMouseY);
+  const isStillHovering = elementsUnderCursor.some(el => el === mediaElement);
+  if (!isStillHovering) {
+    // User has moved away from this element, don't display preview
+    return;
+  }
+  
   const tags = mediaElement.dataset.tags.split(' ').filter(t => t.length > 0);
   booruPreviewTags.innerHTML = '';
   
@@ -7847,10 +8755,6 @@ if (booruContent) {
     clearTimeout(scrollSaveTimeout);
     scrollSaveTimeout = setTimeout(() => {
       debouncedSettingsSave();
-      // Also save the tab state to preserve scroll position
-      if (typeof saveCurrentTabState === 'function') {
-        saveCurrentTabState();
-      }
     }, 500);
 
     clearTimeout(scrollLoadTimeout);
@@ -8078,7 +8982,6 @@ if (typeof window.booruMemoryCleanupInterval === 'undefined') {
     if (window.booruPosts && window.booruPosts.length > 1000 && typeof limitArraySize !== 'undefined') {
       const oldLength = window.booruPosts.length;
       window.booruPosts = limitArraySize(window.booruPosts, 1000);
-      console.log(`[Memory Cleanup] Limited booruPosts from ${oldLength} to ${window.booruPosts.length}`);
     }
   }, 120000); // Run every 2 minutes
 }
