@@ -7636,7 +7636,7 @@ async function fetchScraperPostDetails(postId, sourceId, forceFresh = true) {
     }
 
     // Skip if already loaded (ONLY if not forcing fresh fetch)
-    if (!forceFresh && previewItem.dataset.tags && previewItem.dataset.tags !== 'loading...') {
+    if (!forceFresh && previewItem.hasAttribute('data-tags') && previewItem.dataset.tags && previewItem.dataset.tags !== 'loading...') {
       return { tags: previewItem.dataset.tags };
     }
 
@@ -7963,72 +7963,9 @@ function showPreviewForElement(mediaElement, forceVideoLoad = false) {
                       }
                     });
                   } else {
-                    // Extract and display first frame of video
-                    const videoElement = document.createElement('video');
-                    videoElement.crossOrigin = 'anonymous';
-                    videoElement.src = resolvedUrl;
-                    videoElement.preload = 'metadata';
-                    
-                    const onLoadedMetadata = () => {
-                      try {
-                        // Seek to a small offset to ensure a real frame is loaded
-                        videoElement.currentTime = Math.min(0.5, videoElement.duration || 0.5);
-                      } catch (err) {
-                        console.warn('Failed to seek video:', err);
-                        // Try to draw anyway
-                        drawFrame();
-                      }
-                    };
-                    
-                    const onSeeked = () => {
-                      drawFrame();
-                    };
-                    
-                    const drawFrame = () => {
-                      try {
-                        const canvas = document.createElement('canvas');
-                        canvas.width = videoElement.videoWidth;
-                        canvas.height = videoElement.videoHeight;
-                        const ctx = canvas.getContext('2d');
-                        if (ctx && canvas.width > 0 && canvas.height > 0) {
-                          ctx.drawImage(videoElement, 0, 0);
-                          const frameData = canvas.toDataURL('image/jpeg', 0.92);
-                          mediaElement.src = frameData;
-                          mediaElement.addEventListener('load', () => {
-                            if (downloadBtn && originalDownloadHTML !== null) {
-                              downloadBtn.innerHTML = originalDownloadHTML;
-                            }
-                          }, { once: true });
-                        } else {
-                          // Canvas dimensions invalid, just reset button
-                          if (downloadBtn && originalDownloadHTML !== null) {
-                            downloadBtn.innerHTML = originalDownloadHTML;
-                          }
-                        }
-                      } catch (err) {
-                        console.warn('Failed to extract video first frame:', err);
-                        if (downloadBtn && originalDownloadHTML !== null) {
-                          downloadBtn.innerHTML = originalDownloadHTML;
-                        }
-                      }
-                      // Cleanup listeners
-                      videoElement.removeEventListener('loadedmetadata', onLoadedMetadata);
-                      videoElement.removeEventListener('seeked', onSeeked);
-                      videoElement.removeEventListener('error', onError);
-                    };
-                    
-                    const onError = () => {
-                      console.warn('Failed to load video for first frame extraction');
-                      if (downloadBtn && originalDownloadHTML !== null) {
-                        downloadBtn.innerHTML = originalDownloadHTML;
-                      }
-                    };
-                    
-                    videoElement.addEventListener('loadedmetadata', onLoadedMetadata, { once: true });
-                    videoElement.addEventListener('seeked', onSeeked, { once: true });
-                    videoElement.addEventListener('error', onError, { once: true });
-
-                    mediaElement.dataset.previewLoading = 'false';
+                    if (downloadBtn && originalDownloadHTML !== null) {
+                      downloadBtn.innerHTML = originalDownloadHTML;
+                    }
                   }
                 }
                 
@@ -8097,7 +8034,7 @@ function showPreviewForElement(mediaElement, forceVideoLoad = false) {
     }
   }
   
-  if (!mediaElement.dataset.tags) return;
+  if (!mediaElement.hasAttribute('data-tags')) return;
   // For legacy/local images, allow preview even if imageUrl is a relative path
   // (the rest of the preview logic will work as long as data attributes are set)
   if (previewFrozen && booruHoverPreview.classList.contains('active')) return;
@@ -8114,8 +8051,8 @@ function showPreviewForElement(mediaElement, forceVideoLoad = false) {
     booruPreviewId.textContent = displayPostId;
   }
   if (booruPreviewSource) {
-    const sourceName = previewItem?.dataset.postSource || '';
-    const isDownloadsGallery = previewItem?.closest('.booru-gallery')?.classList.contains('downloads-gallery');
+    const sourceName = galleryItem?.dataset.postSource || '';
+    const isDownloadsGallery = galleryItem?.closest('.booru-gallery')?.classList.contains('downloads-gallery');
     booruPreviewSource.textContent = isDownloadsGallery ? sourceName : '';
   }
   if (booruPreviewSource.textContent === '') {
@@ -8900,7 +8837,7 @@ if (galleryWrapper) {
     if (mediaElement === lastHoveredElement) return;
     if (mouseoverThrottle) return;
     
-    if (mediaElement && mediaElement.dataset.tags && mediaElement.classList.contains('loaded')) {
+    if (mediaElement && mediaElement.hasAttribute('data-tags') && mediaElement.classList.contains('loaded')) {
       lastHoveredElement = mediaElement;
       mouseoverThrottle = setTimeout(() => {
         mouseoverThrottle = null;

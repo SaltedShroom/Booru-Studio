@@ -923,6 +923,12 @@ class BooruSourcesManager {
       document.getElementById('scraper-postLinkSelector').value = source.scraper.postLinkSelector || '';
       document.getElementById('scraper-imageUrlSelector').value = source.scraper.imageUrlSelector || '';
       document.getElementById('scraper-imageUrlAttribute').value = source.scraper.imageUrlAttribute || 'src';
+      document.getElementById('scraper-thumbnailWidthAttribute').value = source.scraper.thumbnailWidthAttribute || 'width';
+      document.getElementById('scraper-thumbnailHeightAttribute').value = source.scraper.thumbnailHeightAttribute || 'height';
+      document.getElementById('scraper-initialTagsAttribute').value = source.scraper.initialTagsAttribute || '';
+      document.getElementById('scraper-initialFileTypeAttribute').value = source.scraper.initialFileTypeAttribute || '';
+      document.getElementById('scraper-initialFileTypeAttributeValue').value = source.scraper.initialFileTypeAttributeValue || '';
+      document.getElementById('scraper-initialFileTypeGifTag').value = source.scraper.initialFileTypeGifTag || '';
       document.getElementById('scraper-detailImageSelector').value = source.scraper.detailImageSelector || '';
       document.getElementById('scraper-detailImageAttribute').value = source.scraper.detailImageAttribute || 'src';
       document.getElementById('scraper-detailTagsSelector').value = source.scraper.detailTagsSelector || '';
@@ -1038,6 +1044,12 @@ class BooruSourcesManager {
         postLinkSelector: document.getElementById('scraper-postLinkSelector').value.trim(),
         imageUrlSelector: document.getElementById('scraper-imageUrlSelector').value.trim(),
         imageUrlAttribute: document.getElementById('scraper-imageUrlAttribute').value.trim() || 'src',
+        thumbnailWidthAttribute: document.getElementById('scraper-thumbnailWidthAttribute').value.trim() || 'width',
+        thumbnailHeightAttribute: document.getElementById('scraper-thumbnailHeightAttribute').value.trim() || 'height',
+        initialTagsAttribute: document.getElementById('scraper-initialTagsAttribute').value.trim() || undefined,
+        initialFileTypeAttribute: document.getElementById('scraper-initialFileTypeAttribute').value.trim() || undefined,
+        initialFileTypeAttributeValue: document.getElementById('scraper-initialFileTypeAttributeValue').value.trim() || undefined,
+        initialFileTypeGifTag: document.getElementById('scraper-initialFileTypeGifTag').value.trim() || undefined,
         detailImageSelector: document.getElementById('scraper-detailImageSelector').value.trim(),
         detailImageAttribute: document.getElementById('scraper-detailImageAttribute').value.trim() || 'src',
         detailTagsSelector: document.getElementById('scraper-detailTagsSelector').value.trim(),

@@ -1064,6 +1064,16 @@
                 <small>Attribute to extract URL from (usually src or data-src)</small>
               </div>
               <div class="form-group">
+                <label>Thumbnail Width Attribute</label>
+                <input type="text" id="scraper-thumbnailWidthAttribute" placeholder="e.g., width" value="width" />
+                <small>HTML attribute on thumbnail image to extract width (optional)</small>
+              </div>
+              <div class="form-group">
+                <label>Thumbnail Height Attribute</label>
+                <input type="text" id="scraper-thumbnailHeightAttribute" placeholder="e.g., height" value="height" />
+                <small>HTML attribute on thumbnail image to extract height (optional)</small>
+              </div>
+              <div class="form-group">
                 <label>Post Detail Page - Image/Video Selector <span class="required">*</span></label>
                 <input type="text" id="scraper-detailImageSelector" placeholder="e.g., #image, #gelcomVideoPlayer" />
                 <small>CSS selector for the main image or video element on post detail page</small>
@@ -1087,6 +1097,26 @@
                 <label>Post Detail Page - Artist Tags Selector</label>
                 <input type="text" id="scraper-detailArtistTagsSelector" placeholder="e.g., a.model or a.model, a.artist" />
                 <small>CSS selector for artist/model tags within the tags container (relative path)</small>
+              </div>
+              <div class="form-group">
+                <label>Initial Tags Attribute (List Page)</label>
+                <input type="text" id="scraper-initialTagsAttribute" placeholder="e.g., title or data-tags" />
+                <small>HTML attribute on thumbnail to extract initial tags (optional, for list page extraction)</small>
+              </div>
+              <div class="form-group">
+                <label>Initial File Type Attribute (List Page)</label>
+                <input type="text" id="scraper-initialFileTypeAttribute" placeholder="e.g., style or class" />
+                <small>HTML attribute to check for file type detection (optional)</small>
+              </div>
+              <div class="form-group">
+                <label>Initial File Type Attribute Value</label>
+                <input type="text" id="scraper-initialFileTypeAttributeValue" placeholder="e.g., border: 3px solid #0000ff;" />
+                <small>Value to match in the attribute for file type detection (optional)</small>
+              </div>
+              <div class="form-group">
+                <label>Initial GIF Tag</label>
+                <input type="text" id="scraper-initialFileTypeGifTag" placeholder="e.g., gif" />
+                <small>Tag to add if file is detected as GIF from initial detection (optional)</small>
               </div>
               <div class="form-group">
                 <label>Post Detail Page Tag Text Extraction</label>
