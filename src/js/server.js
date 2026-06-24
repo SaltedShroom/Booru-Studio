@@ -269,7 +269,6 @@ async function fetchImageViaPuppeteer(imageUrl, matchingSource) {
 // Create proxy agent based on settings
 function getProxyAgent(protocol = 'http') {
   if (!proxySettings.active || !proxySettings.host || !proxySettings.port) {
-    console.log(`🧭 getProxyAgent: direct fallback because proxy disabled/incomplete [active=${proxySettings.active} host=${proxySettings.host} port=${proxySettings.port}]`);
     return null;
   }
 
@@ -3629,6 +3628,37 @@ function scrapePageWithSelectors($, selectors) {
               post.thumbnailHeight = h;
               post.aspectRatio = w / h;
             }
+          }
+        }
+        
+        // Extract initial tags from attribute if specified (e.g., from title attribute)
+        if (selectors.initialTagsAttribute) {
+          const tagsString = $image.attr(selectors.initialTagsAttribute);
+          if (tagsString) {
+            // Parse comma-separated tags and split by spaces within underscores
+            post.initialTags = tagsString
+              .split(',')
+              .map(tag => tag.trim().replace(/\s+/g, '_'))
+              .filter(tag => tag.length > 0);
+          }
+        }
+        
+        // Determine initial file type (image, gif, video)
+        // Default to 'image'
+        post.initialFileType = 'image';
+        
+        // Check for video indicator in image element attributes
+        if (selectors.initialFileTypeAttribute && selectors.initialFileTypeAttributeValue) {
+          const attrValue = $image.attr(selectors.initialFileTypeAttribute);
+          if (attrValue && attrValue.includes(selectors.initialFileTypeAttributeValue)) {
+            post.initialFileType = 'video';
+          }
+        }
+        
+        // Check for GIF tag (only if not already detected as video)
+        if (post.initialFileType !== 'video' && selectors.initialFileTypeGifTag && post.initialTags) {
+          if (post.initialTags.includes(selectors.initialFileTypeGifTag)) {
+            post.initialFileType = 'gif';
           }
         }
         

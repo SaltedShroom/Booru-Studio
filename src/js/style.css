@@ -3222,10 +3222,6 @@ body, html {
   border-color: var(--border-video) !important;
 }
 
-.booru-gallery:not(.downloads-gallery) .booru-image-item .item-overlay.scraper-post-overlay {
-  border-color: var(--border) !important;
-}
-
 .booru-gallery:not(.downloads-gallery) .booru-image-item[data-downloaded="true"].file-type-image::after {
   box-shadow: inset 0 0 0 calc(var(--booru-image-size) / 220 * 4) var(--border-image), inset 0 0 0 2000px rgba(0, 0, 0, 0.5);
 }

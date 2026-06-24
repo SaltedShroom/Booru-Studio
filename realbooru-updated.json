@@ -1,0 +1,43 @@
+{
+  "type": "scraper",
+  "id": "realbooru",
+  "name": "Realbooru.com",
+  "baseUrl": "https://realbooru.com",
+  "apiUrl": "https://realbooru.com",
+  "auth": {
+    "required": false
+  },
+  "cookies": "",
+  "userAgent": "",
+  "ui": {
+    "defaultSort": "new",
+    "defaultLimit": 100,
+    "requiresProxy": false
+  },
+  "scraper": {
+    "listPageUrl": "https://realbooru.com/index.php?page=post&s=list",
+    "listPageSelector": ".col.thumb",
+    "postLinkSelector": "a",
+    "imageUrlSelector": "img",
+    "imageUrlAttribute": "src",
+    "initialTagsAttribute": "title",
+    "initialFileTypeAttribute": "style",
+    "initialFileTypeAttributeValue": "border: 3px solid #0000ff;",
+    "initialFileTypeGifTag": "gif",
+    "detailImageSelector": "#image, #gelcomVideoPlayer",
+    "detailImageAttribute": "src",
+    "detailTagsSelector": "#tagLink",
+    "detailGeneralTagsSelector": "a.tag-type-general",
+    "detailArtistTagsSelector": "a.model, a.artist",
+    "detailTagTextExtraction": "text",
+    "postsPerPage": 42,
+    "paginationStrategy": "offset",
+    "paginationParam": "pid",
+    "paginationLastPageSelector": "a[alt='last page']",
+    "searchTagParam": "tags",
+    "searchTagSeparator": "+"
+  },
+  "gallery": {
+    "invertAspectRatio": true
+  }
+}

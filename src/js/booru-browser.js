@@ -235,6 +235,12 @@ document.addEventListener('DOMContentLoaded', () => {
 });
 // Log when the user leaves the app window
 window.addEventListener('blur', () => {
+  // Cancel any pending scraper detail timers
+  if (window.booruLastHoveredElement && window.booruLastHoveredElement._scraperDetailDelayTimer) {
+    clearTimeout(window.booruLastHoveredElement._scraperDetailDelayTimer);
+    window.booruLastHoveredElement._scraperDetailDelayTimer = null;
+  }
+  
   previewFrozen = false;
   booruHoverPreview.classList.remove('frozen');
   booruHoverPreview.classList.remove('active');
@@ -244,6 +250,12 @@ window.addEventListener('blur', () => {
 let hidePreviewTimeout = null;
 
 document.addEventListener('mouseleave', () => {
+  // Cancel any pending scraper detail timers
+  if (window.booruLastHoveredElement && window.booruLastHoveredElement._scraperDetailDelayTimer) {
+    clearTimeout(window.booruLastHoveredElement._scraperDetailDelayTimer);
+    window.booruLastHoveredElement._scraperDetailDelayTimer = null;
+  }
+  
   hidePreviewTimeout = setTimeout(() => {
     if (booruHoverPreview.classList.contains('active')) {
       if (!booruHoverPreview.classList.contains('frozen')) {
@@ -806,7 +818,19 @@ function getImageUrl(imageUrl) {
       showToast('Error checking proxy settings: ' + e.message, 'error');
     }
   }
-  // Return direct URL if proxy is not enabled
+  
+  // For external HTTPS URLs (even with proxy disabled), route through proxy-image endpoint
+  // to ensure proper Referer headers are sent (prevents hotlink protection redirects)
+  try {
+    const urlObj = new URL(imageUrl);
+    if (urlObj.protocol === 'https:' && !urlObj.hostname.includes('localhost')) {
+      return `http://localhost:3001/proxy-image?url=${encodeURIComponent(imageUrl)}`;
+    }
+  } catch (e) {
+    // Invalid URL, just return as-is
+  }
+  
+  // Return direct URL if proxy is not enabled and URL is safe (HTTP or local)
   return imageUrl;
 }
 
@@ -5013,7 +5037,12 @@ async function loadScraperBooru(sourceId, append) {
           thumbnailWidthAttribute: scraper.thumbnailWidthAttribute || 'width',
           thumbnailHeightAttribute: scraper.thumbnailHeightAttribute || 'height',
           paginationLastPageSelector: scraper.paginationLastPageSelector,
-          postsPerPage: scraper.postsPerPage || 42
+          postsPerPage: scraper.postsPerPage || 42,
+          // New selectors for initial tags and file type extraction
+          initialTagsAttribute: scraper.initialTagsAttribute,
+          initialFileTypeAttribute: scraper.initialFileTypeAttribute,
+          initialFileTypeAttributeValue: scraper.initialFileTypeAttributeValue,
+          initialFileTypeGifTag: scraper.initialFileTypeGifTag
         }
       }),
       signal: abortSignal
@@ -5115,10 +5144,10 @@ async function loadScraperBooru(sourceId, append) {
         source: sourceId,
         url: postUrl,
         thumbnailUrl: post.thumbnailUrl,
-        tags: [],
+        tags: post.initialTags || [],
         artists: [],
         imageUrl: post.thumbnailUrl,
-        mediaType: 'image',
+        mediaType: post.initialFileType || 'image',
         _scraperDetailsLoaded: false,
         _isScraperPost: true
       };
@@ -6627,8 +6656,9 @@ function createBooruImageElement(post, maxHeight = null, imageWidth = null) {
 
   const dataIndex = post.dataIndex;
   const qualityUrl = post?.imageUrl?.toLowerCase() || 'Unknown';
-  const isVideo = qualityUrl.endsWith('.mp4') || qualityUrl.endsWith('.webm') || qualityUrl.endsWith('.mov') || qualityUrl.includes('.mp4?') || qualityUrl.includes('.webm?') || qualityUrl.includes('.mov?');
-  const isGif = qualityUrl.endsWith('.gif') || qualityUrl.includes('.gif?');
+  // Check mediaType first (for pre-extracted file types from scraper), then URL
+  const isVideo = post.mediaType === 'video' || qualityUrl.endsWith('.mp4') || qualityUrl.endsWith('.webm') || qualityUrl.endsWith('.mov') || qualityUrl.includes('.mp4?') || qualityUrl.includes('.webm?') || qualityUrl.includes('.mov?');
+  const isGif = !isVideo && (post.mediaType === 'gif' || qualityUrl.endsWith('.gif') || qualityUrl.includes('.gif?'));
   const useHighQuality = (!isVideo && typeof showHighQualityGallery !== 'undefined') ? showHighQualityGallery : false;
 
   // Determine if this is a scraper post
@@ -6654,6 +6684,7 @@ function createBooruImageElement(post, maxHeight = null, imageWidth = null) {
   mediaElement.dataset.sampleUrl = post.sampleUrl || '';
   mediaElement.dataset.tags = post.tags.join(' ');
   mediaElement.dataset.isScraperPost = isScraperPost ? 'true' : 'false';
+  mediaElement._scraperDetailsLoaded = post._scraperDetailsLoaded === true;
   mediaElement.dataset.author = Array.isArray(post.artist) ? post.artist.join(', ') : (post.artist || post.author || 'Unknown');
   mediaElement.dataset.title = post.title || '';
   mediaElement.dataset.createdAt = post.createdAt || '';
@@ -7245,6 +7276,18 @@ document.addEventListener('mousemove', (e) => {
     el.matches('.booru-image-item img, .booru-image-item video')
   );
 
+  // Clean up scraper detail timer if moving to a different element
+  if (mediaElement !== window.booruLastHoveredElement && window.booruLastHoveredElement) {
+    const lastElement = window.booruLastHoveredElement;
+    const lastPostId = lastElement.closest('.booru-image-item')?.dataset.postId;
+    if (lastElement._scraperDetailDelayTimer) {
+      console.log(`[Scraper Detail] Moved to different element, clearing timer for post ${lastPostId}`);
+      clearTimeout(lastElement._scraperDetailDelayTimer);
+      lastElement._scraperDetailDelayTimer = null;
+    }
+    // Note: don't reset _scraperDetailFetchInProgress as it might still be in progress
+  }
+
   if (
     mediaElement &&
     typeof showPreviewForElement === 'function' &&
@@ -7575,37 +7618,44 @@ function pauseAllPreviewVideos() {
  * @param {boolean} forceFresh - If true, always fetch fresh details even if cached (default: true for downloads)
  */
 async function fetchScraperPostDetails(postId, sourceId, forceFresh = true) {
+  console.log(`[fetchScraperPostDetails] Starting for post ${postId}, source ${sourceId}, forceFresh: ${forceFresh}`);
   try {
     // Find the post in DOM
     const previewItem = document.querySelector(`[data-post-id="${postId}"][data-post-source="${sourceId}"]`);
     if (!previewItem) {
+      console.log(`[fetchScraperPostDetails] Post ${postId} not found in DOM`);
       return null;
     }
+    
+    console.log(`[fetchScraperPostDetails] Found post in DOM, post URL:`, previewItem.dataset.url);
 
     const mediaElement = previewItem.querySelector('img');
     if (!mediaElement) {
+      console.log(`[fetchScraperPostDetails] No img element found for post ${postId}`);
       return null;
     }
 
     // Get the actual post URL (not the image URL)
     const postUrl = previewItem.dataset.url;
     if (!postUrl) {
+      console.log(`[fetchScraperPostDetails] No post URL found for post ${postId}`);
       return null;
     }
 
     // Skip if already loaded (ONLY if not forcing fresh fetch)
     if (!forceFresh && previewItem.dataset.tags && previewItem.dataset.tags !== 'loading...') {
+      console.log(`[fetchScraperPostDetails] Returning cached tags for post ${postId}`);
       return { tags: previewItem.dataset.tags };
     }
 
     const sourceConfig = booruSourcesManager?.getSource(sourceId);
     if (!sourceConfig || !sourceConfig.scraper) {
+      console.log(`[fetchScraperPostDetails] Source config not found or not a scraper for ${sourceId}`);
       return null;
     }
 
     const scraper = sourceConfig.scraper;
-
-    // Fetch detail page HTML
+    console.log(`[fetchScraperPostDetails] Fetching post detail page:`, postUrl);
     const detailResponse = await proxyFetch(postUrl);
     const detailHtml = await detailResponse.text();
 
@@ -7630,11 +7680,59 @@ async function fetchScraperPostDetails(postId, sourceId, forceFresh = true) {
     }
 
     const scrapeData = await scrapeResponse.json();
+    console.log(`[fetchScraperPostDetails] Scraper response for post ${postId}:`, scrapeData);
+    
     if (!scrapeData.success) {
       throw new Error(scrapeData.error || 'Failed to parse detail page');
     }
 
     const detail = scrapeData.data || {};
+    console.log(`[fetchScraperPostDetails] Extracted detail data for post ${postId}:`, detail);
+
+    // Update the window.booruPosts array if this post exists there
+    if (window.booruPosts) {
+      const postIndex = window.booruPosts.findIndex(p => 
+        normalizePostId(p.id) === normalizePostId(postId) && p.source === sourceId
+      );
+      if (postIndex >= 0) {
+        const post = window.booruPosts[postIndex];
+        
+        if (detail.detailImageUrl) {
+          post.imageUrl = detail.detailImageUrl;
+          
+          // Update media type based on the detailed image URL
+          const isVideo = detail.detailImageUrl.toLowerCase().endsWith('.mp4') || 
+                         detail.detailImageUrl.toLowerCase().endsWith('.webm') ||
+                         detail.detailImageUrl.toLowerCase().endsWith('.mov');
+          const isGif = detail.detailImageUrl.toLowerCase().endsWith('.gif');
+          
+          if (isVideo) {
+            post.mediaType = 'video';
+          } else if (isGif) {
+            post.mediaType = 'gif';
+          } else {
+            post.mediaType = 'image';
+          }
+        }
+        
+        if (detail.tags) {
+          if (detail.tags.general) {
+            post.tags = detail.tags.general;
+          }
+          if (detail.tags.artist) {
+            post.artists = detail.tags.artist;
+          } else if (detail.tags.artists) {
+            post.artists = detail.tags.artists;
+          }
+        }
+        
+        if (detail.uploadDate) {
+          post.createdAt = detail.uploadDate;
+        }
+        
+        post._scraperDetailsLoaded = true;
+      }
+    }
 
     // Update the DOM element's dataset with fetched details
     if (detail.detailImageUrl) {
@@ -7666,6 +7764,7 @@ async function fetchScraperPostDetails(postId, sourceId, forceFresh = true) {
         previewItem.dataset.tags = detail.tags.general.join(' ');
         if (mediaElement) {
           mediaElement.dataset.tags = detail.tags.general.join(' ');
+          mediaElement._scraperDetailsLoaded = true;
         }
       }
     }
@@ -7699,8 +7798,10 @@ async function fetchScraperPostDetails(postId, sourceId, forceFresh = true) {
       itemOverlay.classList.remove('scraper-post-overlay');
     }
 
+    console.log(`[fetchScraperPostDetails] Successfully completed for post ${postId}`, detail);
     return detail;
   } catch (err) {
+    console.error(`[fetchScraperPostDetails] Error fetching details for post ${postId}:`, err);
     return null;
   }
 }
@@ -7736,36 +7837,292 @@ function showPreviewForElement(mediaElement, forceVideoLoad = false) {
   
   if (!mediaElement) return;
   
-  // For scraper posts without tags, fetch details on-demand
+  // For scraper posts, delay detail fetching to allow user to move away if they want
   const previewItem = mediaElement.closest('.booru-image-item');
   const postId = previewItem?.dataset.postId;
   const postSource = previewItem?.dataset.postSource;
   
-  if (postId && postSource && !mediaElement.dataset.tags) {
-    // This might be a scraper post - check if source is scraper type
+  if (postId && postSource) {
+    // Check if source is scraper type
     const sourceConfig = booruSourcesManager?.getSource(postSource);
     if (sourceConfig?.type === 'scraper') {
-      // Show the thumbnail immediately, then update as data arrives
-      // We'll temporarily give it a tags dataset so it shows the preview
-      mediaElement.dataset.tags = 'loading...';
+      // For scraper posts, check if we need to fetch details (check if full details have been loaded)
+      const needsDetailFetch = mediaElement._scraperDetailsLoaded !== true;
+      const detailFetchInProgress = mediaElement._scraperDetailFetchInProgress === true;
+      const timerAlreadyRunning = mediaElement._scraperDetailDelayTimer !== null && mediaElement._scraperDetailDelayTimer !== undefined;
       
-      // Call showPreviewForElement to display the thumbnail now
-      showPreviewForElement(mediaElement);
       
-      // Fetch details in background
-      fetchScraperPostDetails(postId, postSource).then((detailData) => {
-        if (detailData) {
-          // Check if user is still hovering over this element before showing updated preview
-          const elementsUnderCursor = document.elementsFromPoint(lastMouseX, lastMouseY);
-          const isStillHovering = elementsUnderCursor.some(el => el === mediaElement);
+      if (needsDetailFetch && !detailFetchInProgress && !timerAlreadyRunning) {
+        // Set up delayed detail fetch (only if timer isn't already running)
+        // Use the same delay as high-quality loading (from hqHoverDelay setting, default 150ms for preview delay, or 400ms for quality delay)
+        const scraperDetailDelay = window.scraperDetailDelay ?? 400; // Default to 400ms like HQ quality load
+        
+        console.log(`[Scraper Detail] Setting up timer for post ${postId}, delay: ${scraperDetailDelay}ms`);
+        
+        // Set up delayed detail fetch
+        mediaElement._scraperDetailDelayTimer = setTimeout(() => {
+          console.log(`[Scraper Detail] Timer fired for post ${postId}, checking if still hovering...`);
+          mediaElement._scraperDetailDelayTimer = null;
           
-          if (isStillHovering) {
-            // Re-call showPreviewForElement to display the updated preview with all data
-            showPreviewForElement(mediaElement);
+          // Guard: check if still hovering over the same element
+          const elementsUnderCursor = document.elementsFromPoint(lastMouseX, lastMouseY);
+          const currentHover = elementsUnderCursor.find(el => el === mediaElement);
+          if (!currentHover) {
+            // User moved away, cancel detail fetch
+            console.log(`[Scraper Detail] User moved away, cancelling fetch for post ${postId}`);
+            return;
           }
-        }
-      });
-      return;
+          
+          console.log(`[Scraper Detail] Still hovering, starting fetch for post ${postId}`);
+          
+          // Mark fetch as in progress to prevent duplicate fetches
+          mediaElement._scraperDetailFetchInProgress = true;
+          
+          // Show loading state with spinner on download button and preview
+          const galleryItem = mediaElement.closest('.booru-image-item');
+          const downloadBtn = galleryItem?.querySelector('.booru-download-btn');
+          let originalDownloadHTML = null;
+          
+          if (downloadBtn) {
+            const currentBtnHtml = downloadBtn.innerHTML;
+            if (currentBtnHtml.includes('fa-circle-notch')) {
+              const isDownloaded = galleryItem?.dataset.downloaded === 'true';
+              originalDownloadHTML = isDownloaded
+                ? '<i class="fas fa-check"></i>'
+                : '<i class="fas fa-download"></i>';
+            } else {
+              originalDownloadHTML = currentBtnHtml;
+            }
+            downloadBtn.innerHTML = '<i class="fas fa-circle-notch fa-spin"></i>';
+          }
+          
+          // Add loading spinner to preview
+          let loadingOverlay = booruPreviewMediaContainer.querySelector('.preview-loading-overlay');
+          if (!loadingOverlay) {
+            loadingOverlay = document.createElement('div');
+            loadingOverlay.className = 'preview-loading-overlay';
+            loadingOverlay.innerHTML = '<i class="fas fa-circle-notch fa-spin"></i>';
+            loadingOverlay.style.cssText = `
+              position: absolute;
+              top: 10px;
+              right: 10px;
+              width: 45px;
+              height: 45px;
+              display: flex;
+              align-items: center;
+              justify-content: center;
+              background: rgba(0, 0, 0, 0.5);
+              border-radius: 50%;
+              color: var(--accent);
+              font-size: 28px;
+              z-index: 10;
+            `;
+            booruPreviewMediaContainer.style.position = 'relative';
+            booruPreviewMediaContainer.appendChild(loadingOverlay);
+          }
+          
+          const imageLoader = galleryItem?.querySelector('.image-loader');
+          if (imageLoader) {
+            imageLoader.style.display = 'block';
+          }
+          
+          // Fetch details in background
+          console.log(`[Scraper Detail] Calling fetchScraperPostDetails for post ${postId}`);
+          fetchScraperPostDetails(postId, postSource, true).then((detailData) => {
+            console.log(`[Scraper Detail] Fetch succeeded for post ${postId}`, detailData);
+            mediaElement._scraperDetailFetchInProgress = false;
+            
+            // When details are fetched, proceed with quality image loading as normal
+            // Re-call showPreviewForElement to display updated preview and trigger quality load
+            const elementsUnderCursor = document.elementsFromPoint(lastMouseX, lastMouseY);
+            const isStillHovering = elementsUnderCursor.some(el => el === mediaElement);
+            
+            console.log(`[Scraper Detail] After fetch - still hovering: ${isStillHovering}`);
+            
+            if (isStillHovering) {
+              // Skip the HQ loading delay since we just finished detail fetching
+              mediaElement._skipHqDelay = true;
+              console.log(`[Scraper Detail] Calling showPreviewForElement with _skipHqDelay=true`);
+              showPreviewForElement(mediaElement, false);
+            } else {
+              // User moved away, but still update the gallery with fetched data
+              console.log(`[Scraper Detail] User moved away, updating gallery with fetched data`);
+              
+              // Update gallery item visual representation with new tags and media type
+              if (detailData) {
+                if (detailData.tags && detailData.tags.general) {
+                  galleryItem.dataset.tags = detailData.tags.general.join(' ');
+                  mediaElement.dataset.tags = detailData.tags.general.join(' ');
+                }
+                
+                if (detailData.detailImageUrl) {
+                  // Update media type CSS classes if it changed
+                  const isNewVideo = detailData.detailImageUrl.toLowerCase().endsWith('.mp4') ||
+                                   detailData.detailImageUrl.toLowerCase().endsWith('.webm') ||
+                                   detailData.detailImageUrl.toLowerCase().endsWith('.mov');
+                  const isNewGif = detailData.detailImageUrl.toLowerCase().endsWith('.gif');
+                  
+                  // Update classes if media type changed
+                  galleryItem.classList.remove('file-type-image', 'file-type-gif', 'file-type-video');
+                  if (isNewVideo) {
+                    galleryItem.classList.add('file-type-video');
+                  } else if (isNewGif) {
+                    galleryItem.classList.add('file-type-gif');
+                  } else {
+                    galleryItem.classList.add('file-type-image');
+                  }
+                                      downloadBtn.innerHTML = '<i class="fas fa-circle-notch fa-spin"></i>';
+                    console.log(downloadBtn, 'downloadBtn');
+                  
+                  // Update mediaElement src and quality URL attributes
+                  const resolvedUrl = getImageUrl(detailData.detailImageUrl);
+                  mediaElement.dataset.imageUrl = detailData.detailImageUrl;
+                  mediaElement.dataset.highQualityUrl = resolvedUrl;
+                  mediaElement.dataset.highQualityLoaded = 'true';
+                  mediaElement.dataset.currentQualityUrl = resolvedUrl;
+                  console.log(resolvedUrl, 'resolvedUrl');
+                  
+                  // Only set src for non-video files (images and gifs)
+                  if (!isNewVideo) {
+                    mediaElement.src = resolvedUrl;
+                    mediaElement.addEventListener('load', () => {
+                      if (downloadBtn && originalDownloadHTML !== null) {
+                        downloadBtn.innerHTML = originalDownloadHTML;
+                      }
+                    });
+                  } else {
+                    // Extract and display first frame of video
+                    const videoElement = document.createElement('video');
+                    videoElement.crossOrigin = 'anonymous';
+                    videoElement.src = resolvedUrl;
+                    videoElement.preload = 'metadata';
+                    
+                    const onLoadedMetadata = () => {
+                      try {
+                        // Seek to a small offset to ensure a real frame is loaded
+                        videoElement.currentTime = Math.min(0.5, videoElement.duration || 0.5);
+                      } catch (err) {
+                        console.warn('Failed to seek video:', err);
+                        // Try to draw anyway
+                        drawFrame();
+                      }
+                    };
+                    
+                    const onSeeked = () => {
+                      drawFrame();
+                    };
+                    
+                    const drawFrame = () => {
+                      try {
+                        const canvas = document.createElement('canvas');
+                        canvas.width = videoElement.videoWidth;
+                        canvas.height = videoElement.videoHeight;
+                        const ctx = canvas.getContext('2d');
+                        if (ctx && canvas.width > 0 && canvas.height > 0) {
+                          ctx.drawImage(videoElement, 0, 0);
+                          const frameData = canvas.toDataURL('image/jpeg', 0.92);
+                          mediaElement.src = frameData;
+                          mediaElement.addEventListener('load', () => {
+                            if (downloadBtn && originalDownloadHTML !== null) {
+                              downloadBtn.innerHTML = originalDownloadHTML;
+                            }
+                          }, { once: true });
+                        } else {
+                          // Canvas dimensions invalid, just reset button
+                          if (downloadBtn && originalDownloadHTML !== null) {
+                            downloadBtn.innerHTML = originalDownloadHTML;
+                          }
+                        }
+                      } catch (err) {
+                        console.warn('Failed to extract video first frame:', err);
+                        if (downloadBtn && originalDownloadHTML !== null) {
+                          downloadBtn.innerHTML = originalDownloadHTML;
+                        }
+                      }
+                      // Cleanup listeners
+                      videoElement.removeEventListener('loadedmetadata', onLoadedMetadata);
+                      videoElement.removeEventListener('seeked', onSeeked);
+                      videoElement.removeEventListener('error', onError);
+                    };
+                    
+                    const onError = () => {
+                      console.warn('Failed to load video for first frame extraction');
+                      if (downloadBtn && originalDownloadHTML !== null) {
+                        downloadBtn.innerHTML = originalDownloadHTML;
+                      }
+                    };
+                    
+                    videoElement.addEventListener('loadedmetadata', onLoadedMetadata, { once: true });
+                    videoElement.addEventListener('seeked', onSeeked, { once: true });
+                    videoElement.addEventListener('error', onError, { once: true });
+
+                    mediaElement.dataset.previewLoading = 'false';
+                  }
+                }
+                
+                // Update artists if present
+                if (detailData.tags && (detailData.tags.artist || detailData.tags.artists)) {
+                  const artistList = detailData.tags.artist || detailData.tags.artists || [];
+                  const artistStr = Array.isArray(artistList) ? artistList.join(', ') : (artistList || 'Unknown');
+                  galleryItem.dataset.artist = artistStr;
+                  mediaElement.dataset.author = artistStr;
+                }
+                
+                // Update upload date if present
+                if (detailData.uploadDate) {
+                  mediaElement.dataset.createdAt = detailData.uploadDate;
+                }
+              }
+              
+              // Update tab cache with new scraper details (similar to quality load)
+              try {
+                const postId = mediaElement.closest('.booru-image-item')?.dataset.postId;
+                const postSource = mediaElement.closest('.booru-image-item')?.dataset.postSource;
+                if (window.booruTabs && window.activeTabId) {
+                  const tab = window.booruTabs.find(t => t.id === window.activeTabId);
+                  if (tab && Array.isArray(tab.booruPosts)) {
+                    const post = tab.booruPosts.find(p => String(p.id) === String(postId) && String(p.source) === String(postSource));
+                    if (post && detailData) {
+                      if (detailData.detailImageUrl) {
+                        post.imageUrl = detailData.detailImageUrl;
+                      }
+                      if (detailData.tags && detailData.tags.general) {
+                        post.tags = detailData.tags.general;
+                      }
+                      if (detailData.tags && (detailData.tags.artist || detailData.tags.artists)) {
+                        post.artists = detailData.tags.artist || detailData.tags.artists || [];
+                      }
+                      if (detailData.uploadDate) {
+                        post.createdAt = detailData.uploadDate;
+                      }
+                      post._scraperDetailsLoaded = true;
+                    }
+                  }
+                }
+              } catch (e) { /* ignore */ }
+              
+              // Clean up UI (but don't reset button yet — let quality loading reset it when done)
+              const overlay = booruPreviewMediaContainer.querySelector('.preview-loading-overlay');
+              if (overlay) overlay.remove();
+              if (imageLoader) {
+                imageLoader.style.display = 'none';
+              }
+            }
+          }).catch((err) => {
+            console.log(`[Scraper Detail] Fetch failed for post ${postId}:`, err);
+            mediaElement._scraperDetailFetchInProgress = false;
+            
+            // On error, clean up the loading state (but don't reset button yet — let quality loading reset it when done)
+            const overlay = booruPreviewMediaContainer.querySelector('.preview-loading-overlay');
+            if (overlay) overlay.remove();
+            if (imageLoader) {
+              imageLoader.style.display = 'none';
+            }
+          });
+        }, scraperDetailDelay);
+        
+        return; // Don't show preview until after delay completes
+      }
     }
   }
   
@@ -8183,7 +8540,9 @@ function showPreviewForElement(mediaElement, forceVideoLoad = false) {
           clearTimeout(mediaElement._hqDelayTimer);
           mediaElement._hqDelayTimer = null;
         }
-        // Start loading high quality after 400ms hover delay
+        // Start loading high quality after 400ms hover delay (or immediately if skipping delay)
+        const hqDelay = mediaElement._skipHqDelay ? 0 : 400;
+        mediaElement._skipHqDelay = false; // Reset flag for next time
         mediaElement._hqDelayTimer = setTimeout(() => {
           mediaElement._hqDelayTimer = null;
           // Guard: another call may have already started the load
