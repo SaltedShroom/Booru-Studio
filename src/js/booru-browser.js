@@ -7281,7 +7281,6 @@ document.addEventListener('mousemove', (e) => {
     const lastElement = window.booruLastHoveredElement;
     const lastPostId = lastElement.closest('.booru-image-item')?.dataset.postId;
     if (lastElement._scraperDetailDelayTimer) {
-      console.log(`[Scraper Detail] Moved to different element, clearing timer for post ${lastPostId}`);
       clearTimeout(lastElement._scraperDetailDelayTimer);
       lastElement._scraperDetailDelayTimer = null;
     }
@@ -7618,44 +7617,35 @@ function pauseAllPreviewVideos() {
  * @param {boolean} forceFresh - If true, always fetch fresh details even if cached (default: true for downloads)
  */
 async function fetchScraperPostDetails(postId, sourceId, forceFresh = true) {
-  console.log(`[fetchScraperPostDetails] Starting for post ${postId}, source ${sourceId}, forceFresh: ${forceFresh}`);
   try {
     // Find the post in DOM
     const previewItem = document.querySelector(`[data-post-id="${postId}"][data-post-source="${sourceId}"]`);
     if (!previewItem) {
-      console.log(`[fetchScraperPostDetails] Post ${postId} not found in DOM`);
       return null;
     }
-    
-    console.log(`[fetchScraperPostDetails] Found post in DOM, post URL:`, previewItem.dataset.url);
 
     const mediaElement = previewItem.querySelector('img');
     if (!mediaElement) {
-      console.log(`[fetchScraperPostDetails] No img element found for post ${postId}`);
       return null;
     }
 
     // Get the actual post URL (not the image URL)
     const postUrl = previewItem.dataset.url;
     if (!postUrl) {
-      console.log(`[fetchScraperPostDetails] No post URL found for post ${postId}`);
       return null;
     }
 
     // Skip if already loaded (ONLY if not forcing fresh fetch)
     if (!forceFresh && previewItem.dataset.tags && previewItem.dataset.tags !== 'loading...') {
-      console.log(`[fetchScraperPostDetails] Returning cached tags for post ${postId}`);
       return { tags: previewItem.dataset.tags };
     }
 
     const sourceConfig = booruSourcesManager?.getSource(sourceId);
     if (!sourceConfig || !sourceConfig.scraper) {
-      console.log(`[fetchScraperPostDetails] Source config not found or not a scraper for ${sourceId}`);
       return null;
     }
 
     const scraper = sourceConfig.scraper;
-    console.log(`[fetchScraperPostDetails] Fetching post detail page:`, postUrl);
     const detailResponse = await proxyFetch(postUrl);
     const detailHtml = await detailResponse.text();
 
@@ -7680,14 +7670,12 @@ async function fetchScraperPostDetails(postId, sourceId, forceFresh = true) {
     }
 
     const scrapeData = await scrapeResponse.json();
-    console.log(`[fetchScraperPostDetails] Scraper response for post ${postId}:`, scrapeData);
     
     if (!scrapeData.success) {
       throw new Error(scrapeData.error || 'Failed to parse detail page');
     }
 
     const detail = scrapeData.data || {};
-    console.log(`[fetchScraperPostDetails] Extracted detail data for post ${postId}:`, detail);
 
     // Update the window.booruPosts array if this post exists there
     if (window.booruPosts) {
@@ -7798,7 +7786,6 @@ async function fetchScraperPostDetails(postId, sourceId, forceFresh = true) {
       itemOverlay.classList.remove('scraper-post-overlay');
     }
 
-    console.log(`[fetchScraperPostDetails] Successfully completed for post ${postId}`, detail);
     return detail;
   } catch (err) {
     console.error(`[fetchScraperPostDetails] Error fetching details for post ${postId}:`, err);
@@ -7857,11 +7844,8 @@ function showPreviewForElement(mediaElement, forceVideoLoad = false) {
         // Use the same delay as high-quality loading (from hqHoverDelay setting, default 150ms for preview delay, or 400ms for quality delay)
         const scraperDetailDelay = window.scraperDetailDelay ?? 400; // Default to 400ms like HQ quality load
         
-        console.log(`[Scraper Detail] Setting up timer for post ${postId}, delay: ${scraperDetailDelay}ms`);
-        
         // Set up delayed detail fetch
         mediaElement._scraperDetailDelayTimer = setTimeout(() => {
-          console.log(`[Scraper Detail] Timer fired for post ${postId}, checking if still hovering...`);
           mediaElement._scraperDetailDelayTimer = null;
           
           // Guard: check if still hovering over the same element
@@ -7869,11 +7853,8 @@ function showPreviewForElement(mediaElement, forceVideoLoad = false) {
           const currentHover = elementsUnderCursor.find(el => el === mediaElement);
           if (!currentHover) {
             // User moved away, cancel detail fetch
-            console.log(`[Scraper Detail] User moved away, cancelling fetch for post ${postId}`);
             return;
           }
-          
-          console.log(`[Scraper Detail] Still hovering, starting fetch for post ${postId}`);
           
           // Mark fetch as in progress to prevent duplicate fetches
           mediaElement._scraperDetailFetchInProgress = true;
@@ -7927,9 +7908,7 @@ function showPreviewForElement(mediaElement, forceVideoLoad = false) {
           }
           
           // Fetch details in background
-          console.log(`[Scraper Detail] Calling fetchScraperPostDetails for post ${postId}`);
           fetchScraperPostDetails(postId, postSource, true).then((detailData) => {
-            console.log(`[Scraper Detail] Fetch succeeded for post ${postId}`, detailData);
             mediaElement._scraperDetailFetchInProgress = false;
             
             // When details are fetched, proceed with quality image loading as normal
@@ -7937,17 +7916,12 @@ function showPreviewForElement(mediaElement, forceVideoLoad = false) {
             const elementsUnderCursor = document.elementsFromPoint(lastMouseX, lastMouseY);
             const isStillHovering = elementsUnderCursor.some(el => el === mediaElement);
             
-            console.log(`[Scraper Detail] After fetch - still hovering: ${isStillHovering}`);
-            
             if (isStillHovering) {
               // Skip the HQ loading delay since we just finished detail fetching
               mediaElement._skipHqDelay = true;
-              console.log(`[Scraper Detail] Calling showPreviewForElement with _skipHqDelay=true`);
               showPreviewForElement(mediaElement, false);
             } else {
               // User moved away, but still update the gallery with fetched data
-              console.log(`[Scraper Detail] User moved away, updating gallery with fetched data`);
-              
               // Update gallery item visual representation with new tags and media type
               if (detailData) {
                 if (detailData.tags && detailData.tags.general) {
@@ -7972,7 +7946,6 @@ function showPreviewForElement(mediaElement, forceVideoLoad = false) {
                     galleryItem.classList.add('file-type-image');
                   }
                                       downloadBtn.innerHTML = '<i class="fas fa-circle-notch fa-spin"></i>';
-                    console.log(downloadBtn, 'downloadBtn');
                   
                   // Update mediaElement src and quality URL attributes
                   const resolvedUrl = getImageUrl(detailData.detailImageUrl);
@@ -7980,7 +7953,6 @@ function showPreviewForElement(mediaElement, forceVideoLoad = false) {
                   mediaElement.dataset.highQualityUrl = resolvedUrl;
                   mediaElement.dataset.highQualityLoaded = 'true';
                   mediaElement.dataset.currentQualityUrl = resolvedUrl;
-                  console.log(resolvedUrl, 'resolvedUrl');
                   
                   // Only set src for non-video files (images and gifs)
                   if (!isNewVideo) {
@@ -8109,7 +8081,6 @@ function showPreviewForElement(mediaElement, forceVideoLoad = false) {
               }
             }
           }).catch((err) => {
-            console.log(`[Scraper Detail] Fetch failed for post ${postId}:`, err);
             mediaElement._scraperDetailFetchInProgress = false;
             
             // On error, clean up the loading state (but don't reset button yet — let quality loading reset it when done)
