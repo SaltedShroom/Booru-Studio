@@ -5023,12 +5023,19 @@ async function loadScraperBooru(sourceId, append) {
       }
     }
 
-    // Fetch the HTML from the server scraper endpoint
+    // Fetch the list page HTML through proxy first
+    const listPageResponse = await proxyFetch(listUrl, { signal: abortSignal });
+    if (!listPageResponse.ok) {
+      throw new Error(`Failed to fetch list page: ${listPageResponse.status}`);
+    }
+    const listPageHtml = await listPageResponse.text();
+
+    // Send the HTML to the server scraper endpoint for parsing
     const scrapeResponse = await fetch('http://localhost:3001/api/scraper/fetch-page', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({
-        url: listUrl,
+        html: listPageHtml,
         selectors: {
           listPageSelector: scraper.listPageSelector,
           postLinkSelector: scraper.postLinkSelector,
