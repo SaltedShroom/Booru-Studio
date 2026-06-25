@@ -19,13 +19,12 @@ const updateModal = document.getElementById('update-modal');
 const closeUpdateModalBtn = document.getElementById('close-update-modal');
 const cancelUpdateModalBtn = document.getElementById('cancel-update-modal-btn');
 const confirmUpdateModalBtn = document.getElementById('confirm-update-modal-btn');
-const updateTitleText = document.getElementById('update-title-text');
 const updateNotesText = document.getElementById('update-notes-text');
 
 // Store update data for the modal
 let currentUpdateData = {
-  releaseTitle: null,
-  releaseNotes: null,
+  currentVersion: null,
+  releases: [],
   remoteVersion: null
 };
 
@@ -288,23 +287,48 @@ function compareVersionStrings(a, b) {
 function showUpdateModal() {
   if (updateModal) {
     updateModal.style.display = 'flex';
-    if (updateTitleText) {
-      updateTitleText.textContent = currentUpdateData.releaseTitle || 'New Update Available';
-    }
+    
     if (updateNotesText) {
-      const notes = currentUpdateData.releaseNotes || 'No release notes available.';
-      // Convert markdown-style formatting to basic HTML
-      const formattedNotes = notes
-        .split('\n')
-        .map(line => {
-          // Convert markdown bold **text** to <strong>text</strong>
-          line = line.replace(/\*\*(.*?)\*\*/g, '<strong>$1</strong>');
-          // Convert markdown links [text](url) to <a href="url" target="_blank">text</a>
-          line = line.replace(/\[(.*?)\]\((.*?)\)/g, '<a href="$2" target="_blank">$1</a>');
-          return line;
-        })
-        .join('<br>');
-      updateNotesText.innerHTML = formattedNotes;
+      const releases = currentUpdateData.releases || [];
+      const currentVersion = currentUpdateData.currentVersion || '0.0.0';
+      
+      // Filter releases to show only those newer than current version
+      const relevantReleases = releases.filter(release => {
+        const cleanVersion = release.version ? release.version.replace(/^v/, '') : null;
+        return cleanVersion && compareVersionStrings(cleanVersion, currentVersion) === 1;
+      });
+      
+      if (relevantReleases.length === 0) {
+        updateNotesText.innerHTML = '<p>No release notes available.</p>';
+        return;
+      }
+      
+      // Build HTML for all relevant releases
+      let releasesHtml = '';
+      relevantReleases.forEach(release => {
+        const notes = release.notes || 'No release notes available.';
+        // Remove gaps between lines by filtering out empty lines
+        const formattedNotes = notes
+          .split('\n')
+          .filter(line => line.trim() !== '') // Remove empty lines
+          .map(line => {
+            // Convert markdown bold **text** to <strong>text</strong>
+            line = line.replace(/\*\*(.*?)\*\*/g, '<strong>$1</strong>');
+            // Convert markdown links [text](url) to <a href="url" target="_blank">text</a>
+            line = line.replace(/\[(.*?)\]\((.*?)\)/g, '<a href="$2" target="_blank">$1</a>');
+            return line;
+          })
+          .join('<br>');
+        
+        releasesHtml += `
+          <div class="release-item">
+            <h5 class="release-title">${release.title || release.version || 'Release'}</h5>
+            <div class="release-notes">${formattedNotes}</div>
+          </div>
+        `;
+      });
+      
+      updateNotesText.innerHTML = releasesHtml;
     }
   }
 }
@@ -362,8 +386,8 @@ async function initVersionCheck() {
     // Store update data for the modal
     if (isUpdateAvailable) {
       currentUpdateData = {
-        releaseTitle: result?.releaseTitle || null,
-        releaseNotes: result?.releaseNotes || null,
+        currentVersion: appVersion,
+        releases: result?.releases || [],
         remoteVersion: remoteVersion
       };
     }

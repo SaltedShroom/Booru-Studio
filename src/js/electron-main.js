@@ -293,10 +293,10 @@ ipcMain.handle('save-mosaic-file', async (event, imageUrl, defaultFilename) => {
   }
 });
 
-function fetchLatestGitHubRelease() {
+function fetchGitHubReleases() {
   return new Promise((resolve) => {
     const request = https.get(
-      'https://api.github.com/repos/SaltedShroom/Booru-Studio/releases/latest',
+      'https://api.github.com/repos/SaltedShroom/Booru-Studio/releases?per_page=100',
       {
         headers: {
           'User-Agent': 'Booru Studio Updater',
@@ -314,23 +314,40 @@ function fetchLatestGitHubRelease() {
               error: true,
               message: `GitHub API returned ${res.statusCode}`,
               remoteVersion: null,
+              releases: [],
             });
           }
           try {
-            const obj = JSON.parse(data);
-            const remoteVersion = obj.tag_name || obj.name || null;
-            const releaseTitle = obj.name || null;
-            const releaseNotes = obj.body || null;
-            resolve({ error: false, remoteVersion, releaseTitle, releaseNotes, raw: obj });
+            const releases = JSON.parse(data);
+            if (!Array.isArray(releases) || releases.length === 0) {
+              return resolve({
+                error: false,
+                remoteVersion: null,
+                releases: [],
+              });
+            }
+            
+            // Map releases to our format and sort by version (newest first)
+            const mappedReleases = releases
+              .filter(r => !r.draft && !r.prerelease) // Filter out drafts and prereleases
+              .map(r => ({
+                version: r.tag_name || r.name || null,
+                title: r.name || null,
+                notes: r.body || null,
+                raw: r,
+              }));
+            
+            const remoteVersion = mappedReleases.length > 0 ? mappedReleases[0].version : null;
+            resolve({ error: false, remoteVersion, releases: mappedReleases });
           } catch (err) {
-            resolve({ error: true, message: err.message || String(err), remoteVersion: null });
+            resolve({ error: true, message: err.message || String(err), remoteVersion: null, releases: [] });
           }
         });
       }
     );
 
     request.on('error', (err) => {
-      resolve({ error: true, message: err.message || String(err), remoteVersion: null });
+      resolve({ error: true, message: err.message || String(err), remoteVersion: null, releases: [] });
     });
 
     request.end();
@@ -338,10 +355,11 @@ function fetchLatestGitHubRelease() {
 }
 
 ipcMain.handle('check-for-updates', async () => {
-  const githubRelease = await fetchLatestGitHubRelease();
-  console.log('GitHub release fetch:', {
-    remoteVersion: githubRelease.remoteVersion || null,
-    githubError: githubRelease.error ? githubRelease.message : null,
+  const githubData = await fetchGitHubReleases();
+  console.log('GitHub releases fetch:', {
+    remoteVersion: githubData.remoteVersion || null,
+    releaseCount: githubData.releases?.length || 0,
+    githubError: githubData.error ? githubData.message : null,
   });
 
   try {
@@ -354,10 +372,9 @@ ipcMain.handle('check-for-updates', async () => {
     return {
       error: false,
       updateInfo: updateCheck?.updateInfo || null,
-      remoteVersion: githubRelease.remoteVersion || null,
-      releaseTitle: githubRelease.releaseTitle || null,
-      releaseNotes: githubRelease.releaseNotes || null,
-      githubError: githubRelease.error ? githubRelease.message : null,
+      remoteVersion: githubData.remoteVersion || null,
+      releases: githubData.releases || [],
+      githubError: githubData.error ? githubData.message : null,
     };
   } catch (err) {
     const message = err?.message || String(err);
@@ -368,20 +385,18 @@ ipcMain.handle('check-for-updates', async () => {
         error: false,
         updateInfo: null,
         noReleases: true,
-        remoteVersion: githubRelease.remoteVersion || null,
-        releaseTitle: githubRelease.releaseTitle || null,
-        releaseNotes: githubRelease.releaseNotes || null,
-        githubError: githubRelease.error ? githubRelease.message : null,
+        remoteVersion: githubData.remoteVersion || null,
+        releases: githubData.releases || [],
+        githubError: githubData.error ? githubData.message : null,
       };
     }
     console.error('Check for updates failed:', err);
     return {
       error: true,
       message,
-      remoteVersion: githubRelease.remoteVersion || null,
-      releaseTitle: githubRelease.releaseTitle || null,
-      releaseNotes: githubRelease.releaseNotes || null,
-      githubError: githubRelease.error ? githubRelease.message : null,
+      remoteVersion: githubData.remoteVersion || null,
+      releases: githubData.releases || [],
+      githubError: githubData.error ? githubData.message : null,
     };
   }
 });

@@ -965,17 +965,6 @@ body, html {
   border-color: var(--bg-darkest);
 }
 
-.update-title-section {
-  margin-bottom: 20px;
-}
-
-.update-title-section h4 {
-  margin: 0;
-  font-size: 16px;
-  font-weight: 600;
-  color: var(--text-primary);
-}
-
 .update-notes-section h5 {
   margin: 0 0 12px 0;
   font-size: 14px;
@@ -992,11 +981,39 @@ body, html {
   padding: 14px;
   font-size: 13px;
   color: var(--text-secondary);
-  line-height: 1.6;
   max-height: 300px;
   overflow-y: auto;
-  white-space: pre-wrap;
-  word-wrap: break-word;
+  gap: 0px;
+  position: relative;
+  display: block;
+}
+
+.release-item {
+  margin-bottom: 16px;
+  padding-bottom: 12px;
+  border-bottom: 1px solid var(--border);
+  gap: 0px;
+  position: relative;
+  display: block;
+  height: auto;
+}
+
+.release-item:last-child {
+  margin-bottom: 0;
+  padding-bottom: 0;
+  border-bottom: none;
+}
+
+.release-title {
+  margin: 0 0 8px 0;
+  color: var(--text-primary);
+  font-size: 14px;
+  font-weight: 600;
+}
+
+.release-notes {
+  color: var(--text-secondary);
+  font-size: 13px;
 }
 
 .update-notes-content a {
