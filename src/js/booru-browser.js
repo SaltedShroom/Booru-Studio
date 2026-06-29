@@ -859,6 +859,43 @@ document.addEventListener('error', event => {
 }, true);
 
 // Download helper functions
+function getPostMediaType(post) {
+  // Determine media type (image, gif, or video) from post imageUrl
+  if (!post || !post.imageUrl) return 'image';
+  
+  const url = post.imageUrl.toLowerCase();
+  if (url.includes('.mp4') || url.includes('.webm') || url.includes('.ogv') || 
+      url.includes('.mov') || url.includes('.avi') || url.includes('.flv') || url.includes('.mkv')) {
+    return 'video';
+  } else if (url.includes('.gif')) {
+    return 'gif';
+  }
+  return 'image';
+}
+
+function getMediaTypeFilterState() {
+  // Get saved media type filter state from localStorage
+  try {
+    const saved = localStorage.getItem('downloadsMediaTypeFilter');
+    if (saved) {
+      return JSON.parse(saved);
+    }
+  } catch (e) {
+    console.error('Error loading media type filter state:', e);
+  }
+  // Default: all types enabled
+  return { image: true, gif: true, video: true };
+}
+
+function setMediaTypeFilterState(state) {
+  // Save media type filter state to localStorage
+  try {
+    localStorage.setItem('downloadsMediaTypeFilter', JSON.stringify(state));
+  } catch (e) {
+    console.error('Error saving media type filter state:', e);
+  }
+}
+
 function getFilenameFromUrl(url, postId) {
   try {
     const urlObj = new URL(url);
@@ -2376,14 +2413,14 @@ async function showDownloadsGallery(forceReload = false) {
     searchInput.value = window.downloadsSearchText || '';
   }
 
-  // 3. Filter header controls: keep only .control-section-primary, .control-section-search, .control-section-slider, .control-section-limit, .control-section-artist, .control-section-source, .control-section-downloads-date-order, #select-download-folder-btn
+  // 3. Filter header controls: keep only .control-section-primary, .control-section-search, .control-section-slider, .control-section-limit, .control-section-artist, .control-section-source, .control-section-downloads-date-order, .control-section-downloads-media-type, #select-download-folder-btn
   const controlBar = document.querySelector('header.control-bar.booru-control-bar');
   if (controlBar) {
     // Hide all children except allowed ones
-    controlBar.querySelectorAll('.booru-control-left > *:not(.control-section-primary):not(.control-section-search):not(.control-section-slider):not(.control-section-limit):not(.control-section-artist):not(.control-section-source):not(.control-section-downloads-date-order)').forEach(el => el.style.display = 'none');
+    controlBar.querySelectorAll('.booru-control-left > *:not(.control-section-primary):not(.control-section-search):not(.control-section-slider):not(.control-section-limit):not(.control-section-artist):not(.control-section-source):not(.control-section-downloads-date-order):not(.control-section-downloads-media-type)').forEach(el => el.style.display = 'none');
     controlBar.querySelectorAll('.booru-control-right > *:not(#select-download-folder-btn)').forEach(el => el.style.display = 'none');
     // Explicitly show the allowed left controls in case they were hidden previously
-    controlBar.querySelectorAll('.control-section-primary, .control-section-search, .control-section-slider, .control-section-limit, .control-section-artist, .control-section-source, .control-section-downloads-date-order').forEach(el => el.style.display = '');
+    controlBar.querySelectorAll('.control-section-primary, .control-section-search, .control-section-slider, .control-section-limit, .control-section-artist, .control-section-source, .control-section-downloads-date-order, .control-section-downloads-media-type').forEach(el => el.style.display = '');
     // Hide ai filter and sort section (keep reload button visible)
     const aiFilter = controlBar.querySelector('#ai-filter-toggle');
     if (aiFilter) aiFilter.style.display = 'none';
@@ -2407,6 +2444,40 @@ async function showDownloadsGallery(forceReload = false) {
         </select>
       `;
       leftControls.insertBefore(downloadsDateSortSection, searchSection?.nextSibling || null);
+    }
+    
+    // Add media type filter section
+    let downloadsMediaTypeSection = controlBar.querySelector('.control-section-downloads-media-type');
+    if (!downloadsMediaTypeSection && leftControls) {
+      downloadsMediaTypeSection = document.createElement('div');
+      downloadsMediaTypeSection.className = 'control-section control-section-downloads-media-type';
+      downloadsMediaTypeSection.innerHTML = `
+        <div class="section-label">MEDIA</div>
+        <button id="media-type-image" class="media-type-btn" data-media-type="image" title="Images"></button>
+        <button id="media-type-gif" class="media-type-btn" data-media-type="gif" title="Animated GIFs"></button>
+        <button id="media-type-video" class="media-type-btn" data-media-type="video" title="Videos"></button>
+      `;
+      leftControls.insertBefore(downloadsMediaTypeSection, searchSection?.nextSibling || null);
+      
+      // Load saved media type filter state
+      const savedState = getMediaTypeFilterState();
+      
+      // Add event listeners to media type buttons
+      downloadsMediaTypeSection.querySelectorAll('.media-type-btn').forEach(btn => {
+        const mediaType = btn.dataset.mediaType;
+        // Apply saved state
+        if (!savedState[mediaType]) {
+          btn.classList.add('disabled');
+        }
+        btn.addEventListener('click', () => {
+          btn.classList.toggle('disabled');
+          // Save state
+          const newState = getMediaTypeFilterState();
+          newState[mediaType] = !newState[mediaType];
+          setMediaTypeFilterState(newState);
+          document.getElementById('search-filter-input')?.dispatchEvent(new Event('input', { bubbles: true }));
+        });
+      });
     }
     const downloadsDateSortSelect = document.getElementById('downloads-date-sort-select');
     if (downloadsDateSortSelect) {
@@ -2654,6 +2725,13 @@ async function showDownloadsGallery(forceReload = false) {
         const selectedSource = document.getElementById('downloads-source-select')?.value;
         const sourcePosts = window.downloadsGalleryOriginalPosts || downloadedPosts;
         
+        // Get enabled media types from saved state
+        const mediaTypeState = getMediaTypeFilterState();
+        const enabledMediaTypes = new Set();
+        if (mediaTypeState.image) enabledMediaTypes.add('image');
+        if (mediaTypeState.gif) enabledMediaTypes.add('gif');
+        if (mediaTypeState.video) enabledMediaTypes.add('video');
+        
         // Check if search contains OR operator ||
         const hasOrOperator = val.includes('||');
         let filterGroups = [];
@@ -2669,6 +2747,14 @@ async function showDownloadsGallery(forceReload = false) {
         const filtered = sourcePosts.filter(post => {
           if (selectedSource && post.source !== selectedSource) {
             return false;
+          }
+          
+          // Check media type filter
+          if (enabledMediaTypes.size > 0) {
+            const postMediaType = getPostMediaType(post);
+            if (!enabledMediaTypes.has(postMediaType)) {
+              return false;
+            }
           }
           
           // If no filter groups, include all posts
@@ -2855,6 +2941,10 @@ function initBooruBrowser() {
       if (shuffleBtn) shuffleBtn.remove();
       const sortArtistBtn = document.getElementById('downloads-sort-artist-btn');
       if (sortArtistBtn) sortArtistBtn.remove();
+      const downloadsDateSortSection = document.querySelector('.control-section-downloads-date-order');
+      if (downloadsDateSortSection) downloadsDateSortSection.remove();
+      const downloadsMediaTypeSection = document.querySelector('.control-section-downloads-media-type');
+      if (downloadsMediaTypeSection) downloadsMediaTypeSection.remove();
       
       const booruContent = document.getElementById('booru-content');
       if (booruContent) {
@@ -3824,6 +3914,8 @@ function initBooruBrowser() {
       if (sortArtistBtn) sortArtistBtn.remove();
       const downloadsDateSortSection = document.querySelector('.control-section-downloads-date-order');
       if (downloadsDateSortSection) downloadsDateSortSection.remove();
+      const downloadsMediaTypeSection = document.querySelector('.control-section-downloads-media-type');
+      if (downloadsMediaTypeSection) downloadsMediaTypeSection.remove();
       window.downloadsGalleryOriginalPosts = null;
       
       window.isViewingDownloadsGallery = false;
@@ -4870,6 +4962,12 @@ async function loadBooruImages(append = false) {
   
   isLoadingBooru = true;
   window.isViewingDownloadsGallery = false;
+  
+  // Remove downloads-specific controls
+  const downloadsDateSortSection = document.querySelector('.control-section-downloads-date-order');
+  if (downloadsDateSortSection) downloadsDateSortSection.remove();
+  const downloadsMediaTypeSection = document.querySelector('.control-section-downloads-media-type');
+  if (downloadsMediaTypeSection) downloadsMediaTypeSection.remove();
   
   // Reset downloads pagination state
   window.allDownloadedPosts = null;
@@ -7840,13 +7938,16 @@ function showPreviewForElement(mediaElement, forceVideoLoad = false) {
     // Check if source is scraper type
     const sourceConfig = booruSourcesManager?.getSource(postSource);
     if (sourceConfig?.type === 'scraper') {
+      // Don't fetch details if we're in the downloads gallery
+      const isDownloadsGallery = booruGallery?.classList.contains('downloads-gallery');
+      
       // For scraper posts, check if we need to fetch details (check if full details have been loaded)
       const needsDetailFetch = mediaElement._scraperDetailsLoaded !== true;
       const detailFetchInProgress = mediaElement._scraperDetailFetchInProgress === true;
       const timerAlreadyRunning = mediaElement._scraperDetailDelayTimer !== null && mediaElement._scraperDetailDelayTimer !== undefined;
       
       
-      if (needsDetailFetch && !detailFetchInProgress && !timerAlreadyRunning) {
+      if (needsDetailFetch && !detailFetchInProgress && !timerAlreadyRunning && !isDownloadsGallery) {
         // Set up delayed detail fetch (only if timer isn't already running)
         // Use the same delay as high-quality loading (from hqHoverDelay setting, default 150ms for preview delay, or 400ms for quality delay)
         const scraperDetailDelay = window.scraperDetailDelay ?? 400; // Default to 400ms like HQ quality load

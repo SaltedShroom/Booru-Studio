@@ -746,6 +746,8 @@ function switchToTab(tabId) {
     }
     const downloadsDateSortSection = document.querySelector('.control-section-downloads-date-order');
     if (downloadsDateSortSection) downloadsDateSortSection.remove();
+    const downloadsMediaTypeSection = document.querySelector('.control-section-downloads-media-type');
+    if (downloadsMediaTypeSection) downloadsMediaTypeSection.remove();
     // Remove downloads button active
     const showDownloadsBtn = document.getElementById('show-downloads-gallery-btn');
     if (showDownloadsBtn) showDownloadsBtn.classList.remove('active');
