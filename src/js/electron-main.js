@@ -20,6 +20,7 @@ let mainWindow = null;
 let launcherWindow = null;
 let serverProcess = null;
 let sdProcess = null;
+let updateCheckInfo = null; // Track the last successful update check
 
 function sendMainWindowEvent(channel, payload) {
   if (mainWindow?.webContents) {
@@ -369,6 +370,10 @@ ipcMain.handle('check-for-updates', async () => {
       updateInfoVersion,
       updateAvailable: updateInfoVersion !== null,
     });
+    
+    // Store the update info for use in the download step
+    updateCheckInfo = updateCheck;
+    
     return {
       error: false,
       updateInfo: updateCheck?.updateInfo || null,
@@ -403,13 +408,26 @@ ipcMain.handle('check-for-updates', async () => {
 
 ipcMain.handle('download-update', async () => {
   try {
+    // Ensure checkForUpdates was called first
+    if (!updateCheckInfo) {
+      const errorMsg = 'Update check must be performed before download. Please check for updates first.';
+      console.error('Download update failed:', errorMsg);
+      sendMainWindowEvent('update-error', { message: errorMsg });
+      return {
+        error: true,
+        message: errorMsg,
+      };
+    }
+
     await autoUpdater.downloadUpdate();
     return { error: false };
   } catch (err) {
+    const message = err?.message || String(err);
     console.error('Download update failed:', err);
+    sendMainWindowEvent('update-error', { message: `Download failed: ${message}` });
     return {
       error: true,
-      message: err?.message || String(err),
+      message,
     };
   }
 });
