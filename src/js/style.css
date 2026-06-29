@@ -3064,7 +3064,7 @@ body, html {
   min-height: 300px;
   display: flex;
   flex-direction: column;
-  padding: 2px;
+  padding: 0px;
   gap: 6px;
 }
 
@@ -3711,7 +3711,7 @@ body, html {
   position: absolute;
   align-self: flex-end;
   justify-self: flex-end;
-  right: 6px;
+  right: 7px;
   bottom: 30px;
   padding: 0;
   font-size: 10px;
@@ -3726,7 +3726,7 @@ body, html {
 .booru-gallery-counter b {
   font-weight: normal;
   text-wrap: nowrap;
-  font-size: 7px;
+  font-size: 6px;
   color: var(--text-secondary);
 }
 
