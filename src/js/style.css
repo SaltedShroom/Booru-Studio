@@ -4022,7 +4022,7 @@ body, html {
 .control-item {
   display: flex;
   align-items: center;
-  gap: 16px;
+  gap: 14px;
   padding: 12px;
   background: var(--surface);
   border: 1px solid var(--border);
@@ -4034,19 +4034,19 @@ body, html {
   display: flex;
   align-items: center;
   justify-content: center;
-  min-width: 52px;
-  width: 52px;
-  height: 52px;
+  min-width: 38px;
+  width: 38px;
+  height: 38px;
   background: rgba(var(--accent-primary-rgb), 0.15);
   border: 2px solid var(--accent);
   border-radius: 8px;
   position: relative;
-  font-size: 20px;
+  font-size: 16px;
   color: var(--accent);
 }
 
 .control-icon i {
-  font-size: 24px;
+  font-size: 16px;
 }
 
 .control-icon .key-badge {
@@ -4055,9 +4055,12 @@ body, html {
   bottom: -8px;
   background: var(--accent);
   color: #fff;
-  padding: 2px 6px;
+  padding: 0px 4px;
   border-radius: 4px;
-  font-size: 9px;
+  font-size: 7px;
+  width: min-content;
+  text-wrap: nowrap;
+  height: 18px;
   font-weight: 700;
   border: 2px solid var(--surface);
 }
@@ -4073,14 +4076,9 @@ body, html {
   font-size: 11px;
   font-weight: 700;
   font-family: monospace;
-  min-width: 36px;
   height: 24px;
   box-shadow: inset 0 -2px 0 rgba(0, 0, 0, 0.2);
   border: 1px solid rgba(0, 0, 0, 0.2);
-}
-
-.key-badge.shift {
-  min-width: 44px;
 }
 
 .control-info {
@@ -4092,19 +4090,19 @@ body, html {
 
 .control-info strong {
   color: var(--text-primary);
-  font-size: 14px;
+  font-size: 13px;
   font-weight: 600;
 }
 
 .control-info b {
   color: var(--text-secondary);
-  font-size: 14px;
+  font-size: 13px;
   font-weight: normal;
 }
 
 .control-info p {
   color: var(--text-secondary);
-  font-size: 13px;
+  font-size: 12px;
   margin: 0;
   line-height: 1.4;
 }
