@@ -1828,11 +1828,27 @@ async function loadSession() {
     progress.className = 'dt-progress';
     progressTrack.appendChild(progress);
 
+    const progressData = document.createElement('div');
+    progressData.className = 'dt-progress-data';
+
+    const percentageDisplay = document.createElement('div');
+    percentageDisplay.className = 'dt-percentage';
+    percentageDisplay.textContent = '0%';
+    percentageDisplay.style.display = 'none';
+
+    const sizeDisplay = document.createElement('div');
+    sizeDisplay.className = 'dt-size';
+    sizeDisplay.textContent = '';
+
+    progressData.appendChild(percentageDisplay);
+    progressData.appendChild(sizeDisplay);
+
     const img = document.createElement('img');
     img.className = 'dt-preview';
 
     toast.appendChild(top);
     toast.appendChild(progressTrack);
+    toast.appendChild(progressData);
     toast.appendChild(img);
     container.appendChild(toast);
 
@@ -1842,9 +1858,19 @@ async function loadSession() {
     return {
       update(pct, st) {
         progress.style.width = Math.max(0, Math.min(100, pct)) + '%';
+        percentageDisplay.textContent = Math.round(Math.max(0, Math.min(100, pct))) + '%';
         if (st) status.textContent = st;
       },
+      setSize(bytes) {
+        if (bytes > 0) {
+          const mb = (bytes / (1024 * 1024)).toFixed(2);
+          sizeDisplay.textContent = `${mb} MB`;
+          percentageDisplay.style.display = '';
+        }
+      },
       done(success, msg, imageUrl) {
+        // hide progress data (percentage and size) when download is done
+        progressData.style.display = 'none';
         // update final state
         this.update(100, msg || (success ? 'Completed' : 'Failed'));
         // show downloaded image inside the toast on success

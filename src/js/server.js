@@ -377,6 +377,34 @@ function rotateTorCircuit() {
 
 let downloadCount = 0;
 
+// Download progress tracking
+const downloadProgress = new Map();
+
+function setDownloadProgress(taskId, bytesReceived, totalBytes, status) {
+  downloadProgress.set(taskId, {
+    bytesReceived,
+    totalBytes,
+    percentage: totalBytes > 0 ? Math.round((bytesReceived / totalBytes) * 100) : 0,
+    status,
+    timestamp: Date.now()
+  });
+}
+
+function getDownloadProgress(taskId) {
+  const progress = downloadProgress.get(taskId);
+  if (!progress) return null;
+  // Clean up old entries (older than 5 minutes)
+  if (Date.now() - progress.timestamp > 300000) {
+    downloadProgress.delete(taskId);
+    return null;
+  }
+  return progress;
+}
+
+function clearDownloadProgress(taskId) {
+  downloadProgress.delete(taskId);
+}
+
 // Periodic Tor circuit rotation (interval driven by torRotateMins setting)
 let torRotateTimer = null;
 
@@ -3175,6 +3203,36 @@ const server = isWorkerMode ? null : http.createServer((req, res) => {
       res.writeHead(500, { 'Content-Type': 'application/json' });
       res.end(JSON.stringify({ success: false, error: error.message }));
     }
+  } else if (req.method === 'GET' && req.url.startsWith('/download-progress')) {
+    // Query download progress by taskId
+    res.setHeader('Access-Control-Allow-Origin', '*');
+    try {
+      const taskId = req.url.replace('/download-progress', '').slice(1);
+      if (!taskId) {
+        res.writeHead(400, { 'Content-Type': 'application/json' });
+        res.end(JSON.stringify({ success: false, error: 'No taskId provided' }));
+        return;
+      }
+      
+      const progress = getDownloadProgress(taskId);
+      if (!progress) {
+        res.writeHead(404, { 'Content-Type': 'application/json' });
+        res.end(JSON.stringify({ success: false, error: 'Task not found' }));
+        return;
+      }
+      
+      res.writeHead(200, { 'Content-Type': 'application/json' });
+      res.end(JSON.stringify({ 
+        success: true,
+        percentage: progress.percentage,
+        bytesReceived: progress.bytesReceived,
+        totalBytes: progress.totalBytes,
+        status: progress.status
+      }));
+    } catch (error) {
+      res.writeHead(500, { 'Content-Type': 'application/json' });
+      res.end(JSON.stringify({ success: false, error: error.message }));
+    }
   } else if (req.method === 'POST' && req.url === '/download-booru-image') {
     res.setHeader('Access-Control-Allow-Origin', '*');
     res.setHeader('Access-Control-Allow-Methods', 'POST, OPTIONS');
@@ -3192,7 +3250,7 @@ const server = isWorkerMode ? null : http.createServer((req, res) => {
       try {
         const payload = JSON.parse(body);
         
-        const { imageUrl, filename, userAgent, cookies } = payload;
+        const { imageUrl, filename, userAgent, cookies, taskId } = payload;
         const downloadHeaders = {};
         if (userAgent) downloadHeaders.userAgent = userAgent;
         if (cookies) downloadHeaders.cookies = cookies;
@@ -3212,6 +3270,7 @@ const server = isWorkerMode ? null : http.createServer((req, res) => {
           if (redirectCount > 5) {
             res.writeHead(500, { 'Content-Type': 'application/json' });
             res.end(JSON.stringify({ success: false, error: 'Too many redirects' }));
+            if (taskId) clearDownloadProgress(taskId);
             return;
           }
           
@@ -3254,8 +3313,21 @@ const server = isWorkerMode ? null : http.createServer((req, res) => {
               response.resume();
               res.writeHead(500, { 'Content-Type': 'application/json' });
               res.end(JSON.stringify({ success: false, error: `HTTP ${response.statusCode}` }));
+              if (taskId) clearDownloadProgress(taskId);
               return;
             }
+            
+            // Get total file size from Content-Length header
+            const totalBytes = parseInt(response.headers['content-length']) || 0;
+            let bytesReceived = 0;
+            
+            // Track progress as data arrives
+            response.on('data', (chunk) => {
+              bytesReceived += chunk.length;
+              if (taskId) {
+                setDownloadProgress(taskId, bytesReceived, totalBytes, 'Downloading');
+              }
+            });
             
             // Stream to file
             const fileStream = fs.createWriteStream(filepath);
@@ -3265,14 +3337,18 @@ const server = isWorkerMode ? null : http.createServer((req, res) => {
               if (fs.existsSync(filepath)) fs.unlinkSync(filepath);
               res.writeHead(500, { 'Content-Type': 'application/json' });
               res.end(JSON.stringify({ success: false, error: err.message }));
+              if (taskId) clearDownloadProgress(taskId);
             });
             
             response.pipe(fileStream);
             
             fileStream.on('finish', () => {
               trackDownload();
+              if (taskId) setDownloadProgress(taskId, totalBytes, totalBytes, 'Completed');
               res.writeHead(200, { 'Content-Type': 'application/json' });
-              res.end(JSON.stringify({ success: true, filepath: filename }));
+              res.end(JSON.stringify({ success: true, filepath: filename, taskId }));
+              // Clean up progress after a short delay
+              if (taskId) setTimeout(() => clearDownloadProgress(taskId), 5000);
             });
           });
           
@@ -3280,6 +3356,7 @@ const server = isWorkerMode ? null : http.createServer((req, res) => {
             if (fs.existsSync(filepath)) fs.unlinkSync(filepath);
             res.writeHead(500, { 'Content-Type': 'application/json' });
             res.end(JSON.stringify({ success: false, error: err.message }));
+            if (taskId) clearDownloadProgress(taskId);
           });
           
           downloadReq.on('timeout', () => {
@@ -3287,10 +3364,16 @@ const server = isWorkerMode ? null : http.createServer((req, res) => {
             if (fs.existsSync(filepath)) fs.unlinkSync(filepath);
             res.writeHead(500, { 'Content-Type': 'application/json' });
             res.end(JSON.stringify({ success: false, error: 'Request timeout' }));
+            if (taskId) clearDownloadProgress(taskId);
           });
           
           downloadReq.end();
         };
+        
+        // Initialize progress tracking if taskId provided
+        if (taskId) {
+          setDownloadProgress(taskId, 0, 0, 'Starting');
+        }
         
         await activeRequestJitter();
         downloadWithRedirects(imageUrl);

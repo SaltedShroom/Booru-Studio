@@ -470,12 +470,73 @@ async function runDownloadWithRetries(task, maxAttempts = 3, onProgress) {
           if (cfg.cookies) extra.cookies = cfg.cookies;
         }
       }
-      const resp = await fetch('http://localhost:3001/download-booru-image', {
+      
+      // Generate unique taskId for progress tracking
+      const taskId = `dl-${Date.now()}-${Math.random().toString(36).substr(2, 9)}`;
+      
+      // Start the download and get a promise
+      const downloadPromise = fetch('http://localhost:3001/download-booru-image', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ imageUrl: task.imageUrl, filename: task.filename, ...extra })
+        body: JSON.stringify({ imageUrl: task.imageUrl, filename: task.filename, taskId, ...extra })
       });
+      
+      // Start polling for progress in the background
+      let pollInterval = null;
+      let isComplete = false;
+      let lastReportedProgress = 0;
+      let lastStatus = null;
+      
+      const startProgressPolling = async () => {
+        return new Promise((resolve) => {
+          pollInterval = setInterval(async () => {
+            if (isComplete) {
+              clearInterval(pollInterval);
+              resolve();
+              return;
+            }
+            
+            try {
+              const progressResp = await fetch(`http://localhost:3001/download-progress/${taskId}`);
+              if (progressResp.ok) {
+                const progressData = await progressResp.json();
+                if (progressData.success) {
+                  // When transitioning from Starting to Downloading, reset progress to 0
+                  if (lastStatus !== 'Downloading' && progressData.status === 'Downloading') {
+                    lastReportedProgress = 0;
+                    if (onProgress) onProgress(0, 'Downloading');
+                    // Set file size on toast if available
+                    if (task.toast && task.toast.setSize && progressData.totalBytes) {
+                      task.toast.setSize(progressData.totalBytes);
+                    }
+                    lastStatus = 'Downloading';
+                  } else if (progressData.percentage > lastReportedProgress) {
+                    lastReportedProgress = progressData.percentage;
+                    // Map percentage to 1-99 range (leave 100 for completion)
+                    const mappedProgress = Math.min(99, Math.max(1, progressData.percentage));
+                    if (onProgress) onProgress(mappedProgress, progressData.status || 'Downloading');
+                    lastStatus = progressData.status;
+                  }
+                }
+              }
+            } catch (e) {
+              // Polling failed - continue anyway
+            }
+          }, 100); // Poll every 100ms for smooth updates
+        });
+      };
+      
+      // Start polling
+      const pollPromise = startProgressPolling();
+      
+      // Wait for download
+      const resp = await downloadPromise;
       const data = await resp.json();
+      
+      // Mark complete to stop polling
+      isComplete = true;
+      await pollPromise;
+      
       if (data && data.success) {
         if (onProgress) onProgress(100, 'Saved');
         return data;
