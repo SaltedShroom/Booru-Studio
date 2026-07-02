@@ -68,6 +68,7 @@
   },
   "dependencies": {
     "@fontsource/inter": "^5.2.8",
+    "@fontsource/press-start-2p": "^5.2.7",
     "@fortawesome/fontawesome-free": "^7.2.0",
     "better-sqlite3": "^12.9.0",
     "chart.js": "^4.5.1",

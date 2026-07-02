@@ -3216,8 +3216,15 @@ const server = isWorkerMode ? null : http.createServer((req, res) => {
       
       const progress = getDownloadProgress(taskId);
       if (!progress) {
-        res.writeHead(404, { 'Content-Type': 'application/json' });
-        res.end(JSON.stringify({ success: false, error: 'Task not found' }));
+        // Progress was cleared (likely already completed) - return completed status
+        res.writeHead(200, { 'Content-Type': 'application/json' });
+        res.end(JSON.stringify({ 
+          success: true,
+          percentage: 100,
+          bytesReceived: 0,
+          totalBytes: 0,
+          status: 'Completed'
+        }));
         return;
       }
       
@@ -3469,6 +3476,39 @@ const server = isWorkerMode ? null : http.createServer((req, res) => {
       }
     });
 
+  } else if (req.method === 'GET' && req.url === '/api/download-folder-size') {
+    // Get total size of download folder (returns bytes only)
+    res.setHeader('Access-Control-Allow-Origin', '*');
+    try {
+      if (!downloadFolder || !fs.existsSync(downloadFolder)) {
+        res.writeHead(200, { 'Content-Type': 'application/json' });
+        res.end(JSON.stringify({ bytes: 0 }));
+        return;
+      }
+
+      // Recursively calculate folder size
+      const calculateFolderSize = (folderPath) => {
+        let totalBytes = 0;
+        const files = fs.readdirSync(folderPath);
+        files.forEach(file => {
+          const filePath = path.join(folderPath, file);
+          const stat = fs.statSync(filePath);
+          if (stat.isDirectory()) {
+            totalBytes += calculateFolderSize(filePath);
+          } else {
+            totalBytes += stat.size;
+          }
+        });
+        return totalBytes;
+      };
+
+      const bytes = calculateFolderSize(downloadFolder);
+      res.writeHead(200, { 'Content-Type': 'application/json' });
+      res.end(JSON.stringify({ bytes }));
+    } catch (error) {
+      res.writeHead(500, { 'Content-Type': 'application/json' });
+      res.end(JSON.stringify({ bytes: 0, error: error.message }));
+    }
   } else if (req.method === 'GET' && req.url.startsWith('/serve-local-file/')) {
     // Serve files from the download folder
     res.setHeader('Access-Control-Allow-Origin', '*');

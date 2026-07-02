@@ -34,6 +34,7 @@ const themeSelect = document.getElementById('theme-select');
 const root = document.documentElement;
 const themeToggleBtn = document.getElementById('theme-toggle-btn');
 const supportToastEnabled = document.getElementById('support-toast-enabled');
+const coinAnimationEnabled = document.getElementById('coin-animation-enabled');
 const LOCAL_SERVER_ERROR_COOLDOWN_MS = 15000;
 let tallImageScrollSpeedMultiplier = 1.1; // seconds per 100px of image height
 let localServerUnavailableUntil = 0;
@@ -86,6 +87,18 @@ if (supportToastEnabled) {
   supportToastEnabled.addEventListener('change', () => {
     localStorage.setItem('supportToastEnabled', supportToastEnabled.checked ? 'true' : 'false');
     if (!supportToastEnabled.checked) supportToastSuccessCount = 0;
+    debouncedSettingsSave();
+  });
+}
+
+if (coinAnimationEnabled) {
+  coinAnimationEnabled.checked = localStorage.getItem('coinAnimationEnabled') !== 'false';
+  coinAnimationEnabled.addEventListener('change', () => {
+    localStorage.setItem('coinAnimationEnabled', coinAnimationEnabled.checked ? 'true' : 'false');
+    // Update the animation setting in CoinCollector
+    if (window.CoinCollector) {
+      window.CoinCollector.coinAnimationsDisabled = !coinAnimationEnabled.checked;
+    }
     debouncedSettingsSave();
   });
 }
@@ -1255,6 +1268,8 @@ async function updateAppLoadingDownloadCount() {
   for (let i = existingImages.length - 1; i >= targetLength; i--) {
     existingImages[i].remove();
   }
+
+  document.getElementById('app-loading-download-container')?.classList.add('loaded');
 }
 
 window.updateAppLoadingDownloadCount = updateAppLoadingDownloadCount;
@@ -1265,9 +1280,111 @@ function hideLoadingOverlay() {
   overlay.classList.add('fade-out');
 }
 
+// Global function to update download folder size odometer
+window.updateDownloadFolderSizeOdometer = async function() {
+  try {
+    const response = await fetch('http://localhost:3001/api/download-folder-size');
+    const data = await response.json();
+    
+    if (typeof data.bytes === 'number') {
+      const mb = Math.round(data.bytes / (1024 * 1024));
+      
+      // Pad to 9 digits (XXX.XXX.XXX)
+      const digitString = String(mb).padStart(9, '0');
+      
+      // Extract each digit
+      const digits = digitString.split('');
+      
+      // Show/hide TB section (first 3 digits) based on whether >= 1TB (1,000,000 MB)
+      const hasTB = mb >= 1000000;
+      document.getElementById('download-digit-1').style.display = hasTB ? 'block' : 'none';
+      document.getElementById('download-digit-2').style.display = hasTB ? 'block' : 'none';
+      document.getElementById('download-digit-3').style.display = hasTB ? 'block' : 'none';
+      document.getElementById('download-digit-separator-1').style.display = hasTB ? 'inline' : 'none';
+      
+      // Update each odometer digit (1-9)
+      for (let i = 1; i <= 9; i++) {
+        const digitEl = document.getElementById(`download-digit-${i}`);
+        if (digitEl) {
+          const digit = digits[i - 1];
+          if (digitEl.odometer) {
+            digitEl.odometer.update(Number(digit));
+          } else {
+            digitEl.odometer = new Odometer({
+              el: digitEl,
+              value: Number(digit)
+            });
+          }
+        }
+      }
+    }
+  } catch (error) {
+    console.warn('Failed to fetch download folder size:', error);
+  }
+};
+
+// Increment or decrement odometer by file size (positive for download, negative for deletion)
+window.incrementDownloadFolderSizeOdometer = function(downloadedBytes) {
+  try {
+    if (downloadedBytes === 0 || downloadedBytes === undefined) return;
+    
+    // Convert downloaded bytes to MB
+    const changeMB = Math.round(downloadedBytes / (1024 * 1024));
+    
+    // Get current total from odometer digits
+    let currentMB = 0;
+    for (let i = 1; i <= 9; i++) {
+      const digitEl = document.getElementById(`download-digit-${i}`);
+      if (digitEl) {
+        // Read from odometer value, or textContent, or default to 0
+        const digitValue = (digitEl.odometer && digitEl.odometer.value !== undefined) ? digitEl.odometer.value : (parseInt(digitEl.textContent, 10) || 0);
+        currentMB = currentMB * 10 + digitValue;
+      }
+    }
+    
+    // Add or subtract MB to current (changeMB can be negative for deletions)
+    let totalMB = currentMB + changeMB;
+    
+    // Ensure total doesn't go below 0
+    if (totalMB < 0) totalMB = 0;
+    
+    // Pad to 9 digits (XXX.XXX.XXX)
+    const digitString = String(totalMB).padStart(9, '0');
+    
+    // Extract each digit
+    const digits = digitString.split('');
+    
+    // Show/hide TB section based on whether >= 1TB (1,000,000 MB)
+    const hasTB = totalMB >= 1000000;
+    document.getElementById('download-digit-1').style.display = hasTB ? 'block' : 'none';
+    document.getElementById('download-digit-2').style.display = hasTB ? 'block' : 'none';
+    document.getElementById('download-digit-3').style.display = hasTB ? 'block' : 'none';
+    document.getElementById('download-digit-separator-1').style.display = hasTB ? 'inline' : 'none';
+    
+    // Update each odometer digit (1-9)
+    for (let i = 1; i <= 9; i++) {
+      const digitEl = document.getElementById(`download-digit-${i}`);
+      if (digitEl) {
+        const digit = Number(digits[i - 1]);
+        if (digitEl.odometer) {
+          digitEl.odometer.update(digit);
+        } else {
+          digitEl.odometer = new Odometer({
+            el: digitEl,
+            value: digit
+          });
+        }
+      }
+    }
+  } catch (error) {
+    console.warn('Failed to update download folder size:', error);
+  }
+};
+
 // Initial load - make async to prevent tab switching flash
 (async () => {
   await updateAppLoadingDownloadCount();
+  await updateDownloadFolderSizeOdometer();
   await setLoadingStatus('Starting up…', 'Initializing application…');
   await initializeSettings();
   await initVersionCheck();

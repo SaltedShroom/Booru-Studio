@@ -14,6 +14,7 @@
 <link rel="stylesheet" href="/src/js/style.css">
 <link rel="stylesheet" href="/node_modules/justifiedGallery/dist/css/justifiedGallery.min.css">
 <link rel="stylesheet" href="/node_modules/odometer/themes/odometer-theme-minimal.css">
+<script src="/node_modules/odometer/odometer.js"></script>
 <link rel="stylesheet" href="/node_modules/select2/dist/css/select2.min.css">
 <link rel="stylesheet" href="/node_modules/@fontsource/inter/index.css">
 <link rel="stylesheet" href="/node_modules/@fortawesome/fontawesome-free/css/all.min.css">
@@ -57,8 +58,23 @@
 
   </div>
 </div>
-<div class="app-loading-download-container">
+<div class="app-loading-download-container" id="app-loading-download-container">
   <div id="app-loading-download-count" class="app-loading-download-count"></div>
+  <div class="app-download-size" id="app-download-size">
+    <span class="app-download-size-icon"><i class="fa-solid fa-database"></i> </span>
+    <div id="download-digit-1" class="download-digit odometer" style="display: none;">0</div>
+    <div id="download-digit-2" class="download-digit odometer" style="display: none;">0</div>
+    <div id="download-digit-3" class="download-digit odometer" style="display: none;">0</div>
+    <span id="download-digit-separator-1" class="download-digit-separator" style="display: none;">.</span>
+    <div id="download-digit-4" class="download-digit odometer">0</div>
+    <div id="download-digit-5" class="download-digit odometer">0</div>
+    <div id="download-digit-6" class="download-digit odometer">0</div>
+    <span class="download-digit-separator">.</span>
+    <div id="download-digit-7" class="download-digit odometer">0</div>
+    <div id="download-digit-8" class="download-digit odometer">0</div>
+    <div id="download-digit-9" class="download-digit odometer">0</div>
+    <span id="app-download-size-mb"> MB</span>
+  </div>
 </div>
 <div class="app-container">
   <div id="app">
@@ -531,6 +547,11 @@
               <label class="checkbox-label" for="support-toast-enabled">Support reminders</label>
               <input type="checkbox" id="support-toast-enabled" class="settings-checkbox" checked>
               <small>Give a support reminder once in a while</small>
+            </div>
+            <div class="settings-group">
+              <label class="checkbox-label" for="coin-animation-enabled">Download coin animation</label>
+              <input type="checkbox" id="coin-animation-enabled" class="settings-checkbox" checked>
+              <small>Show animated binary digits when downloads complete</small>
             </div>
             <div class="settings-group">
               <label for="blacklist-tags-input">Global blacklisted tags</label>
@@ -1280,6 +1301,7 @@
 <script src="/node_modules/codemirror/mode/css/css.js"></script>
 <script src="/src/js/cleanup-manager.js" defer></script>
 <script src="/src/js/db-store.js" defer></script>
+<script src="/src/js/coin-collector.js" defer></script>
 <script src="/src/js/virtual-gallery.js" defer></script>
 <script src="/src/js/booru-sources-manager.js" defer></script>
 <script src="/src/js/index.js" defer></script>

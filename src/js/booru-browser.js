@@ -301,6 +301,7 @@ let activeDownloadsSidebarTab = 'analytics'; // or 'mosaic'
 // Gallery quality state
 let showHighQualityGallery = false;
 let qualityLoadingTimeouts = []; // Track ongoing quality loading operations
+let pendingHQLoadsByPostId = {}; // Map post IDs to their pending HQ loading timeout IDs
 let galleryQualityLoadBatch = 0;
 
 // HQ image loading counter for the toast counter element
@@ -308,6 +309,18 @@ let _hqLoadingCount = 0;
 let _hqTotalBytes = 0;
 
 let LoadingCounterTimeout = null;
+
+// Abort pending HQ loading for a specific post
+function abortPendingHQLoad(postId) {
+  if (pendingHQLoadsByPostId[postId]) {
+    clearTimeout(pendingHQLoadsByPostId[postId]);
+    const index = qualityLoadingTimeouts.indexOf(pendingHQLoadsByPostId[postId]);
+    if (index > -1) {
+      qualityLoadingTimeouts.splice(index, 1);
+    }
+    delete pendingHQLoadsByPostId[postId];
+  }
+}
 
 if (localStorage.getItem('downloadsSidebarSelectedTab')) {
   activeDownloadsSidebarTab = localStorage.getItem('downloadsSidebarSelectedTab');
@@ -501,6 +514,10 @@ async function runDownloadWithRetries(task, maxAttempts = 3, onProgress) {
               if (progressResp.ok) {
                 const progressData = await progressResp.json();
                 if (progressData.success) {
+                  // Always store totalBytes if available (for coin animation)
+                  if (progressData.totalBytes) {
+                    task.totalBytes = progressData.totalBytes;
+                  }
                   // When transitioning from Starting to Downloading, reset progress to 0
                   if (lastStatus !== 'Downloading' && progressData.status === 'Downloading') {
                     lastReportedProgress = 0;
@@ -3473,6 +3490,9 @@ function initBooruBrowser() {
                 progressContainer.style.display = 'block';
                 progressBar.style.width = '4%';
 
+                // Abort any pending HQ loading for this post
+                abortPendingHQLoad(post.id);
+
                 try {
                   await downloadQueue.enqueue(task);
 
@@ -3492,6 +3512,10 @@ function initBooruBrowser() {
                   progressBar.style.width = '100%';
                   setTimeout(() => {
                     postDiv.dataset.downloaded = 'true';
+                    // Store file size for coin animation
+                    if (task.totalBytes) {
+                      postDiv.dataset.fileSize = task.totalBytes;
+                    }
                     downloadBtn.innerHTML = '<i class="fas fa-check"></i>';
                     downloadBtn.classList.add('downloaded');
                     downloadBtn.title = 'Delete';
@@ -4542,12 +4566,9 @@ function updateGalleryImageQuality() {
   // Cancel any ongoing quality loading operations
   qualityLoadingTimeouts.forEach(timeoutId => clearTimeout(timeoutId));
   qualityLoadingTimeouts = [];
+  pendingHQLoadsByPostId = {};
   
   const items = Array.from(document.querySelectorAll('.booru-image-item img'));
-  
-  // cancel pending HQ loading timers
-  qualityLoadingTimeouts.forEach(id => clearTimeout(id));
-  qualityLoadingTimeouts = [];
   
   // If turning off quality mode, immediately restore all images to low quality
   if (!showHighQualityGallery) {
@@ -4656,6 +4677,12 @@ function updateGalleryImageQuality() {
           img.dataset.highQualityLoaded = true;
           img.dataset.highQualityUrl = img.src;
 
+          // Clean up HQ loading tracking for this post
+          const postId = img.closest('.booru-image-item')?.dataset.postId;
+          if (postId && pendingHQLoadsByPostId[postId]) {
+            delete pendingHQLoadsByPostId[postId];
+          }
+
           // --- Update tab cache with new quality ---
           try {
             const postId = img.closest('.booru-image-item')?.dataset.postId;
@@ -4683,6 +4710,12 @@ function updateGalleryImageQuality() {
       }
     }, index * 250); // 250ms delay between each image update
     qualityLoadingTimeouts.push(timeoutId);
+    
+    // Also track by post ID so we can abort it if the post is downloaded
+    const postId = img.closest('.booru-image-item')?.dataset.postId;
+    if (postId) {
+      pendingHQLoadsByPostId[postId] = timeoutId;
+    }
   });
 }
 
@@ -7284,6 +7317,10 @@ function createBooruImageElement(post, maxHeight = null, imageWidth = null) {
         progressBar.style.width = '100%';
         setTimeout(() => {
           container.dataset.downloaded = 'true';
+          // Store file size for coin animation
+          if (task.totalBytes) {
+            container.dataset.fileSize = task.totalBytes;
+          }
           downloadBtn.innerHTML = '<i class="fas fa-check"></i>';
           downloadBtn.classList.add('downloaded');
           downloadBtn.title = 'Delete';
@@ -7422,10 +7459,13 @@ document.addEventListener('mousemove', (e) => {
   // Don't trigger preview if user has mouse over downloads artist select (prevents interference with select2 dropdown)
   const selectRect = document.querySelector('.select2-results')?.getBoundingClientRect();
   const suppportRect = document.querySelector('.toast-support')?.getBoundingClientRect();
+  const downloadStatsContainer = document.querySelector('.app-loading-download-container')?.getBoundingClientRect();
   if (selectRect && e.clientX >= selectRect.left && e.clientX <= selectRect.right &&
       e.clientY >= selectRect.top && e.clientY <= selectRect.bottom ||
       suppportRect && e.clientX >= suppportRect.left && e.clientX <= suppportRect.right &&
-      e.clientY >= suppportRect.top && e.clientY <= suppportRect.bottom) {
+      e.clientY >= suppportRect.top && e.clientY <= suppportRect.bottom ||
+      downloadStatsContainer && e.clientX >= downloadStatsContainer.left && e.clientX <= downloadStatsContainer.right &&
+      e.clientY >= downloadStatsContainer.top && e.clientY <= downloadStatsContainer.bottom) {
     const previewMedia = document.querySelector('.booru-hover-preview');
     if (previewMedia) {
       previewMedia.classList.remove('active');
