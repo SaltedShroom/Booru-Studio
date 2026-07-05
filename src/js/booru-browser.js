@@ -10,6 +10,9 @@ function updateBooruGalleryCounter() {
   // Determine if we're in downloads gallery mode
   let isDownloadsGallery = booruGallery.classList.contains('downloads-gallery');
   let totalCount = totalResultCount;
+
+  console.log('totalResultCount:', totalCount, 'isDownloadsGallery:', isDownloadsGallery);
+
   if (isDownloadsGallery) {
     counter.classList.add('downloads');
     // Use the number of downloaded posts as the total
@@ -26,6 +29,7 @@ function updateBooruGalleryCounter() {
   }
   if (totalCount === 0) {
     counter.style.opacity = '0';
+    console.log('Booru gallery counter hidden because total count is 0');
     return;
   } else {
     counter.style.opacity = '1';
@@ -58,6 +62,7 @@ function updateBooruGalleryCounter() {
     return s;
   }
 
+  console.log(`Booru gallery counter updated: maxIdx=${maxIdx}, totalCount=${totalCount}`);
 
   const currentEl = document.getElementById('booru-counter-current');
   const totalEl = document.getElementById('booru-counter-total');
@@ -74,6 +79,7 @@ function updateBooruGalleryCounter() {
     totalEl.innerHTML = formatNumber(totalCount);
   } else {
     // Fallback if Odometer is not yet loaded
+    console.log(`Booru gallery counter fallback: maxIdx=${maxIdx}, totalCount=${totalCount}`);
     counter.innerHTML = formatNumber(maxIdx) + '<br><b>/ ' + formatNumber(totalCount) + '</b>';
   }
 }
@@ -3515,6 +3521,13 @@ function initBooruBrowser() {
                     // Store file size for coin animation
                     if (task.totalBytes) {
                       postDiv.dataset.fileSize = task.totalBytes;
+                      // Trigger coin animation directly after download completes
+                      if (typeof window.CoinCollector !== 'undefined' && window.CoinCollector.triggerCoinAnimation) {
+                        const mediaElement = postDiv.querySelector('img, video');
+                        if (mediaElement) {
+                          window.CoinCollector.triggerCoinAnimation(mediaElement, task.totalBytes);
+                        }
+                      }
                     }
                     downloadBtn.innerHTML = '<i class="fas fa-check"></i>';
                     downloadBtn.classList.add('downloaded');
@@ -7320,6 +7333,13 @@ function createBooruImageElement(post, maxHeight = null, imageWidth = null) {
           // Store file size for coin animation
           if (task.totalBytes) {
             container.dataset.fileSize = task.totalBytes;
+            // Trigger coin animation directly after download completes
+            if (typeof window.CoinCollector !== 'undefined' && window.CoinCollector.triggerCoinAnimation) {
+              const mediaElement = container.querySelector('img, video');
+              if (mediaElement) {
+                window.CoinCollector.triggerCoinAnimation(mediaElement, task.totalBytes);
+              }
+            }
           }
           downloadBtn.innerHTML = '<i class="fas fa-check"></i>';
           downloadBtn.classList.add('downloaded');

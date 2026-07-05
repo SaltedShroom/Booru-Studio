@@ -545,22 +545,14 @@ window.CoinCollector = {
           const element = mutation.target;
           const isDownloaded = element.getAttribute('data-downloaded') === 'true';
           
-          if (isDownloaded && this.animationsEnabled) {
-            // Download: get file size from various sources
-            let fileSize = parseInt(element.getAttribute('data-file-size') || '0', 10);
-            
-            // If not on element, try to get from parent gallery item
-            if (fileSize === 0 && element.parentElement) {
-              fileSize = parseInt(element.parentElement.getAttribute('data-file-size') || '0', 10);
-            }
-            
-            this.triggerCoinAnimation(element, fileSize);
-          } else if (!isDownloaded && this.animationsEnabled) {
+          if (!isDownloaded && this.animationsEnabled) {
             // Deletion: fetch actual folder size from server endpoint
             if (typeof window.updateDownloadFolderSizeOdometer === 'function') {
               window.updateDownloadFolderSizeOdometer();
             }
           }
+          // Note: Download animation is now triggered directly in booru-browser.js
+          // when data-downloaded is set, instead of via this observer
         }
       });
     });
