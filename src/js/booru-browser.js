@@ -1,5 +1,6 @@
 // --- Booru Gallery Counter Logic ---
 function updateBooruGalleryCounter() {
+
   if (document.getElementById('booru-content')?.style.display == 'none')
     return; // Don't show counter if total count is hidden (e.g., in downloads gallery)
 
@@ -10,8 +11,6 @@ function updateBooruGalleryCounter() {
   // Determine if we're in downloads gallery mode
   let isDownloadsGallery = booruGallery.classList.contains('downloads-gallery');
   let totalCount = totalResultCount;
-
-  console.log('totalResultCount:', totalCount, 'isDownloadsGallery:', isDownloadsGallery);
 
   if (isDownloadsGallery) {
     counter.classList.add('downloads');
@@ -29,7 +28,6 @@ function updateBooruGalleryCounter() {
   }
   if (totalCount === 0) {
     counter.style.opacity = '0';
-    console.log('Booru gallery counter hidden because total count is 0');
     return;
   } else {
     counter.style.opacity = '1';
@@ -62,8 +60,6 @@ function updateBooruGalleryCounter() {
     return s;
   }
 
-  console.log(`Booru gallery counter updated: maxIdx=${maxIdx}, totalCount=${totalCount}`);
-
   const currentEl = document.getElementById('booru-counter-current');
   const totalEl = document.getElementById('booru-counter-total');
   if (currentEl && totalEl && typeof window.Odometer !== 'undefined') {
@@ -79,7 +75,6 @@ function updateBooruGalleryCounter() {
     totalEl.innerHTML = formatNumber(totalCount);
   } else {
     // Fallback if Odometer is not yet loaded
-    console.log(`Booru gallery counter fallback: maxIdx=${maxIdx}, totalCount=${totalCount}`);
     counter.innerHTML = formatNumber(maxIdx) + '<br><b>/ ' + formatNumber(totalCount) + '</b>';
   }
 }
@@ -153,7 +148,9 @@ function setupBooruGalleryCounter() {
   
   let ticking = false;
   function requestCounterUpdate() {
+    console.log('Scroll event detected, requesting counter update... | ticking:', ticking);
     if (!ticking) {
+      console.log('Scheduling counter update via requestAnimationFrame...');
       window.requestAnimationFrame(() => {
         updateBooruGalleryCounter();
         ticking = false;
@@ -175,8 +172,10 @@ function setupBooruGalleryCounter() {
   // Debounced handler for scroll end (fires after user stops scrolling)
   let scrollEndTimer = null;
   function handleScrollEnd() {
+    console.log('Scroll event detected, resetting scroll end timer...');
     if (scrollEndTimer) clearTimeout(scrollEndTimer);
     scrollEndTimer = cleanup.setTimeout(() => {
+      console.log('Scroll end detected, updating booru gallery counter...');
       updateBooruGalleryCounter();
     }, 120); // 120ms after last scroll event
   }
@@ -195,12 +194,15 @@ function setupBooruGalleryCounter() {
   cleanup.addEventListener(scrollContainer, 'pointerdown', (e) => {
     if (e.pointerType === 'mouse') {
       isDraggingScrollbar = true;
+      console.log('Scrollbar drag start detected.');
       requestCounterUpdate(); // Scroll start
     }
   });
   cleanup.addEventListener(scrollContainer, 'pointerup', (e) => {
+    console.log('Pointer up detected on scroll container.');
     if (isDraggingScrollbar) {
       isDraggingScrollbar = false;
+      console.log('Scrollbar drag end detected.');
       updateBooruGalleryCounter(); // Scroll end
     }
   });
@@ -211,8 +213,10 @@ function setupBooruGalleryCounter() {
     }
   });
   cleanup.addEventListener(gallery, 'pointerup', (e) => {
+    console.log('Pointer up detected on gallery.');
     if (isDraggingScrollbar) {
       isDraggingScrollbar = false;
+      console.log('Scrollbar drag end detected.');
       updateBooruGalleryCounter();
     }
   });
@@ -239,6 +243,176 @@ document.addEventListener('DOMContentLoaded', () => {
   }
     fillBooruEndTags();
 });
+
+// Setup booru panel drag functionality with snap-to-state
+function setupBooruPanelDrag() {
+  const panelToggle = document.getElementById('booru-panel-toggle');
+  const booruPanel = document.getElementById('booru-panel');
+  const MAX_HEIGHT = 16; // vh
+  const VELOCITY_THRESHOLD = 0.5; // px/ms - threshold for snap direction based on velocity
+  
+  let isDragging = false;
+  let startY = 0;
+  let lastY = 0;
+  let lastTime = 0;
+  let animationFrameId = null;
+  let currentMouseY = 0;
+  let isOpen = false;
+  let initialPanelHeight = 0; // Track starting height for proper drag from any state
+  
+  panelToggle.addEventListener('mousedown', (e) => {
+    isDragging = true;
+    startY = e.clientY;
+    lastY = e.clientY;
+    currentMouseY = e.clientY;
+    lastTime = Date.now();
+    
+    // Get current panel height in vh
+    const currentHeight = booruPanel.style.height;
+    initialPanelHeight = parseFloat(currentHeight) || 0;
+    
+    panelToggle.classList.add('dragging');
+    booruPanel.classList.add('dragging');
+    // Start animation loop
+    if (animationFrameId) cancelAnimationFrame(animationFrameId);
+    animationFrameId = requestAnimationFrame(updatePanelHeight);
+  });
+  
+  document.addEventListener('mousemove', (e) => {
+    if (!isDragging) return;
+    currentMouseY = e.clientY;
+    lastY = e.clientY;
+    lastTime = Date.now();
+  });
+  
+  // Use requestAnimationFrame for smooth 60fps updates
+  function updatePanelHeight() {
+    if (!isDragging) return;
+    
+    // Calculate drag distance (positive = upward)
+    const dragDistance = startY - currentMouseY;
+    
+    // Convert viewport pixels to vh units
+    const viewportHeight = window.innerHeight;
+    const dragPixelsToVh = (dragDistance / viewportHeight) * 100;
+    
+    // Add to initial height to allow proper dragging from any state
+    const heightVh = Math.max(0, Math.min(MAX_HEIGHT, initialPanelHeight + dragPixelsToVh));
+    
+    // Update panel height immediately during drag
+    booruPanel.style.height = heightVh + 'vh';
+    
+    // Continue animation loop
+    animationFrameId = requestAnimationFrame(updatePanelHeight);
+  }
+  
+  document.addEventListener('mouseup', () => {
+    if (!isDragging) return;
+    isDragging = false;
+    panelToggle.classList.remove('dragging');
+    booruPanel.classList.remove('dragging');
+    if (animationFrameId) cancelAnimationFrame(animationFrameId);
+    
+    // Calculate velocity (pixels per millisecond)
+    const dragDistance = startY - currentMouseY;
+    const timeDiff = Date.now() - lastTime + 1; // Avoid division by 0
+    const velocity = dragDistance / timeDiff; // Positive = upward (opening)
+    
+    // Get current panel height in vh
+    const viewportHeight = window.innerHeight;
+    const dragPixelsToVh = (dragDistance / viewportHeight) * 100;
+    const currentHeightVh = initialPanelHeight + dragPixelsToVh;
+    const normalizedHeight = currentHeightVh / MAX_HEIGHT; // 0 to 1
+    
+    // Determine target state:
+    // - If > 50% open, snap to open (unless dragging down fast)
+    // - If < 50% open, snap to closed (unless dragging up fast)
+    // - Velocity can override position if significant
+    let shouldOpen = false;
+    
+    if (Math.abs(velocity) > VELOCITY_THRESHOLD) {
+      // Velocity-based decision (upward = positive = opening)
+      shouldOpen = velocity > 0;
+    } else {
+      // Position-based decision
+      shouldOpen = normalizedHeight > 0.5;
+    }
+    
+    // Snap to target state
+    isOpen = shouldOpen;
+    booruPanel.classList.remove('dragging');
+    booruPanel.style.height = shouldOpen ? MAX_HEIGHT + 'vh' : '0vh';
+  });
+}
+
+// Add downloaded item to the panel
+function addDownloadedItemToPanel(mediaElement, post) {
+  const panelDownloads = document.getElementById('booru-panel-downloads');
+  if (!panelDownloads) return;
+  
+  // Determine if this is a video or image
+  const isVideo = mediaElement.tagName === 'VIDEO' || mediaElement.dataset.isVideo === 'true';
+  const isGif = mediaElement.dataset.isGif === 'true';
+  
+  // Get the local file URL for the downloaded file
+  const filename = getFilenameFromUrl(post.imageUrl, post.id);
+  const localUrl = `http://localhost:3001/serve-local-file/${encodeURIComponent(filename)}`;
+  
+  // Create the download item container
+  const itemContainer = document.createElement('div');
+  itemContainer.className = 'booru-panel-download-item';
+  
+  // Add is-gif class if this is a GIF
+  if (isGif || localUrl.toLowerCase().endsWith('.gif')) {
+    itemContainer.classList.add('is-gif');
+  }
+  
+  if (isVideo) {
+    // For videos, use the local file as a video element and seek to first frame
+    const video = document.createElement('video');
+    video.preload = 'metadata';
+    video.muted = true;
+    video.src = localUrl;
+    
+    // Seek to first frame on loadedmetadata
+    video.addEventListener('loadedmetadata', () => {
+      video.currentTime = 0;
+    }, { once: true });
+    
+    itemContainer.appendChild(video);
+  } else {
+    // For images, use the local file URL
+    const img = document.createElement('img');
+    img.src = localUrl;
+    img.alt = post.title || 'Downloaded';
+    itemContainer.appendChild(img);
+  }
+  
+  // Add click handler to open in lightbox
+  itemContainer.addEventListener('click', () => {
+    const mediaEl = itemContainer.querySelector('img, video');
+    if (mediaEl) {
+      const src = mediaEl.src;
+      // Set up lightbox with just this local file
+      LightboxImages = [src];
+      LightboxIndex = 0;
+      lightboxModal.classList.add('active');
+      showLightboxImage(0);
+    }
+  });
+  itemContainer.style.cursor = 'pointer';
+  
+  // Prepend to the beginning (newest items on the left)
+  panelDownloads.insertAdjacentElement('afterbegin', itemContainer);
+}
+
+// Initialize panel drag after a short delay to ensure DOM is fully ready
+setTimeout(() => {
+  if (document.getElementById('booru-panel-toggle')) {
+    setupBooruPanelDrag();
+  }
+}, 100);
+
 // Log when the user leaves the app window
 window.addEventListener('blur', () => {
   // Cancel any pending scraper detail timers
@@ -3526,6 +3700,10 @@ function initBooruBrowser() {
                         const mediaElement = postDiv.querySelector('img, video');
                         if (mediaElement) {
                           window.CoinCollector.triggerCoinAnimation(mediaElement, task.totalBytes);
+                          // Add downloaded item to the panel
+                          if (typeof addDownloadedItemToPanel === 'function') {
+                            addDownloadedItemToPanel(mediaElement, post);
+                          }
                         }
                       }
                     }
@@ -7338,6 +7516,10 @@ function createBooruImageElement(post, maxHeight = null, imageWidth = null) {
               const mediaElement = container.querySelector('img, video');
               if (mediaElement) {
                 window.CoinCollector.triggerCoinAnimation(mediaElement, task.totalBytes);
+                // Add downloaded item to the panel
+                if (typeof addDownloadedItemToPanel === 'function') {
+                  addDownloadedItemToPanel(mediaElement, post);
+                }
               }
             }
           }
@@ -7480,12 +7662,18 @@ document.addEventListener('mousemove', (e) => {
   const selectRect = document.querySelector('.select2-results')?.getBoundingClientRect();
   const suppportRect = document.querySelector('.toast-support')?.getBoundingClientRect();
   const downloadStatsContainer = document.querySelector('.app-loading-download-container')?.getBoundingClientRect();
+  const booruPanel = document.querySelector('#booru-panel')?.getBoundingClientRect();
+  const booruPanelToggle = document.querySelector('#booru-panel-toggle')?.getBoundingClientRect();
   if (selectRect && e.clientX >= selectRect.left && e.clientX <= selectRect.right &&
       e.clientY >= selectRect.top && e.clientY <= selectRect.bottom ||
       suppportRect && e.clientX >= suppportRect.left && e.clientX <= suppportRect.right &&
       e.clientY >= suppportRect.top && e.clientY <= suppportRect.bottom ||
       downloadStatsContainer && e.clientX >= downloadStatsContainer.left && e.clientX <= downloadStatsContainer.right &&
-      e.clientY >= downloadStatsContainer.top && e.clientY <= downloadStatsContainer.bottom) {
+      e.clientY >= downloadStatsContainer.top && e.clientY <= downloadStatsContainer.bottom ||
+      booruPanel && e.clientX >= booruPanel.left && e.clientX <= booruPanel.right &&
+      e.clientY >= booruPanel.top && e.clientY <= booruPanel.bottom ||
+      booruPanelToggle && e.clientX >= booruPanelToggle.left && e.clientX <= booruPanelToggle.right &&
+      e.clientY >= booruPanelToggle.top && e.clientY <= booruPanelToggle.bottom) {
     const previewMedia = document.querySelector('.booru-hover-preview');
     if (previewMedia) {
       previewMedia.classList.remove('active');
