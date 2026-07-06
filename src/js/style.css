@@ -2353,6 +2353,7 @@ body, html {
   border-radius: 8px;
   border-top-left-radius: 0;
   border-bottom-left-radius: 0;
+  overflow: hidden;
   user-select: none;
   opacity: 1;
   transition: opacity 0.2s ease;
@@ -2372,6 +2373,8 @@ body, html {
   border-radius: 8px;
   border-top-left-radius: 0;
   border-bottom-left-radius: 0;
+  overflow: hidden;
+  user-select: none;
   text-wrap: nowrap;
   white-space: nowrap;
   pointer-events: none;
@@ -2393,6 +2396,32 @@ body, html {
 }
 .loading-toast-counter.hidden {
   transform: translateX(-100%);
+}
+.hq-loading-progress-bar {
+  position: absolute;
+  bottom: 0;
+  left: 0;
+  width: 100%;
+  height: 4px;
+  background: var(--bg-dark);
+  border-radius: 0;
+  border-top-left-radius: 0;
+  border-bottom-left-radius: 0;
+  overflow: hidden;
+  pointer-events: none;
+  opacity: 0.8;
+  transition: opacity 0.4s ease;
+}
+.hq-loading-progress-bar.hidden {
+  opacity: 0;
+}
+.hq-loading-progress-fill {
+  height: 100%;
+  background: linear-gradient(90deg, var(--accent), var(--accent-secondary));
+  opacity: 1;
+  width: 0%;
+  transition: width 0.1s linear;
+  border-radius: 2px;
 }
 .download-toast {
   background: var(--surface);
@@ -3061,17 +3090,15 @@ body, html {
 .booru-panel-toggle {
   position: absolute;
   right: 60px;
-  top: -30px;
+  top: -32px;
   padding: 8px 18px;
   font-size: 14px;
   z-index: 100;
-  border: solid 2px var(--border);
-  border-bottom: none;
   height: 32px;
-  border-top-left-radius: 4px;
-  border-top-right-radius: 4px;
   color: var(--text-primary);
   background: var(--surface) !important;
+  border: 4px solid var(--border);
+  border-bottom: none;
   cursor: grab;
   display: flex;
   align-items: center;
@@ -3086,9 +3113,11 @@ body, html {
   position: relative;
   display: flex;
   width: 100%;
-  height: 0;
+  height: 8px;
+  min-height: 8px !important;
   background: var(--surface);
-  box-shadow: inset 0 2px 0 var(--border);
+  border-top: 4px solid var(--border);
+  box-shadow: 0 -1px 3px #000000;
   transition: height 0.25s cubic-bezier(0.34, 1.56, 0.64, 1);
   flex-shrink: 0;
 }
@@ -3096,14 +3125,15 @@ body, html {
   transition: none;
 }
 .booru-panel-downloads {
-  margin: 10px;
+  margin: 8px;
   background: var(--surface-dark);
   display: flex;
   flex-grow: 1;
   flex-direction: row;
-  gap: 10px;
+  gap: 8px;
   overflow-x: auto;
   overflow-y: hidden;
+  padding: 8px;
   align-items: flex-start;
 }
 .booru-panel-download-item {
@@ -3114,10 +3144,12 @@ body, html {
   cursor: pointer;
   background: var(--bg-darkest);
   transition: all 0.2s ease;
+  opacity: 0.75;
 }
 .booru-panel-download-item:hover {
   transform: scale(1.03);
   box-shadow: 0 4px 12px rgba(0, 0, 0, 0.3);
+  opacity: 1;
 }
 .booru-panel-download-item img,
 .booru-panel-download-item video {
@@ -5044,9 +5076,8 @@ textarea.settings-input {
   display: flex;
   flex-direction: column;
   align-items: center;
-  bottom: 0;
+  bottom: 0px;
   left: 50%;
-  transform: translateX(-50%);
   width: auto;
   z-index: 999999;
   pointer-events: none;
@@ -5062,7 +5093,7 @@ textarea.settings-input {
 
 .app-loading-download-container:has(.loaded) {
   left: 0px;
-  transform: translateX(0);
+  transform: translate(0, 0);
 }
 
 
@@ -5102,9 +5133,27 @@ textarea.settings-input {
   filter: drop-shadow(0px 1px 3px rgb(0, 0, 0));
 }
 
+@keyframes jumpBounce {
+  0% {
+    transform: translateY(0);
+  }
+  25% {
+    transform: translateY(-12px);
+  }
+  50% {
+    transform: translateY(3px);
+  }
+  65% {
+    transform: translateY(-2px);
+  }
+  80% {
+    transform: translateY(3px);
+  }
+}
+
 .app-loading-download-count img:hover {
+  animation: jumpBounce 0.6s ease-out;
   transform: translateY(3px);
-  opacity: 0.85;
   scale: 0.95;
 }
 
@@ -5136,7 +5185,7 @@ textarea.settings-input {
     #333333 4px
   );
   border: 4px solid var(--accent);
-  box-shadow: 0 -5px 0 var(--accent-dark), inset 0 -2px 0 var(--accent-dark), 0 0 8px #000000, inset 0 -2px 6px #000000;
+  box-shadow: 0 -4px 0 var(--accent-dark), inset 0 -2px 0 var(--accent-dark), 0 0 8px #000000, inset 0 -2px 6px #000000;
   display: flex;
   align-items: center;
   justify-content: center;

@@ -148,9 +148,7 @@ function setupBooruGalleryCounter() {
   
   let ticking = false;
   function requestCounterUpdate() {
-    console.log('Scroll event detected, requesting counter update... | ticking:', ticking);
     if (!ticking) {
-      console.log('Scheduling counter update via requestAnimationFrame...');
       window.requestAnimationFrame(() => {
         updateBooruGalleryCounter();
         ticking = false;
@@ -172,10 +170,8 @@ function setupBooruGalleryCounter() {
   // Debounced handler for scroll end (fires after user stops scrolling)
   let scrollEndTimer = null;
   function handleScrollEnd() {
-    console.log('Scroll event detected, resetting scroll end timer...');
     if (scrollEndTimer) clearTimeout(scrollEndTimer);
     scrollEndTimer = cleanup.setTimeout(() => {
-      console.log('Scroll end detected, updating booru gallery counter...');
       updateBooruGalleryCounter();
     }, 120); // 120ms after last scroll event
   }
@@ -194,15 +190,12 @@ function setupBooruGalleryCounter() {
   cleanup.addEventListener(scrollContainer, 'pointerdown', (e) => {
     if (e.pointerType === 'mouse') {
       isDraggingScrollbar = true;
-      console.log('Scrollbar drag start detected.');
       requestCounterUpdate(); // Scroll start
     }
   });
   cleanup.addEventListener(scrollContainer, 'pointerup', (e) => {
-    console.log('Pointer up detected on scroll container.');
     if (isDraggingScrollbar) {
       isDraggingScrollbar = false;
-      console.log('Scrollbar drag end detected.');
       updateBooruGalleryCounter(); // Scroll end
     }
   });
@@ -213,10 +206,8 @@ function setupBooruGalleryCounter() {
     }
   });
   cleanup.addEventListener(gallery, 'pointerup', (e) => {
-    console.log('Pointer up detected on gallery.');
     if (isDraggingScrollbar) {
       isDraggingScrollbar = false;
-      console.log('Scrollbar drag end detected.');
       updateBooruGalleryCounter();
     }
   });
@@ -269,7 +260,8 @@ function setupBooruPanelDrag() {
     
     // Get current panel height in vh
     const currentHeight = booruPanel.style.height;
-    initialPanelHeight = parseFloat(currentHeight) || 0;
+    // If height is in px (closed state), treat as 0vh for calculations
+    initialPanelHeight = currentHeight.includes('px') ? 0 : parseFloat(currentHeight) || 0;
     
     panelToggle.classList.add('dragging');
     booruPanel.classList.add('dragging');
@@ -341,7 +333,7 @@ function setupBooruPanelDrag() {
     // Snap to target state
     isOpen = shouldOpen;
     booruPanel.classList.remove('dragging');
-    booruPanel.style.height = shouldOpen ? MAX_HEIGHT + 'vh' : '0vh';
+    booruPanel.style.height = shouldOpen ? (MAX_HEIGHT + 'vh') : '8px';
   });
 }
 
@@ -487,6 +479,8 @@ let galleryQualityLoadBatch = 0;
 // HQ image loading counter for the toast counter element
 let _hqLoadingCount = 0;
 let _hqTotalBytes = 0;
+let _hqTotalBytesInitial = 0; // Track total bytes needed across all downloads for progress calculation
+let _hqBytesRemaining = new Map(); // Track remaining bytes per download task
 
 let LoadingCounterTimeout = null;
 
@@ -506,25 +500,100 @@ if (localStorage.getItem('downloadsSidebarSelectedTab')) {
   activeDownloadsSidebarTab = localStorage.getItem('downloadsSidebarSelectedTab');
 }
 
-function updateHqLoadingCounter(delta) {
+function updateHqLoadingCounter(delta, taskId = null, bytesProgress = null, initialBytes = null) {
   if (LoadingCounterTimeout) {
     clearTimeout(LoadingCounterTimeout);
     LoadingCounterTimeout = null;
   }
+  
+  // Handle per-task byte progress updates (real-time)
+  if (taskId !== null && bytesProgress !== null) {
+    _hqBytesRemaining.set(taskId, bytesProgress);
+  }
+  
+  // Track initial bytes when a new download starts
+  if (delta === 1 && initialBytes !== null && initialBytes > 0) {
+    _hqTotalBytesInitial += initialBytes;
+  }
+  
+  // Update count
   _hqLoadingCount = Math.max(0, _hqLoadingCount + delta);
+  
+  // Calculate total remaining bytes from all active downloads (every call for real-time updates)
+  _hqTotalBytes = 0;
+  _hqBytesRemaining.forEach(bytes => {
+    _hqTotalBytes += bytes;
+  });
+  
   const el = document.getElementById('loading-toast-counter');
+  const progressBar = document.getElementById('hq-loading-progress-bar');
+  const progressFill = document.getElementById('hq-loading-progress-fill');
+  
   if (!el) return;
+  
   if (_hqLoadingCount === 0) {
     el.innerHTML = 'Loading: <b>0</b> posts <b class="hq-loading-mb">0.0 MB</b>';
     LoadingCounterTimeout = setTimeout(() => {
       el.classList.add('hidden');
+      if (progressBar) progressBar.classList.add('hidden');
+      _hqBytesRemaining.clear();
+      _hqTotalBytesInitial = 0;
     }, 500);
     return;
   }
+  
   const countLabel = `<b>${_hqLoadingCount}</b> post${_hqLoadingCount !== 1 ? 's' : ''}`;
   const mbLabel = _hqTotalBytes > 0 ? ` <b class="hq-loading-mb">${(_hqTotalBytes / (1024 * 1024)).toFixed(1)} MB</b>` : ' <b class="hq-loading-mb">0.0 MB</b>';
   el.innerHTML = `Loading: ${countLabel}${mbLabel}`;
   el.classList.remove('hidden');
+  
+  // Update progress bar
+  if (progressBar && progressFill) {
+    progressBar.classList.remove('hidden');
+    if (_hqTotalBytesInitial > 0) {
+      const bytesLoaded = _hqTotalBytesInitial - _hqTotalBytes;
+      const progressPercent = Math.max(0, Math.min(100, (bytesLoaded / _hqTotalBytesInitial) * 100));
+      progressFill.style.width = progressPercent + '%';
+    }
+  }
+}
+
+// Load image with real-time progress tracking using fetch and ReadableStream
+async function loadImageWithProgress(url, onProgress) {
+  try {
+    const response = await fetch(url);
+    if (!response.ok) {
+      throw new Error(`HTTP ${response.status}`);
+    }
+    
+    const totalBytes = parseInt(response.headers.get('content-length') || '0', 10);
+    let loadedBytes = 0;
+    
+    const reader = response.body.getReader();
+    const chunks = [];
+    
+    while (true) {
+      const { done, value } = await reader.read();
+      
+      if (done) break;
+      
+      chunks.push(value);
+      loadedBytes += value.length;
+      
+      // Report progress in real-time
+      if (totalBytes > 0 && onProgress) {
+        const remaining = Math.max(0, totalBytes - loadedBytes);
+        onProgress(remaining);
+      }
+    }
+    
+    // Combine chunks into blob
+    const blob = new Blob(chunks, { type: response.headers.get('content-type') });
+    return blob;
+  } catch (error) {
+    console.error('Error loading image with progress:', error);
+    throw error;
+  }
 }
 
 // Download management
@@ -8930,7 +8999,7 @@ function showPreviewForElement(mediaElement, forceVideoLoad = false) {
           updateHqLoadingCounter(1);
           
           loadingQueue.enqueue(async () => {
-            let _thisLoadBytes = 0; // bytes this request added to _hqTotalBytes
+            let taskId = `hq-${mediaElement.dataset.postId || Date.now()}-${Math.random().toString(36).substr(2, 9)}`;
             let contentLength = 0;
             try {
               const highQualityUrl = mediaElement.dataset.imageUrl;
@@ -8948,7 +9017,10 @@ function showPreviewForElement(mediaElement, forceVideoLoad = false) {
                 const proxyContentLength = response.headers.get('X-Proxy-Content-Length');
                 contentLength = parseInt(proxyContentLength || response.headers.get('Content-Length') || '0', 10);
                 if (contentLength > 0) {
-                  _thisLoadBytes = contentLength;
+                  // Track initial bytes for progress calculation
+                  _hqTotalBytesInitial += contentLength;
+                  // Initialize remaining bytes and update display
+                  _hqBytesRemaining.set(taskId, contentLength);
                   _hqTotalBytes += contentLength;
                   updateHqLoadingCounter(0); // refresh display
                 }
@@ -9015,10 +9087,34 @@ function showPreviewForElement(mediaElement, forceVideoLoad = false) {
                   }
                 };
                 
-                // Append and set src to direct proxy URL (not blob)
+                // Append new image element
                 booruPreviewMediaContainer.appendChild(newImg);
-                // Use the same proxy method that works elsewhere
-                newImg.src = getImageUrl(mediaElement.dataset.imageUrl);
+                
+                // Load image with real-time progress tracking
+                try {
+                  const imageUrl = getImageUrl(mediaElement.dataset.imageUrl);
+                  const blob = await loadImageWithProgress(imageUrl, (remainingBytes) => {
+                    // Update remaining bytes in real-time and refresh counter display
+                    updateHqLoadingCounter(0, taskId, remainingBytes);
+                  });
+                  
+                  // Convert blob to object URL and set as src
+                  const blobUrl = URL.createObjectURL(blob);
+                  newImg.src = blobUrl;
+                } catch (err) {
+                  console.error('Failed to load image with progress:', err);
+                  showToast('Failed to load high quality preview', 'error');
+                  if (newImg.parentNode === booruPreviewMediaContainer) {
+                    booruPreviewMediaContainer.removeChild(newImg);
+                  }
+                  const overlay = booruPreviewMediaContainer.querySelector('.preview-loading-overlay');
+                  if (overlay) overlay.remove();
+                  const currentGalleryItem = mediaElement.closest('.booru-image-item');
+                  const currentDownloadBtn = currentGalleryItem?.querySelector('.booru-download-btn');
+                  if (currentDownloadBtn && originalDownloadHTML !== null) {
+                    currentDownloadBtn.innerHTML = originalDownloadHTML;
+                  }
+                }
               }
               
               // Update gallery element using the same approach as updateGalleryImageQuality()
@@ -9031,42 +9127,83 @@ function showPreviewForElement(mediaElement, forceVideoLoad = false) {
               // Remove loaded class to allow new load event
               mediaElement.classList.remove('loaded');
               
-              // Add load handler for gallery element to restore button when background load completes
-              mediaElement.addEventListener('load', () => {
-                mediaElement.classList.add('loaded');
-                _hqTotalBytes -= contentLength;
-                updateHqLoadingCounter(-1);
-                // Restore download button when gallery image loads
-                const currentGalleryItem = mediaElement.closest('.booru-image-item');
-                const currentDownloadBtn = currentGalleryItem?.querySelector('.booru-download-btn');
-                if (currentDownloadBtn && originalDownloadHTML !== null) {
-                  currentDownloadBtn.innerHTML = originalDownloadHTML;
+              // Load gallery image with real-time progress tracking
+              try {
+                const imageUrl = getImageUrl(mediaElement.dataset.imageUrl);
+                const blob = await loadImageWithProgress(imageUrl, (remainingBytes) => {
+                  // Update remaining bytes in real-time and refresh counter display
+                  updateHqLoadingCounter(0, taskId, remainingBytes);
+                });
+                
+                // Convert blob to object URL
+                const blobUrl = URL.createObjectURL(blob);
+                
+                // Add load handler for gallery element to restore button when background load completes
+                mediaElement.addEventListener('load', () => {
+                  mediaElement.classList.add('loaded');
+                  _hqBytesRemaining.delete(taskId);
+                  _hqTotalBytes = 0;
+                  _hqBytesRemaining.forEach(bytes => {
+                    _hqTotalBytes += bytes;
+                  });
+                  updateHqLoadingCounter(-1);
+                  // Restore download button when gallery image loads
+                  const currentGalleryItem = mediaElement.closest('.booru-image-item');
+                  const currentDownloadBtn = currentGalleryItem?.querySelector('.booru-download-btn');
+                  if (currentDownloadBtn && originalDownloadHTML !== null) {
+                    currentDownloadBtn.innerHTML = originalDownloadHTML;
+                  }
+                  mediaElement.dataset.highQualityLoaded = 'true';
+                  delete mediaElement.dataset.highQualityLoading;
+                  if (!mediaElement.dataset.currentQualityUrl) {
+                    mediaElement.dataset.currentQualityUrl = mediaElement.dataset.highQualityUrl || getImageUrl(mediaElement.dataset.imageUrl);
+                  }
+                }, { once: true });
+                
+                // Add error handler for gallery element
+                mediaElement.addEventListener('error', () => {
+                  mediaElement.classList.add('loaded');
+                  _hqBytesRemaining.delete(taskId);
+                  _hqTotalBytes = 0;
+                  _hqBytesRemaining.forEach(bytes => {
+                    _hqTotalBytes += bytes;
+                  });
+                  updateHqLoadingCounter(-1);
+                  const loader = mediaElement.parentElement?.querySelector('.image-loader');
+                  if (loader) loader.style.display = 'none';
+                  // Restore download button on error
+                  const currentGalleryItem = mediaElement.closest('.booru-image-item');
+                  const currentDownloadBtn = currentGalleryItem?.querySelector('.booru-download-btn');
+                  if (currentDownloadBtn && originalDownloadHTML !== null) {
+                    currentDownloadBtn.innerHTML = originalDownloadHTML;
+                  }
+                  delete mediaElement.dataset.highQualityLoading;
+                }, { once: true });
+                
+                // Set the blob URL as source
+                mediaElement.src = blobUrl;
+              } catch (err) {
+                console.error('Failed to load gallery image with progress:', err);
+                // Remove any existing error display
+                const errorDiv = mediaElement.parentElement?.querySelector('div[style*="background: var(--bg-darkest)"]');
+                if (errorDiv) {
+                  errorDiv.remove();
                 }
-                mediaElement.dataset.highQualityLoaded = 'true';
-                delete mediaElement.dataset.highQualityLoading;
-                if (!mediaElement.dataset.currentQualityUrl) {
-                  mediaElement.dataset.currentQualityUrl = mediaElement.dataset.highQualityUrl || getImageUrl(mediaElement.dataset.imageUrl);
-                }
-              }, { once: true });
-              
-              // Add error handler for gallery element
-              mediaElement.addEventListener('error', () => {
-                mediaElement.classList.add('loaded');
-                _hqTotalBytes -= contentLength;
+                _hqBytesRemaining.delete(taskId);
+                _hqTotalBytes = 0;
+                _hqBytesRemaining.forEach(bytes => {
+                  _hqTotalBytes += bytes;
+                });
                 updateHqLoadingCounter(-1);
                 const loader = mediaElement.parentElement?.querySelector('.image-loader');
                 if (loader) loader.style.display = 'none';
-                // Restore download button on error
                 const currentGalleryItem = mediaElement.closest('.booru-image-item');
                 const currentDownloadBtn = currentGalleryItem?.querySelector('.booru-download-btn');
                 if (currentDownloadBtn && originalDownloadHTML !== null) {
                   currentDownloadBtn.innerHTML = originalDownloadHTML;
                 }
-                delete mediaElement.dataset.highQualityLoading;
-              }, { once: true });
+              }
               
-              // Set the new source using the already-resolved URL if available
-              mediaElement.src = getImageUrl(mediaElement.dataset.imageUrl);
               // --- Update tab cache with new quality ---
               try {
                 const postId = mediaElement.closest('.booru-image-item')?.dataset.postId;
@@ -9094,7 +9231,11 @@ function showPreviewForElement(mediaElement, forceVideoLoad = false) {
                 currentDownloadBtn.innerHTML = originalDownloadHTML;
               }
               delete mediaElement.dataset.highQualityLoading;
-              if (_thisLoadBytes > 0) { _hqTotalBytes -= _thisLoadBytes; _thisLoadBytes = 0; }
+              _hqBytesRemaining.delete(taskId);
+              _hqTotalBytes = 0;
+              _hqBytesRemaining.forEach(bytes => {
+                _hqTotalBytes += bytes;
+              });
               updateHqLoadingCounter(-1);
             }
           }).catch(err => {
