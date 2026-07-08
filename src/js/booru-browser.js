@@ -9255,24 +9255,31 @@ function showPreviewForElement(mediaElement, forceVideoLoad = false) {
                     mediaElement.dataset.currentQualityUrl = blobUrl;
                   }
                   
+                  // Cache the HQ image data in tab-specific map
+                  if (window._tabHQCacheMap) {
+                    if (!window._tabHQCacheMap.has(window.activeTabId)) {
+                      window._tabHQCacheMap.set(window.activeTabId, new Set());
+                    }
+                    window._tabHQCacheMap.get(window.activeTabId).add(blobUrl);
+                  }
+                  
                   // Check if preview is currently showing this same post and update it
                   const galleryPostId = currentGalleryItem?.dataset.postId;
                   
-                  if (galleryPostId && booruHoverPreview?.classList.contains('active')) {
-                    const previewImg = booruPreviewMediaContainer?.querySelector('img');
-                    const previewVideo = booruPreviewMediaContainer?.querySelector('video');
-                    const previewElement = previewImg || previewVideo;
-                    
-                    if (previewElement && previewElement.dataset.postId === galleryPostId) {
-                      // Preview is showing the same post, update its src to the HQ blob URL
-                      previewElement.src = blobUrl;
-                      
-                      // Now that preview is updated, remove the loading overlay
-                      const overlay = booruPreviewMediaContainer?.querySelector('.preview-loading-overlay');
-                      if (overlay && overlay.dataset.hqLoading === 'true') {
-                        overlay.remove();
-                      }
-                    }
+                  
+                  const previewImg = booruPreviewMediaContainer?.querySelector('img');
+                  const previewVideo = booruPreviewMediaContainer?.querySelector('video');
+                  const previewElement = previewImg || previewVideo;
+                  
+                  if (previewElement && previewElement.dataset.postId === galleryPostId) {
+                    // Update preview media with HQ blob URL, regardless of whether preview is currently active
+                    previewElement.src = blobUrl;
+                  }
+                  
+                  // Always remove overlay when load completes, regardless of preview visibility
+                  const overlay = booruPreviewMediaContainer?.querySelector('.preview-loading-overlay');
+                  if (overlay && overlay.dataset.hqLoading === 'true') {
+                    overlay.remove();
                   }
                 }, { once: true });
                 
