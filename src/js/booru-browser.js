@@ -482,12 +482,19 @@ function addDownloadedItemToPanel(mediaElement, post) {
   itemContainer.addEventListener('click', () => {
     const mediaEl = itemContainer.querySelector('img, video');
     if (mediaEl) {
-      const src = mediaEl.src;
-      // Set up lightbox with just this local file
-      LightboxImages = [src];
-      LightboxIndex = 0;
+      // Collect all downloads panel items
+      const panelItems = Array.from(panelDownloads.querySelectorAll('.booru-panel-download-item'));
+      LightboxImages = panelItems.map(item => {
+        const media = item.querySelector('img, video');
+        return media ? media.src : null;
+      }).filter(src => src !== null);
+      
+      // Find the index of the clicked item
+      const clickedIndex = panelItems.indexOf(itemContainer);
+      LightboxIndex = Math.max(0, clickedIndex);
+      
       lightboxModal.classList.add('active');
-      showLightboxImage(0);
+      showLightboxImage(LightboxIndex);
     }
   });
   itemContainer.style.cursor = 'pointer';

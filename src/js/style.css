@@ -3179,7 +3179,7 @@ body, html {
 }
 .booru-panel-download-item:hover {
   transform: scale(1.03);
-  box-shadow: 0 4px 12px rgba(0, 0, 0, 0.3);
+  box-shadow: 0 0 10px rgba(0, 0, 0, 0.3);
   opacity: 1;
 }
 .booru-panel-download-item img,
