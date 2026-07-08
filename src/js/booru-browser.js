@@ -383,20 +383,6 @@ function removeDownloadsPanelEmptyState() {
   }
 }
 
-// Handle overflow by removing oldest items when new ones are added
-function enforceDownloadsPanelMaxItems() {
-  const panelDownloads = document.getElementById('booru-panel-downloads');
-  if (!panelDownloads) return;
-
-  const items = panelDownloads.querySelectorAll('.booru-panel-download-item');
-  const MAX_ITEMS = 15;
-
-  // Remove oldest items (at the end) if we exceed the max
-  while (items.length > MAX_ITEMS) {
-    items[items.length - 1].remove();
-    items.length--;
-  }
-}
 
 // Add downloaded item to the panel
 function addDownloadedItemToPanel(mediaElement, post) {
@@ -405,6 +391,14 @@ function addDownloadedItemToPanel(mediaElement, post) {
   
   // Remove empty state when first item is added
   removeDownloadsPanelEmptyState();
+  
+  // Check how many items are currently displayed and remove the last one if at max
+  const items = panelDownloads.querySelectorAll('.booru-panel-download-item');
+  const MAX_ITEMS = 10;
+  if (items.length >= MAX_ITEMS) {
+    // Remove the oldest item (at the end)
+    items[items.length - 1].remove();
+  }
   
   // Determine if this is a video or image
   const isVideo = mediaElement.tagName === 'VIDEO' || mediaElement.dataset.isVideo === 'true';
@@ -467,9 +461,6 @@ function addDownloadedItemToPanel(mediaElement, post) {
   
   // Prepend to the beginning (newest items on the left)
   panelDownloads.insertAdjacentElement('afterbegin', itemContainer);
-  
-  // Enforce max items in panel (remove overflow)
-  enforceDownloadsPanelMaxItems();
 }
 
 // Initialize panel drag after a short delay to ensure DOM is fully ready
