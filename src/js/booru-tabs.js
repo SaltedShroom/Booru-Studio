@@ -324,8 +324,12 @@ async function initBooruTabs() {
 
     if (matches.length > 0) {
       const suggestion = matches[0];
-      const escapedUserTag = userTag.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
-      suggestionField.value = userInput.replace(new RegExp(`${escapedUserTag}$`, 'i'), suggestion);
+      // Reconstruct suggestion by replacing only the last tag
+      // Get all tokens except the last one
+      const precedingTokens = tokens.slice(0, -1);
+      // Build the new suggestion string with preceding tags + space (if any) + suggestion
+      const prefix = precedingTokens.length > 0 ? precedingTokens.join(' ') + ' ' : '';
+      suggestionField.value = prefix + suggestion;
     } else {
       suggestionField.value = "";
     }
