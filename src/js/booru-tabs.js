@@ -863,17 +863,6 @@ function switchToTab(tabId) {
           restorePaginationToken(tab.paginationToken);
         }
         
-        // DEBUG: Log what was restored
-        const restoredToken = typeof getPaginationToken === 'function' ? getPaginationToken() : null;
-        console.log('[TAB RESTORE] Pagination state:', {
-          tabId: tab.id,
-          tabPaginationToken: tab.paginationToken,
-          tabTotalResultCount: tab.totalResultCount,
-          tabHasMoreResults: tab.hasMoreResults,
-          restoredPaginationToken: restoredToken,
-          tabKeys: Object.keys(tab)
-        });
-        
         // Restore pagination state to local booru-browser variables
         if (typeof window.restoreBooruPaginationState === 'function') {
           window.restoreBooruPaginationState();

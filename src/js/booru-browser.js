@@ -5902,8 +5902,6 @@ async function loadGenericBooru(sourceId, append) {
     page = startPage;
   }
 
-  console.log(page, booruPaginationToken, startPage, append);
-  
   // Build tags with negative tags for blacklist (API-side filtering)
   let allTags = searchTags ? searchTags.replace(/\s+/g, ' ') : '';
   
