@@ -601,8 +601,8 @@ function saveCurrentTabState() {
       if (window.hasMoreResults !== undefined) {
         tab.hasMoreResults = window.hasMoreResults;
       }
-      if (window.booruPaginationToken !== undefined) {
-        tab.paginationToken = window.booruPaginationToken;
+      if (typeof savePaginationToken !== 'undefined') {
+        tab.paginationToken = savePaginationToken();
       }
       
       // Use debounced save to avoid constant writes
@@ -859,9 +859,20 @@ function switchToTab(tabId) {
         if (tab.hasMoreResults !== undefined) {
           window.hasMoreResults = tab.hasMoreResults;
         }
-        if (tab.paginationToken !== undefined) {
-          window.booruPaginationToken = tab.paginationToken;
+        if (tab.paginationToken !== undefined && typeof restorePaginationToken === 'function') {
+          restorePaginationToken(tab.paginationToken);
         }
+        
+        // DEBUG: Log what was restored
+        const restoredToken = typeof getPaginationToken === 'function' ? getPaginationToken() : null;
+        console.log('[TAB RESTORE] Pagination state:', {
+          tabId: tab.id,
+          tabPaginationToken: tab.paginationToken,
+          tabTotalResultCount: tab.totalResultCount,
+          tabHasMoreResults: tab.hasMoreResults,
+          restoredPaginationToken: restoredToken,
+          tabKeys: Object.keys(tab)
+        });
         
         // Restore pagination state to local booru-browser variables
         if (typeof window.restoreBooruPaginationState === 'function') {

@@ -3131,7 +3131,8 @@ body, html {
   flex-grow: 1;
   flex-direction: row;
   gap: 8px;
-  overflow: hidden;
+  overflow-x: auto;
+  overflow-y: hidden;
   padding: 8px;
   align-items: flex-start;
   position: relative;

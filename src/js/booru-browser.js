@@ -389,46 +389,12 @@ function enforceDownloadsPanelMaxItems() {
   if (!panelDownloads) return;
 
   const items = panelDownloads.querySelectorAll('.booru-panel-download-item');
-  if (items.length === 0) return;
+  const MAX_ITEMS = 15;
 
-  // Use ResizeObserver to check if items overflow
-  const checkOverflow = () => {
-    const items = panelDownloads.querySelectorAll('.booru-panel-download-item');
-    let totalWidth = 0;
-    let gapWidth = 8; // CSS gap value
-
-    for (let item of items) {
-      const rect = item.getBoundingClientRect();
-      totalWidth += rect.width + gapWidth;
-    }
-
-    // Get available width (subtract padding and margin)
-    const containerStyle = window.getComputedStyle(panelDownloads);
-    const padding = parseFloat(containerStyle.paddingLeft) + parseFloat(containerStyle.paddingRight);
-    const margin = parseFloat(containerStyle.marginLeft) + parseFloat(containerStyle.marginRight);
-    const availableWidth = panelDownloads.offsetWidth - padding - margin;
-
-    // If content overflows, remove oldest items from the end
-    while (totalWidth > availableWidth && items.length > 1) {
-      items[items.length - 1].remove();
-      items.length--;
-      
-      // Recalculate total width
-      totalWidth = 0;
-      for (let item of items) {
-        const rect = item.getBoundingClientRect();
-        totalWidth += rect.width + gapWidth;
-      }
-    }
-  };
-
-  // Check immediately
-  setTimeout(checkOverflow, 0);
-
-  // Use ResizeObserver to re-check on window resize
-  if (!panelDownloads._resizeObserver) {
-    panelDownloads._resizeObserver = new ResizeObserver(checkOverflow);
-    panelDownloads._resizeObserver.observe(panelDownloads);
+  // Remove oldest items (at the end) if we exceed the max
+  while (items.length > MAX_ITEMS) {
+    items[items.length - 1].remove();
+    items.length--;
   }
 }
 
@@ -1147,6 +1113,23 @@ function logBooruThumbnailCacheCounts() {
 }
 window.logBooruThumbnailCacheCounts = logBooruThumbnailCacheCounts;
 window.clearThumbnailCacheForTab = clearThumbnailCacheForTab;
+
+// Pagination token getter/setter for tab persistence
+function getPaginationToken() {
+  return booruPaginationToken;
+}
+
+function savePaginationToken() {
+  return booruPaginationToken;
+}
+
+function restorePaginationToken(token) {
+  booruPaginationToken = token;
+}
+
+window.getPaginationToken = getPaginationToken;
+window.savePaginationToken = savePaginationToken;
+window.restorePaginationToken = restorePaginationToken;
 
 // Tag suggestions
 window.tagSuggestions = {};
@@ -3883,13 +3866,16 @@ function initBooruBrowser() {
                 abortPendingHQLoad(post.id);
 
                 try {
+                  // Record download timestamp when initiated (before enqueue)
+                  const downloadInitiatedAt = Date.now();
+                  
                   await downloadQueue.enqueue(task);
 
                   // On success: save post to dbStore and update UI (mirror previous behavior)
                   if (typeof dbStore !== 'undefined' && dbStore && post && post.id) {
                     const postToSave = { ...post };
                     postToSave.artist = artist;
-                    postToSave.downloadedAt = Date.now();
+                    postToSave.downloadedAt = downloadInitiatedAt;
                     // Explicitly ensure all important fields are included (especially for scraper posts)
                     postToSave.imageUrl = post.imageUrl;
                     postToSave.tags = post.tags;
@@ -5915,6 +5901,8 @@ async function loadGenericBooru(sourceId, append) {
   } else {
     page = startPage;
   }
+
+  console.log(page, booruPaginationToken, startPage, append);
   
   // Build tags with negative tags for blacklist (API-side filtering)
   let allTags = searchTags ? searchTags.replace(/\s+/g, ' ') : '';
@@ -7685,6 +7673,9 @@ function createBooruImageElement(post, maxHeight = null, imageWidth = null) {
       downloadBtn.innerHTML = '<i class="fas fa-circle-notch fa-spin"></i>';
 
       try {
+        // Record download timestamp when initiated (before enqueue)
+        const downloadInitiatedAt = Date.now();
+        
         // Enqueue download through pipeline (retries handled centrally)
         const task = {
           postId: post.id,
@@ -7703,7 +7694,7 @@ function createBooruImageElement(post, maxHeight = null, imageWidth = null) {
         if (typeof dbStore !== 'undefined' && dbStore && post && post.id) {
           const postToSave = { ...post };
           postToSave.artist = artist;
-          postToSave.downloadedAt = Date.now();
+          postToSave.downloadedAt = downloadInitiatedAt;
           // Explicitly ensure all important fields are included (especially for scraper posts)
           postToSave.imageUrl = post.imageUrl;
           postToSave.tags = post.tags;
