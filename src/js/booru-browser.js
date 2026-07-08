@@ -626,7 +626,10 @@ function updateHqLoadingCounter(delta, taskId = null, bytesProgress = null, init
   const progressBar = document.getElementById('hq-loading-progress-bar');
   const progressFill = document.getElementById('hq-loading-progress-fill');
   
-  if (!el) return;
+  if (!el) {
+    console.warn('[updateHqLoadingCounter] Loading toast counter element not found!');
+    return;
+  }
   
   if (_hqLoadingCount === 0) {
     el.innerHTML = 'Loading: <b>0</b> posts <b class="hq-loading-mb">0.0 MB</b>';
@@ -647,11 +650,14 @@ function updateHqLoadingCounter(delta, taskId = null, bytesProgress = null, init
   // Update progress bar
   if (progressBar && progressFill) {
     progressBar.classList.remove('hidden');
+    progressFill.style.width = '0%';
     if (_hqTotalBytesInitial > 0) {
       const bytesLoaded = _hqTotalBytesInitial - _hqTotalBytes;
       const progressPercent = Math.max(0, Math.min(100, (bytesLoaded / _hqTotalBytesInitial) * 100));
       progressFill.style.width = progressPercent + '%';
     }
+  } else {
+    console.warn('[updateHqLoadingCounter] Progress bar elements missing - progressBar:', !!progressBar, 'progressFill:', !!progressFill);
   }
 }
 
@@ -664,6 +670,7 @@ async function loadImageWithProgress(url, onProgress) {
     }
     
     const totalBytes = parseInt(response.headers.get('content-length') || '0', 10);
+    
     let loadedBytes = 0;
     
     const reader = response.body.getReader();
@@ -672,7 +679,9 @@ async function loadImageWithProgress(url, onProgress) {
     while (true) {
       const { done, value } = await reader.read();
       
-      if (done) break;
+      if (done) {
+        break;
+      }
       
       chunks.push(value);
       loadedBytes += value.length;
@@ -688,7 +697,7 @@ async function loadImageWithProgress(url, onProgress) {
     const blob = new Blob(chunks, { type: response.headers.get('content-type') });
     return blob;
   } catch (error) {
-    console.error('Error loading image with progress:', error);
+    console.error('[loadImageWithProgress] Error loading image with progress:', error);
     throw error;
   }
 }
@@ -8809,25 +8818,11 @@ function showPreviewForElement(mediaElement, forceVideoLoad = false) {
 
     // Create preview loading overlay (same as for images)
     let loadingOverlay = booruPreviewMediaContainer.querySelector('.preview-loading-overlay');
-    if (!loadingOverlay) {
+    if (!loadingOverlay && mediaElement.dataset.highQualityLoading === 'true') {
       loadingOverlay = document.createElement('div');
       loadingOverlay.className = 'preview-loading-overlay';
       loadingOverlay.innerHTML = '<i class="fas fa-circle-notch fa-spin"></i>';
-      loadingOverlay.style.cssText = `
-        position: absolute;
-        top: 10px;
-        right: 10px;
-        width: 45px;
-        height: 45px;
-        display: flex;
-        align-items: center;
-        justify-content: center;
-        background: rgba(0, 0, 0, 0.5);
-        border-radius: 50%;
-        color: var(--accent);
-        font-size: 28px;
-        z-index: 10;
-      `;
+      loadingOverlay.dataset.hqLoading = 'true';
       booruPreviewMediaContainer.style.position = 'relative';
       booruPreviewMediaContainer.appendChild(loadingOverlay);
     }
@@ -9077,21 +9072,6 @@ function showPreviewForElement(mediaElement, forceVideoLoad = false) {
             loadingOverlay = document.createElement('div');
             loadingOverlay.className = 'preview-loading-overlay';
             loadingOverlay.innerHTML = '<i class="fas fa-circle-notch fa-spin"></i>';
-            loadingOverlay.style.cssText = `
-              position: absolute;
-              top: 10px;
-              right: 10px;
-              width: 45px;
-              height: 45px;
-              display: flex;
-              align-items: center;
-              justify-content: center;
-              background: rgba(0, 0, 0, 0.5);
-              border-radius: 50%;
-              color: var(--accent);
-              font-size: 28px;
-              z-index: 10;
-            `;
             booruPreviewMediaContainer.style.position = 'relative';
             booruPreviewMediaContainer.appendChild(loadingOverlay);
           }
@@ -9099,6 +9079,7 @@ function showPreviewForElement(mediaElement, forceVideoLoad = false) {
           // Add loading spinner to download button if gallery item exists
           const galleryItem = mediaElement.closest('.booru-image-item');
           const downloadBtn = galleryItem?.querySelector('.booru-download-btn');
+          
           // Capture original HTML — if the button is already showing a spinner (e.g., because
           // the gallery quality toggle is mid-load), derive the correct restore target from the
           // item's downloaded state rather than blindly capturing the transient spinner.
@@ -9120,6 +9101,7 @@ function showPreviewForElement(mediaElement, forceVideoLoad = false) {
           
           loadingQueue.enqueue(async () => {
             let taskId = `hq-${mediaElement.dataset.postId || Date.now()}-${Math.random().toString(36).substr(2, 9)}`;
+            
             let contentLength = 0;
             try {
               const highQualityUrl = mediaElement.dataset.imageUrl;
@@ -9152,25 +9134,86 @@ function showPreviewForElement(mediaElement, forceVideoLoad = false) {
               // This avoids reloading the raw source URL again on subsequent hovers.
               mediaElement.dataset.highQualityUrl = getImageUrl(highQualityUrl);
               
+              // Capture the gallery post ID and source so we can verify it matches the preview
+              const galleryItem = mediaElement.closest('.booru-image-item');
+              const targetPostId = galleryItem?.dataset.postId;
+              const targetPostSource = galleryItem?.dataset.postSource;
+              
               // Load image ONCE for both preview and gallery display
               try {
-                const imageUrl = getImageUrl(mediaElement.dataset.imageUrl);
-                const blob = await loadImageWithProgress(imageUrl, (remainingBytes) => {
-                  // Update remaining bytes in real-time and refresh counter display
-                  updateHqLoadingCounter(0, taskId, remainingBytes);
-                });
+                // Check if we already have a valid cached blob URL for this post
+                const cachedBlobUrl = mediaElement.dataset.highQualityUrl;
+                const isValidBlobUrl = typeof cachedBlobUrl === 'string' && cachedBlobUrl.startsWith('blob:');
                 
-                // Convert blob to object URL (single conversion for both uses)
-                const blobUrl = URL.createObjectURL(blob);
+                let blobUrl;
+                if (isValidBlobUrl && mediaElement.dataset.highQualityLoaded === 'true') {
+                  // Already loaded, reuse the cached blob URL
+                  blobUrl = cachedBlobUrl;
+                } else {
+                  // Not cached or not loaded yet, fetch the image
+                  const imageUrl = getImageUrl(mediaElement.dataset.imageUrl);
+                  
+                  // Safety check: if imageUrl is a blob URL, it can't be fetched - skip loading
+                  if (typeof imageUrl === 'string' && imageUrl.startsWith('blob:')) {
+                    throw new Error('Image URL is a blob URL - cannot fetch. This may indicate a data corruption issue.');
+                  }
+                  
+                  const blob = await loadImageWithProgress(imageUrl, (remainingBytes) => {
+                    // Update remaining bytes in real-time and refresh counter display
+                    updateHqLoadingCounter(0, taskId, remainingBytes);
+                    
+                    // Also update preview overlay with progress percentage - ONLY if this post matches the current preview
+                    const overlay = booruPreviewMediaContainer?.querySelector('.preview-loading-overlay');
+                    if (overlay && contentLength > 0) {
+                      // Check if preview is showing this same post
+                      const previewImg = booruPreviewMediaContainer?.querySelector('img');
+                      const previewVideo = booruPreviewMediaContainer?.querySelector('video');
+                      const previewElement = previewImg || previewVideo;
+                      
+                      // Only update overlay if preview is showing this post
+                      if (previewElement && previewElement.dataset.postId === targetPostId && previewElement.dataset.postSource === targetPostSource) {
+                        const loadedBytes = contentLength - remainingBytes;
+                        const progressPercent = Math.max(0, Math.min(100, (loadedBytes / contentLength) * 100));
+                        let percentDiv = overlay.querySelector('.preview-loading-percent');
+                        if (!percentDiv) {
+                          percentDiv = document.createElement('div');
+                          percentDiv.className = 'preview-loading-percent';
+                          overlay.appendChild(percentDiv);
+                        }
+                        percentDiv.textContent = `${Math.round(progressPercent)}%`;
+                      }
+                    }
+                  });
+                  
+                  // Convert blob to object URL (single conversion for both uses)
+                  blobUrl = URL.createObjectURL(blob);
+                }
                 
                 // Register this blob URL with the current tab for memory management
                 if (typeof window.activeTabId !== 'undefined' && window.activeTabId) {
                   registerTabHQCache(window.activeTabId, blobUrl);
                 }
                 
-                // Remove loading indicator from preview
+                // Update loading overlay with progress instead of removing it
                 const overlay = booruPreviewMediaContainer.querySelector('.preview-loading-overlay');
-                if (overlay) overlay.remove();
+                if (overlay) {
+                  // Only update overlay if preview is showing this post
+                  const previewImg = booruPreviewMediaContainer?.querySelector('img');
+                  const previewVideo = booruPreviewMediaContainer?.querySelector('video');
+                  const previewElement = previewImg || previewVideo;
+                  
+                  if (previewElement && previewElement.dataset.postId === targetPostId && previewElement.dataset.postSource === targetPostSource) {
+                    // Keep overlay visible and show 100% completion
+                    let percentDiv = overlay.querySelector('.preview-loading-percent');
+                    if (!percentDiv) {
+                      percentDiv = document.createElement('div');
+                      percentDiv.className = 'preview-loading-percent';
+                      overlay.appendChild(percentDiv);
+                    }
+                    percentDiv.textContent = '100%';
+                    overlay.dataset.hqLoading = 'true'; // Mark that HQ is loading
+                  }
+                }
                 
                 // Restore download button
                 const currentGalleryItem = mediaElement.closest('.booru-image-item');
@@ -9214,6 +9257,7 @@ function showPreviewForElement(mediaElement, forceVideoLoad = false) {
                   
                   // Check if preview is currently showing this same post and update it
                   const galleryPostId = currentGalleryItem?.dataset.postId;
+                  
                   if (galleryPostId && booruHoverPreview?.classList.contains('active')) {
                     const previewImg = booruPreviewMediaContainer?.querySelector('img');
                     const previewVideo = booruPreviewMediaContainer?.querySelector('video');
@@ -9222,6 +9266,12 @@ function showPreviewForElement(mediaElement, forceVideoLoad = false) {
                     if (previewElement && previewElement.dataset.postId === galleryPostId) {
                       // Preview is showing the same post, update its src to the HQ blob URL
                       previewElement.src = blobUrl;
+                      
+                      // Now that preview is updated, remove the loading overlay
+                      const overlay = booruPreviewMediaContainer?.querySelector('.preview-loading-overlay');
+                      if (overlay && overlay.dataset.hqLoading === 'true') {
+                        overlay.remove();
+                      }
                     }
                   }
                 }, { once: true });
@@ -9243,6 +9293,11 @@ function showPreviewForElement(mediaElement, forceVideoLoad = false) {
                   if (currentDownloadBtn && originalDownloadHTML !== null) {
                     currentDownloadBtn.innerHTML = originalDownloadHTML;
                   }
+                  // Remove loading overlay on error
+                  const overlay = booruPreviewMediaContainer?.querySelector('.preview-loading-overlay');
+                  if (overlay && overlay.dataset.hqLoading === 'true') {
+                    overlay.remove();
+                  }
                   delete mediaElement.dataset.highQualityLoading;
                 }, { once: true });
                 
@@ -9253,7 +9308,7 @@ function showPreviewForElement(mediaElement, forceVideoLoad = false) {
                 mediaElement.dataset.highQualityLoaded = 'true';
                 delete mediaElement.dataset.highQualityLoading;
               } catch (err) {
-                console.error('Failed to load gallery image with progress:', err);
+                console.error('[HQ Preview Load] Failed to load gallery image with progress:', err);
                 // Remove any existing error display
                 const errorDiv = mediaElement.parentElement?.querySelector('div[style*="background: var(--bg-darkest)"]');
                 if (errorDiv) {
@@ -9338,6 +9393,18 @@ function showPreviewForElement(mediaElement, forceVideoLoad = false) {
         }
       });
       booruPreviewMediaContainer.appendChild(img);
+      
+      // If HQ is currently loading, recreate the overlay so the user can see the progress
+      if (mediaElement.dataset.highQualityLoading === 'true') {
+        let overlay = booruPreviewMediaContainer.querySelector('.preview-loading-overlay');
+        if (!overlay) {
+          overlay = document.createElement('div');
+          overlay.className = 'preview-loading-overlay';
+          overlay.innerHTML = '<i class="fas fa-circle-notch fa-spin"></i><div class="preview-loading-percent">0%</div>';
+          overlay.dataset.hqLoading = 'true';
+          booruPreviewMediaContainer.appendChild(overlay);
+        }
+      }
     }
   }
   

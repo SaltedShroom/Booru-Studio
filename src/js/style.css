@@ -2410,10 +2410,10 @@ body, html {
   overflow: hidden;
   pointer-events: none;
   opacity: 0.8;
-  transition: opacity 0.4s ease;
+  transition: transform 0.5s ease;
 }
 .hq-loading-progress-bar.hidden {
-  opacity: 0;
+  transform: translateX(-100%);
 }
 .hq-loading-progress-fill {
   height: 100%;
@@ -3607,6 +3607,30 @@ body, html {
   height: auto;
   object-fit: contain;
   display: block;
+}
+
+/* Loading overlay for HQ preview loading */
+.preview-loading-overlay {
+  position: absolute;
+  top: 10px;
+  right: 10px;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  background: rgba(0, 0, 0, 0.7);
+  border-radius: 100%;
+  color: var(--accent-secondary);
+  z-index: 10;
+  padding: 8px 4px;
+  font-size: 32px;
+  gap: 4px;
+}
+.preview-loading-percent {
+  font-family: 'code', monospace;
+  font-size: 9px;
+  font-weight: 600;
+  position: absolute;
 }
 
 .booru-hover-preview-info {
