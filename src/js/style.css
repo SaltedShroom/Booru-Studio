@@ -3131,10 +3131,41 @@ body, html {
   flex-grow: 1;
   flex-direction: row;
   gap: 8px;
-  overflow-x: auto;
-  overflow-y: hidden;
+  overflow: hidden;
   padding: 8px;
   align-items: flex-start;
+  position: relative;
+}
+
+.booru-panel-downloads-empty {
+  position: absolute;
+  inset: 0;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 12px;
+  padding: 16px;
+  text-align: center;
+  border: 2px dashed var(--border);
+  color: var(--text-secondary);
+}
+
+.booru-panel-downloads-empty-icon {
+  font-size: 32px;
+  opacity: 0.5;
+  color: var(--text-secondary);
+}
+
+.booru-panel-downloads-empty-text {
+  font-size: 13px;
+  line-height: 1.4;
+  color: var(--text-secondary);
+}
+
+.booru-panel-downloads-empty-text strong {
+  color: var(--text-primary);
+  font-weight: 600;
 }
 .booru-panel-download-item {
   height: 100%;
@@ -3144,7 +3175,7 @@ body, html {
   cursor: pointer;
   background: var(--bg-darkest);
   transition: all 0.2s ease;
-  opacity: 0.75;
+  opacity: 0.85;
 }
 .booru-panel-download-item:hover {
   transform: scale(1.03);
@@ -5079,6 +5110,7 @@ textarea.settings-input {
   bottom: 0px;
   left: 50%;
   width: auto;
+  transform: translateX(-50%);
   z-index: 999999;
   pointer-events: none;
   user-select: none;
@@ -5093,7 +5125,7 @@ textarea.settings-input {
 
 .app-loading-download-container:has(.loaded) {
   left: 0px;
-  transform: translate(0, 0);
+  transform: translateX(0);
 }
 
 

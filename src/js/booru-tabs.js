@@ -1085,6 +1085,11 @@ function closeBooruTab(tabId) {
     window.clearThumbnailCacheForTab(tabId);
   }
   
+  // Clear high-quality image cache for this tab
+  if (typeof clearTabHQCache === 'function') {
+    clearTabHQCache(tabId);
+  }
+  
   // Clean up the tab's data to free memory
   const tab = booruTabs[tabIndex];
   if (tab && tab.booruPosts) {

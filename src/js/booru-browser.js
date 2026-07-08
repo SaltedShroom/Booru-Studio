@@ -337,10 +337,108 @@ function setupBooruPanelDrag() {
   });
 }
 
+// Initialize downloads panel empty state
+function initDownloadsPanelEmptyState() {
+  const panelDownloads = document.getElementById('booru-panel-downloads');
+  if (!panelDownloads) return;
+
+  // Check if there are any items
+  const items = panelDownloads.querySelectorAll('.booru-panel-download-item');
+  if (items.length === 0) {
+    showDownloadsPanelEmptyState();
+  }
+}
+
+// Show empty state placeholder
+function showDownloadsPanelEmptyState() {
+  const panelDownloads = document.getElementById('booru-panel-downloads');
+  if (!panelDownloads) return;
+
+  // Only show if no items exist
+  if (panelDownloads.querySelectorAll('.booru-panel-download-item').length > 0) return;
+  if (panelDownloads.querySelector('.booru-panel-downloads-empty')) return;
+
+  const emptyState = document.createElement('div');
+  emptyState.className = 'booru-panel-downloads-empty';
+  emptyState.innerHTML = `
+    <div class="booru-panel-downloads-empty-icon">
+      <i class="fas fa-inbox"></i>
+    </div>
+    <div class="booru-panel-downloads-empty-text">
+      <strong>Downloads</strong><br>
+      Posts will appear here as you download them
+    </div>
+  `;
+  panelDownloads.appendChild(emptyState);
+}
+
+// Remove empty state when items are added
+function removeDownloadsPanelEmptyState() {
+  const panelDownloads = document.getElementById('booru-panel-downloads');
+  if (!panelDownloads) return;
+
+  const emptyState = panelDownloads.querySelector('.booru-panel-downloads-empty');
+  if (emptyState) {
+    emptyState.remove();
+  }
+}
+
+// Handle overflow by removing oldest items when new ones are added
+function enforceDownloadsPanelMaxItems() {
+  const panelDownloads = document.getElementById('booru-panel-downloads');
+  if (!panelDownloads) return;
+
+  const items = panelDownloads.querySelectorAll('.booru-panel-download-item');
+  if (items.length === 0) return;
+
+  // Use ResizeObserver to check if items overflow
+  const checkOverflow = () => {
+    const items = panelDownloads.querySelectorAll('.booru-panel-download-item');
+    let totalWidth = 0;
+    let gapWidth = 8; // CSS gap value
+
+    for (let item of items) {
+      const rect = item.getBoundingClientRect();
+      totalWidth += rect.width + gapWidth;
+    }
+
+    // Get available width (subtract padding and margin)
+    const containerStyle = window.getComputedStyle(panelDownloads);
+    const padding = parseFloat(containerStyle.paddingLeft) + parseFloat(containerStyle.paddingRight);
+    const margin = parseFloat(containerStyle.marginLeft) + parseFloat(containerStyle.marginRight);
+    const availableWidth = panelDownloads.offsetWidth - padding - margin;
+
+    // If content overflows, remove oldest items from the end
+    while (totalWidth > availableWidth && items.length > 1) {
+      items[items.length - 1].remove();
+      items.length--;
+      
+      // Recalculate total width
+      totalWidth = 0;
+      for (let item of items) {
+        const rect = item.getBoundingClientRect();
+        totalWidth += rect.width + gapWidth;
+      }
+    }
+  };
+
+  // Check immediately
+  setTimeout(checkOverflow, 0);
+
+  // Use ResizeObserver to re-check on window resize
+  if (!panelDownloads._resizeObserver) {
+    panelDownloads._resizeObserver = new ResizeObserver(checkOverflow);
+    panelDownloads._resizeObserver.observe(panelDownloads);
+  }
+}
+
 // Add downloaded item to the panel
 function addDownloadedItemToPanel(mediaElement, post) {
   const panelDownloads = document.getElementById('booru-panel-downloads');
   if (!panelDownloads) return;
+  
+  // Remove empty state when first item is added
+  removeDownloadsPanelEmptyState();
   
   // Determine if this is a video or image
   const isVideo = mediaElement.tagName === 'VIDEO' || mediaElement.dataset.isVideo === 'true';
@@ -396,12 +494,16 @@ function addDownloadedItemToPanel(mediaElement, post) {
   
   // Prepend to the beginning (newest items on the left)
   panelDownloads.insertAdjacentElement('afterbegin', itemContainer);
+  
+  // Enforce max items in panel (remove overflow)
+  enforceDownloadsPanelMaxItems();
 }
 
 // Initialize panel drag after a short delay to ensure DOM is fully ready
 setTimeout(() => {
   if (document.getElementById('booru-panel-toggle')) {
     setupBooruPanelDrag();
+    initDownloadsPanelEmptyState();
   }
 }, 100);
 
@@ -494,6 +596,37 @@ function abortPendingHQLoad(postId) {
     }
     delete pendingHQLoadsByPostId[postId];
   }
+}
+
+// Tab-aware HQ cache tracking: Map of tabId -> Set of blob URLs
+window._tabHQCacheMap = window._tabHQCacheMap || new Map();
+
+// Register a high-quality blob URL with a tab for memory management
+function registerTabHQCache(tabId, blobUrl) {
+  if (!tabId || !blobUrl || !blobUrl.startsWith('blob:')) return;
+  
+  if (!window._tabHQCacheMap.has(tabId)) {
+    window._tabHQCacheMap.set(tabId, new Set());
+  }
+  window._tabHQCacheMap.get(tabId).add(blobUrl);
+}
+
+// Clear all HQ cached blobs for a specific tab
+function clearTabHQCache(tabId) {
+  const cachedUrls = window._tabHQCacheMap.get(tabId);
+  if (!cachedUrls) return;
+  
+  // Revoke all blob URLs for this tab
+  for (const blobUrl of cachedUrls) {
+    try {
+      URL.revokeObjectURL(blobUrl);
+    } catch (e) {
+      console.error('Failed to revoke blob URL:', e);
+    }
+  }
+  
+  // Remove the tab from the map
+  window._tabHQCacheMap.delete(tabId);
 }
 
 if (localStorage.getItem('downloadsSidebarSelectedTab')) {
@@ -9066,6 +9199,11 @@ function showPreviewForElement(mediaElement, forceVideoLoad = false) {
                   if (currentDownloadBtn && originalDownloadHTML !== null) {
                     currentDownloadBtn.innerHTML = originalDownloadHTML;
                   }
+                  
+                  // Store the blob URL in dataset for future reuse (though preview cache will be used first)
+                  if (newImg.src && newImg.src.startsWith('blob:')) {
+                    mediaElement.dataset.highQualityUrl = newImg.src;
+                  }
                 };
                 
                 newImg.onerror = (e) => {
@@ -9101,6 +9239,11 @@ function showPreviewForElement(mediaElement, forceVideoLoad = false) {
                   // Convert blob to object URL and set as src
                   const blobUrl = URL.createObjectURL(blob);
                   newImg.src = blobUrl;
+                  
+                  // Register this blob URL with the current tab for memory management
+                  if (typeof window.activeTabId !== 'undefined' && window.activeTabId) {
+                    registerTabHQCache(window.activeTabId, blobUrl);
+                  }
                 } catch (err) {
                   console.error('Failed to load image with progress:', err);
                   showToast('Failed to load high quality preview', 'error');
@@ -9138,6 +9281,11 @@ function showPreviewForElement(mediaElement, forceVideoLoad = false) {
                 // Convert blob to object URL
                 const blobUrl = URL.createObjectURL(blob);
                 
+                // Register this blob URL with the current tab for memory management
+                if (typeof window.activeTabId !== 'undefined' && window.activeTabId) {
+                  registerTabHQCache(window.activeTabId, blobUrl);
+                }
+                
                 // Add load handler for gallery element to restore button when background load completes
                 mediaElement.addEventListener('load', () => {
                   mediaElement.classList.add('loaded');
@@ -9155,8 +9303,10 @@ function showPreviewForElement(mediaElement, forceVideoLoad = false) {
                   }
                   mediaElement.dataset.highQualityLoaded = 'true';
                   delete mediaElement.dataset.highQualityLoading;
+                  // Store the blob URL in dataset so it persists for future previews
+                  mediaElement.dataset.highQualityUrl = blobUrl;
                   if (!mediaElement.dataset.currentQualityUrl) {
-                    mediaElement.dataset.currentQualityUrl = mediaElement.dataset.highQualityUrl || getImageUrl(mediaElement.dataset.imageUrl);
+                    mediaElement.dataset.currentQualityUrl = blobUrl;
                   }
                 }, { once: true });
                 
