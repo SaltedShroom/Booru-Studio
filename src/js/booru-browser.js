@@ -9152,112 +9152,7 @@ function showPreviewForElement(mediaElement, forceVideoLoad = false) {
               // This avoids reloading the raw source URL again on subsequent hovers.
               mediaElement.dataset.highQualityUrl = getImageUrl(highQualityUrl);
               
-              // Update preview image if it's still showing and hasn't been replaced
-              if (img.parentNode === booruPreviewMediaContainer) {
-                
-                // Create a new image element with the high quality URL
-                const newImg = document.createElement('img');
-                newImg.style.opacity = '0';
-                newImg.style.zIndex = '5';
-                newImg.style.position = 'absolute';
-                newImg.style.top = '0';
-                newImg.style.left = '0';
-                newImg.style.width = '100%';
-                newImg.style.height = '100%';
-                newImg.style.objectFit = 'contain';
-                newImg.style.transition = 'opacity 0.2s ease-in';
-                
-                // Make container position relative
-                if (booruPreviewMediaContainer.style.position === '' || booruPreviewMediaContainer.style.position === 'static') {
-                  booruPreviewMediaContainer.style.position = 'relative';
-                }
-                
-                newImg.onload = () => {
-                  // Fade in new image
-                  newImg.style.opacity = '1';
-
-                  // Remove loading indicator from preview
-                  const overlay = booruPreviewMediaContainer.querySelector('.preview-loading-overlay');
-                  if (overlay) overlay.remove();
-                  
-                  // Restore download button only after image is fully loaded - re-query to get fresh reference
-                  const currentGalleryItem = mediaElement.closest('.booru-image-item');
-                  const currentDownloadBtn = currentGalleryItem?.querySelector('.booru-download-btn');
-                  if (currentDownloadBtn && originalDownloadHTML !== null) {
-                    currentDownloadBtn.innerHTML = originalDownloadHTML;
-                  }
-                  
-                  // Store the blob URL in dataset for future reuse (though preview cache will be used first)
-                  if (newImg.src && newImg.src.startsWith('blob:')) {
-                    mediaElement.dataset.highQualityUrl = newImg.src;
-                  }
-                };
-                
-                newImg.onerror = (e) => {
-                  console.error('Failed to load high quality preview, error:', e);
-                  showToast('Failed to load high quality preview', 'error');
-                  if (newImg.parentNode === booruPreviewMediaContainer) {
-                    booruPreviewMediaContainer.removeChild(newImg);
-                  }
-                  
-                  // Remove loading indicator from preview on error
-                  const overlay = booruPreviewMediaContainer.querySelector('.preview-loading-overlay');
-                  if (overlay) overlay.remove();
-                  
-                  // Restore download button on error - re-query to get fresh reference
-                  const currentGalleryItem = mediaElement.closest('.booru-image-item');
-                  const currentDownloadBtn = currentGalleryItem?.querySelector('.booru-download-btn');
-                  if (currentDownloadBtn && originalDownloadHTML !== null) {
-                    currentDownloadBtn.innerHTML = originalDownloadHTML;
-                  }
-                };
-                
-                // Append new image element
-                booruPreviewMediaContainer.appendChild(newImg);
-                
-                // Load image with real-time progress tracking
-                try {
-                  const imageUrl = getImageUrl(mediaElement.dataset.imageUrl);
-                  const blob = await loadImageWithProgress(imageUrl, (remainingBytes) => {
-                    // Update remaining bytes in real-time and refresh counter display
-                    updateHqLoadingCounter(0, taskId, remainingBytes);
-                  });
-                  
-                  // Convert blob to object URL and set as src
-                  const blobUrl = URL.createObjectURL(blob);
-                  newImg.src = blobUrl;
-                  
-                  // Register this blob URL with the current tab for memory management
-                  if (typeof window.activeTabId !== 'undefined' && window.activeTabId) {
-                    registerTabHQCache(window.activeTabId, blobUrl);
-                  }
-                } catch (err) {
-                  console.error('Failed to load image with progress:', err);
-                  showToast('Failed to load high quality preview', 'error');
-                  if (newImg.parentNode === booruPreviewMediaContainer) {
-                    booruPreviewMediaContainer.removeChild(newImg);
-                  }
-                  const overlay = booruPreviewMediaContainer.querySelector('.preview-loading-overlay');
-                  if (overlay) overlay.remove();
-                  const currentGalleryItem = mediaElement.closest('.booru-image-item');
-                  const currentDownloadBtn = currentGalleryItem?.querySelector('.booru-download-btn');
-                  if (currentDownloadBtn && originalDownloadHTML !== null) {
-                    currentDownloadBtn.innerHTML = originalDownloadHTML;
-                  }
-                }
-              }
-              
-              // Update gallery element using the same approach as updateGalleryImageQuality()
-              // Remove any existing error display from the parent container
-              const errorDiv = mediaElement.parentElement?.querySelector('div[style*="background: var(--bg-darkest)"]');
-              if (errorDiv) {
-                errorDiv.remove();
-              }
-              
-              // Remove loaded class to allow new load event
-              mediaElement.classList.remove('loaded');
-              
-              // Load gallery image with real-time progress tracking
+              // Load image ONCE for both preview and gallery display
               try {
                 const imageUrl = getImageUrl(mediaElement.dataset.imageUrl);
                 const blob = await loadImageWithProgress(imageUrl, (remainingBytes) => {
@@ -9265,13 +9160,34 @@ function showPreviewForElement(mediaElement, forceVideoLoad = false) {
                   updateHqLoadingCounter(0, taskId, remainingBytes);
                 });
                 
-                // Convert blob to object URL
+                // Convert blob to object URL (single conversion for both uses)
                 const blobUrl = URL.createObjectURL(blob);
                 
                 // Register this blob URL with the current tab for memory management
                 if (typeof window.activeTabId !== 'undefined' && window.activeTabId) {
                   registerTabHQCache(window.activeTabId, blobUrl);
                 }
+                
+                // Remove loading indicator from preview
+                const overlay = booruPreviewMediaContainer.querySelector('.preview-loading-overlay');
+                if (overlay) overlay.remove();
+                
+                // Restore download button
+                const currentGalleryItem = mediaElement.closest('.booru-image-item');
+                const currentDownloadBtn = currentGalleryItem?.querySelector('.booru-download-btn');
+                if (currentDownloadBtn && originalDownloadHTML !== null) {
+                  currentDownloadBtn.innerHTML = originalDownloadHTML;
+                }
+                
+                // Update gallery element with the same blob URL
+                // Remove any existing error display from the parent container
+                const errorDiv = mediaElement.parentElement?.querySelector('div[style*="background: var(--bg-darkest)"]');
+                if (errorDiv) {
+                  errorDiv.remove();
+                }
+                
+                // Remove loaded class to allow new load event
+                mediaElement.classList.remove('loaded');
                 
                 // Add load handler for gallery element to restore button when background load completes
                 mediaElement.addEventListener('load', () => {
@@ -9295,6 +9211,19 @@ function showPreviewForElement(mediaElement, forceVideoLoad = false) {
                   if (!mediaElement.dataset.currentQualityUrl) {
                     mediaElement.dataset.currentQualityUrl = blobUrl;
                   }
+                  
+                  // Check if preview is currently showing this same post and update it
+                  const galleryPostId = currentGalleryItem?.dataset.postId;
+                  if (galleryPostId && booruHoverPreview?.classList.contains('active')) {
+                    const previewImg = booruPreviewMediaContainer?.querySelector('img');
+                    const previewVideo = booruPreviewMediaContainer?.querySelector('video');
+                    const previewElement = previewImg || previewVideo;
+                    
+                    if (previewElement && previewElement.dataset.postId === galleryPostId) {
+                      // Preview is showing the same post, update its src to the HQ blob URL
+                      previewElement.src = blobUrl;
+                    }
+                  }
                 }, { once: true });
                 
                 // Add error handler for gallery element
@@ -9317,8 +9246,12 @@ function showPreviewForElement(mediaElement, forceVideoLoad = false) {
                   delete mediaElement.dataset.highQualityLoading;
                 }, { once: true });
                 
-                // Set the blob URL as source
+                // Set the blob URL as source for gallery display
                 mediaElement.src = blobUrl;
+                
+                // Mark HQ loading as complete
+                mediaElement.dataset.highQualityLoaded = 'true';
+                delete mediaElement.dataset.highQualityLoading;
               } catch (err) {
                 console.error('Failed to load gallery image with progress:', err);
                 // Remove any existing error display
