@@ -236,6 +236,9 @@ function saveProxySettings() {
   
   // Update status text with the new control port
   updateTorStatusText();
+  
+  // Check proxy connectivity immediately when settings change (instead of polling every 5 seconds)
+  checkProxyConnectivity();
 }
 
 // Update disabled state of proxy fields based on active checkbox
@@ -768,17 +771,6 @@ function showCircuitSpinner() {
   }, 2000);
 }
 
-// Toggle proxy active state
-proxyStatusBtn.addEventListener('click', () => {
-  proxyActive.checked = !proxyActive.checked;
-  updateProxyFieldsDisabled();
-  saveProxySettings();
-  
-  // Update button appearance immediately
-  const settings = JSON.parse(localStorage.getItem('proxySettings') || '{}');
-  updateProxyStatusButton(true, proxyActive.checked);
-});
-
 // Right-click context menu on proxy status button
 (function () {
   const menu = document.createElement('div');
@@ -867,10 +859,19 @@ proxyStatusBtn.addEventListener('click', () => {
     menu.style.top = top + 'px';
   }
 
+  loadCurrentCircuit();
+
   proxyStatusBtn.addEventListener('contextmenu', (e) => {
     e.preventDefault();
     loadCurrentCircuit();
     positionMenuWithinViewport(e.clientX, e.clientY);
+  });
+
+  proxyStatusBtn.addEventListener('click', (e) => {
+    e.preventDefault();
+    const rect = proxyStatusBtn.getBoundingClientRect();
+    loadCurrentCircuit();
+    positionMenuWithinViewport(rect.left, rect.bottom);
   });
 
   document.getElementById('ctx-rotate-circuit').addEventListener('click', async () => {
@@ -890,7 +891,12 @@ proxyStatusBtn.addEventListener('click', () => {
     }
   });
 
-  document.addEventListener('click', closeMenu);
+  document.addEventListener('click', (e) => {
+    // Close menu only if clicking outside the button and the menu
+    if (e.target !== proxyStatusBtn && !proxyStatusBtn.contains(e.target) && !menu.contains(e.target)) {
+      closeMenu();
+    }
+  });
   document.addEventListener('contextmenu', (e) => {
     if (e.target !== proxyStatusBtn && !proxyStatusBtn.contains(e.target)) closeMenu();
   });

@@ -627,14 +627,6 @@ body, html {
   z-index: 2;
 }
 
-#search-suggestion {
-  pointer-events: none;
-  user-select: none;
-  -webkit-user-select: none;
-  background: var(--surface-secondary, var(--surface));
-  opacity: 0.6;
-}
-
 .control-section-compact {
   padding: 0;
   background: transparent;
