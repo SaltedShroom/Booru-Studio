@@ -337,130 +337,174 @@ function setupBooruPanelDrag() {
   });
 }
 
-// Initialize downloads panel empty state
+// Initialize downloads panel (no-op, empty rows already in HTML)
 function initDownloadsPanelEmptyState() {
-  const panelDownloads = document.getElementById('booru-panel-downloads');
-  if (!panelDownloads) return;
-
-  // Check if there are any items
-  const items = panelDownloads.querySelectorAll('.booru-panel-download-item');
-  if (items.length === 0) {
-    showDownloadsPanelEmptyState();
-  }
+  // Empty rows are pre-populated in HTML, nothing to do
 }
 
-// Show empty state placeholder
+// Show empty state placeholder (no-op)
 function showDownloadsPanelEmptyState() {
-  const panelDownloads = document.getElementById('booru-panel-downloads');
-  if (!panelDownloads) return;
-
-  // Only show if no items exist
-  if (panelDownloads.querySelectorAll('.booru-panel-download-item').length > 0) return;
-  if (panelDownloads.querySelector('.booru-panel-downloads-empty')) return;
-
-  const emptyState = document.createElement('div');
-  emptyState.className = 'booru-panel-downloads-empty';
-  emptyState.innerHTML = `
-    <div class="booru-panel-downloads-empty-icon">
-      <i class="fas fa-inbox"></i>
-    </div>
-    <div class="booru-panel-downloads-empty-text">
-      <strong>Downloads</strong><br>
-      Posts will appear here as you download them
-    </div>
-  `;
-  panelDownloads.appendChild(emptyState);
+  // Empty rows are pre-populated in HTML, nothing to do
 }
 
-// Remove empty state when items are added
+// Remove empty rows when items are added (no-op)
 function removeDownloadsPanelEmptyState() {
-  const panelDownloads = document.getElementById('booru-panel-downloads');
-  if (!panelDownloads) return;
-
-  const emptyState = panelDownloads.querySelector('.booru-panel-downloads-empty');
-  if (emptyState) {
-    emptyState.remove();
-  }
+  // Empty rows are used as placeholders, nothing to do
 }
 
 
-// Add downloaded item to the panel
+// Add downloaded item to the panel as a table row
 function addDownloadedItemToPanel(mediaElement, post) {
-  const panelDownloads = document.getElementById('booru-panel-downloads');
-  if (!panelDownloads) return;
+  const table = document.getElementById('booru-panel-downloads');
+  if (!table) return;
   
-  // Remove empty state when first item is added
-  removeDownloadsPanelEmptyState();
+  // Get current date/time for the download
+  const now = new Date();
+  const downloadDateStr = now.toLocaleString();
   
-  // Check how many items are currently displayed and remove the last one if at max
-  const items = panelDownloads.querySelectorAll('.booru-panel-download-item');
-  const MAX_ITEMS = 10;
-  if (items.length >= MAX_ITEMS) {
-    // Remove the oldest item (at the end)
-    items[items.length - 1].remove();
+  // Get upload date from post - createdAt is in milliseconds
+  let uploadDate = null;
+  if (post.createdAt) {
+    uploadDate = new Date(post.createdAt);
+  }
+  const uploadDateStr = uploadDate ? uploadDate.toLocaleString() : 'Unknown';
+  
+  // Get artist - check for "artists" array first (it's the actual property name)
+  let artist = 'Unknown';
+  if (Array.isArray(post.artists) && post.artists.length > 0) {
+    artist = post.artists.join(', ');
   }
   
-  // Determine if this is a video or image
-  const isVideo = mediaElement.tagName === 'VIDEO' || mediaElement.dataset.isVideo === 'true';
-  const isGif = mediaElement.dataset.isGif === 'true';
+  // Get source
+  const source = post.source || 'Unknown';
   
-  // Get the local file URL for the downloaded file
-  const filename = getFilenameFromUrl(post.imageUrl, post.id);
-  const localUrl = `http://localhost:3001/serve-local-file/${encodeURIComponent(filename)}`;
+  // Get ID
+  const id = post.id || 'N/A';
   
-  // Create the download item container
-  const itemContainer = document.createElement('div');
-  itemContainer.className = 'booru-panel-download-item';
+  // Always create a new row for each download (not reusing empty rows)
+  const row = document.createElement('tr');
+  row.className = 'booru-download-row';
   
   // Add is-gif class if this is a GIF
-  if (isGif || localUrl.toLowerCase().endsWith('.gif')) {
-    itemContainer.classList.add('is-gif');
+  const isGif = mediaElement.dataset.isGif === 'true';
+  if (isGif || (post.thumbnailUrl && post.thumbnailUrl.toLowerCase().endsWith('.gif'))) {
+    row.classList.add('is-gif');
   }
   
-  if (isVideo) {
-    // For videos, use the local file as a video element and seek to first frame
-    const video = document.createElement('video');
-    video.preload = 'metadata';
-    video.muted = true;
-    video.src = localUrl;
-    
-    // Seek to first frame on loadedmetadata
-    video.addEventListener('loadedmetadata', () => {
-      video.currentTime = 0;
-    }, { once: true });
-    
-    itemContainer.appendChild(video);
-  } else {
-    // For images, use the local file URL
-    const img = document.createElement('img');
-    img.src = localUrl;
-    img.alt = post.title || 'Downloaded';
-    itemContainer.appendChild(img);
-  }
+  // Set background image for the row (no filter - we'll handle styling in CSS)
+  const bgImageUrl = getImageUrl(post.thumbnailUrl || post.imageUrl);
+  
+  // Create preview cell with background image
+  const previewCell = document.createElement('td');
+  previewCell.className = 'preview-cell';
+  previewCell.style.backgroundImage = `url('${bgImageUrl}')`.replace(/'/g, '"');
+  previewCell.style.backgroundSize = 'cover';
+  previewCell.style.backgroundPosition = 'center';
+  previewCell.style.backgroundRepeat = 'no-repeat';
+  
+  // Create ID cell
+  const idCell = document.createElement('td');
+  idCell.textContent = id;
+  idCell.title = id;
+  
+  // Create URL cell
+  const urlCell = document.createElement('td');
+  urlCell.textContent = post.imageUrl;
+  urlCell.title = post.imageUrl;
+  
+  // Create artists cell
+  const artistsCell = document.createElement('td');
+  artistsCell.textContent = artist;
+  artistsCell.title = artist;
+  
+  // Create source cell
+  const sourceCell = document.createElement('td');
+  sourceCell.textContent = source;
+  sourceCell.title = source;
+  
+  // Create upload date cell
+  const uploadDateCell = document.createElement('td');
+  uploadDateCell.textContent = uploadDateStr;
+  uploadDateCell.title = uploadDateStr;
+  
+  // Create download date cell
+  const downloadDateCell = document.createElement('td');
+  downloadDateCell.textContent = downloadDateStr;
+  downloadDateCell.title = downloadDateStr;
+  
+  // Add cells to row in order (Preview first, then ID, URL, etc)
+  row.appendChild(previewCell);
+  row.appendChild(idCell);
+  row.appendChild(urlCell);
+  row.appendChild(artistsCell);
+  row.appendChild(sourceCell);
+  row.appendChild(uploadDateCell);
+  row.appendChild(downloadDateCell);
   
   // Add click handler to open in lightbox
-  itemContainer.addEventListener('click', () => {
-    const mediaEl = itemContainer.querySelector('img, video');
-    if (mediaEl) {
-      // Collect all downloads panel items
-      const panelItems = Array.from(panelDownloads.querySelectorAll('.booru-panel-download-item'));
-      LightboxImages = panelItems.map(item => {
-        const media = item.querySelector('img, video');
-        return media ? media.src : null;
+  row.addEventListener('click', () => {
+    // Collect all media from download rows (excluding empty rows)
+    const table = document.getElementById('booru-panel-downloads');
+    const downloadRows = Array.from(table.querySelectorAll('.booru-download-row'));
+    
+    // Build image list from local files in the downloads folder
+    LightboxImages = downloadRows.map(rowEl => {
+      const idCell = rowEl.querySelector('td:nth-child(2)');
+      const urlCell = rowEl.querySelector('td:nth-child(3)');
+      if (urlCell && idCell && urlCell.textContent && idCell.textContent) {
+        const filename = getFilenameFromUrl(urlCell.textContent, idCell.textContent);
+        return `http://localhost:3001/serve-local-file/${encodeURIComponent(filename)}`;
+      }
+      return null;
+    }).filter(src => src !== null);
+    
+    // If we couldn't get local files, fall back to background image URLs
+    if (LightboxImages.length === 0) {
+      LightboxImages = downloadRows.map(rowEl => {
+        const bgImage = rowEl.style.backgroundImage;
+        if (bgImage) {
+          // Extract URL from "url(...)" format
+          const match = bgImage.match(/url\(['"]?([^'"]+)['"]?\)/);
+          return match ? match[1] : null;
+        }
+        return null;
       }).filter(src => src !== null);
-      
-      // Find the index of the clicked item
-      const clickedIndex = panelItems.indexOf(itemContainer);
-      LightboxIndex = Math.max(0, clickedIndex);
-      
-      lightboxModal.classList.add('active');
-      showLightboxImage(LightboxIndex);
     }
+    
+    // Find the index of the clicked row
+    const clickedIndex = downloadRows.indexOf(row);
+    LightboxIndex = Math.max(0, clickedIndex);
+    
+    lightboxModal.classList.add('active');
+    showLightboxImage(LightboxIndex);
   });
-  itemContainer.style.cursor = 'pointer';
+
+  const existingRowsCount = table.querySelectorAll('.booru-download-row').length;
+  let emptyRowsToAdd = Math.max(0, 5 - existingRowsCount);
+
+  document.querySelectorAll('.booru-panel-downloads tr.booru-empty-row').forEach(tr => {
+    tr.remove();
+  });
   
-  // Prepend to the beginning (newest items on the left)
-  panelDownloads.insertAdjacentElement('afterbegin', itemContainer);
+  // Always insert at the top (right after header), pushing everything else down
+  // Insert before the first child after the header (index 1)
+  if (table.children.length > 1) {
+    // Insert before the second child (pushing existing rows down)
+    table.insertBefore(row, table.children[1]);
+  } else {
+    // Only header exists, append the new row
+    table.appendChild(row);
+  }
+
+  for (let i = 1; i < emptyRowsToAdd; i++) {
+    const emptyRow = document.createElement('tr');
+    emptyRow.className = 'booru-empty-row';
+    for (let j = 0; j < 7; j++) {
+      const emptyCell = document.createElement('td');
+      emptyRow.appendChild(emptyCell);
+    }
+    table.appendChild(emptyRow);
+  }
 }
 
 // Initialize panel drag after a short delay to ensure DOM is fully ready
