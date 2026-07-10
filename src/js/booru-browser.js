@@ -367,19 +367,22 @@ function addDownloadedItemToPanel(mediaElement, post) {
   if (post.createdAt) {
     uploadDate = new Date(post.createdAt);
   }
-  const uploadDateStr = uploadDate ? uploadDate.toLocaleString() : 'Unknown';
+  const uploadDateStr = uploadDate ? uploadDate.toLocaleString() : '-';
   
   // Get artist - check for "artists" array first (it's the actual property name)
-  let artist = 'Unknown';
+  let artist = '-';
   if (Array.isArray(post.artists) && post.artists.length > 0) {
-    artist = post.artists.join(', ');
+    const tempArtist = post.artists.join(', ');
+    if (tempArtist.trim() != 'Unknown') {
+      artist = tempArtist;
+    }
   }
   
   // Get source
-  const source = post.source || 'Unknown';
+  const source = post.source || '-';
   
   // Get ID
-  const id = post.id || 'N/A';
+  const id = post.id || '-';
   
   // Always create a new row for each download (not reusing empty rows)
   const row = document.createElement('tr');
