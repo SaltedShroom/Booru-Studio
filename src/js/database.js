@@ -57,6 +57,13 @@ async function initDatabase() {
       downloaded_at INTEGER
     );
     
+    CREATE TABLE IF NOT EXISTS downloaded_artists (
+      artist TEXT PRIMARY KEY,
+      post_count INTEGER DEFAULT 0,
+      last_download_date INTEGER,
+      last_download_source TEXT
+    );
+    
     CREATE TABLE IF NOT EXISTS tabs (
       id TEXT PRIMARY KEY,
       data TEXT
@@ -82,16 +89,30 @@ async function initDatabase() {
       created_at INTEGER,
       updated_at INTEGER
     );
+    
+    CREATE TABLE IF NOT EXISTS homepage (
+      key TEXT PRIMARY KEY,
+      data TEXT
+    );
   `);
 
   migrateDownloadedPostsSchema();
   migrateTagSuggestionsSchema();
+  migrateDownloadedArtistsSchema();
+  migrateDownloadedArtistsAddSourceColumn();
 
   db.exec(`
     CREATE INDEX IF NOT EXISTS idx_downloaded_posts_downloaded_at ON downloaded_posts(downloaded_at);
     CREATE INDEX IF NOT EXISTS idx_downloaded_posts_artist ON downloaded_posts(artist);
     CREATE INDEX IF NOT EXISTS idx_downloaded_posts_source ON downloaded_posts(source);
+    CREATE INDEX IF NOT EXISTS idx_downloaded_artists_last_download ON downloaded_artists(last_download_date);
   `);
+  
+  // Clean up artists with 0 downloaded posts
+  cleanupZeroCountArtists();
+  
+  // Verify schema for debugging
+  verifyDownloadedArtistsSchema();
   
   ensureDefaultCSSPresets();
   
@@ -165,6 +186,24 @@ function saveDownloadedPost(post) {
   }
   
   try {
+    const postId = post.id || undefined;
+    const newArtist = post.artist || post.author || null;
+    const downloadedAt = post.downloadedAt || Date.now();
+    
+    // Check if this is a new post or an update
+    let existingPost = null;
+    let oldArtist = null;
+    let isNewPost = true;
+    
+    if (postId) {
+      existingPost = db.prepare('SELECT artist FROM downloaded_posts WHERE id = ?').get(postId);
+      if (existingPost) {
+        isNewPost = false;
+        oldArtist = existingPost.artist;
+      }
+    }
+    
+    // Save the post
     const stmt = db.prepare(`
       INSERT OR REPLACE INTO downloaded_posts 
       (id, image_url, thumbnail_url, tags, artist, score, source, aspect_ratio, created_at, downloaded_at)
@@ -172,17 +211,37 @@ function saveDownloadedPost(post) {
     `);
     
     stmt.run(
-      post.id || undefined,
+      postId,
       post.imageUrl || post.image_url || null,
       post.thumbnailUrl || post.thumbnail_url || null,
       JSON.stringify(Array.isArray(post.tags) ? post.tags : []),
-      post.artist || post.author || null,
+      newArtist,
       scoreValue !== undefined ? Number(scoreValue) : null,
       post.source || undefined,
       post.aspectRatio || post.aspect_ratio || null,
       post.createdAt || post.created_at || null,
-      post.downloadedAt || Date.now()
+      downloadedAt
     );
+    
+    // Handle artist statistics
+    const postCreatedAt = post.createdAt || post.created_at || null;
+    const postSource = post.source || undefined;
+    // If artist changed, update the old artist's stats
+    if (!isNewPost && oldArtist && oldArtist !== newArtist) {
+      if (oldArtist.trim()) {
+        updateArtistAfterPostDelete(oldArtist);
+      }
+      // Treat the new artist as a new post for this artist
+      if (newArtist && newArtist.trim()) {
+        updateArtistStatistics(newArtist, true, postCreatedAt, postSource);
+      }
+    } else {
+      // Normal case: artist didn't change or this is a new post
+      if (newArtist && newArtist.trim()) {
+        updateArtistStatistics(newArtist, isNewPost, postCreatedAt, postSource);
+      }
+    }
+    
     return true;
   } catch (error) {
     console.error('❌ saveDownloadedPost FAILED for post', post?.id, ':', error.message);
@@ -211,10 +270,167 @@ function getAllDownloadedPosts() {
 function removeDownloadedPost(id) {
   if (!db) throw new Error('Database not initialized');
   
-  const stmt = db.prepare('DELETE FROM downloaded_posts WHERE id = ?');
-  stmt.run(id);
+  try {
+    // Get the artist of the post being deleted
+    const post = db.prepare('SELECT artist FROM downloaded_posts WHERE id = ?').get(id);
+    const artist = post ? post.artist : null;
+    
+    // Delete the post
+    const stmt = db.prepare('DELETE FROM downloaded_posts WHERE id = ?');
+    stmt.run(id);
+    
+    // Update artist statistics if artist exists
+    if (artist && artist.trim()) {
+      updateArtistAfterPostDelete(artist);
+    }
+    
+    return true;
+  } catch (error) {
+    console.error('❌ removeDownloadedPost FAILED for post', id, ':', error.message);
+    throw error;
+  }
+}
+
+// ============== Artist Statistics Operations ==============
+
+function updateArtistStatistics(artist, isNewPost, createdAt = null, source = null) {
+  if (!db) throw new Error('Database not initialized');
+  if (!artist || !artist.trim()) return;
   
-  return true;
+  try {
+    if (isNewPost) {
+      // Check if artist exists
+      const existingArtist = db.prepare(
+        'SELECT post_count FROM downloaded_artists WHERE artist = ?'
+      ).get(artist);
+      
+      if (existingArtist) {
+        // Artist exists, increment post count and update source
+        db.prepare(`
+          UPDATE downloaded_artists 
+          SET post_count = post_count + 1, last_download_source = ?
+          WHERE artist = ?
+        `).run(source, artist);
+      } else {
+        // New artist, create record with post_count = 1
+        // Use post's createdAt as the initial last_download_date
+        db.prepare(`
+          INSERT INTO downloaded_artists (artist, post_count, last_download_date, last_download_source)
+          VALUES (?, 1, ?, ?)
+        `).run(artist, createdAt, source);
+      }
+    }
+  } catch (error) {
+    console.error('❌ updateArtistStatistics FAILED for artist', artist, ':', error.message);
+    throw error;
+  }
+}
+
+function updateArtistAfterPostDelete(artist) {
+  if (!db) throw new Error('Database not initialized');
+  if (!artist || !artist.trim()) return;
+  
+  try {
+    // Count remaining posts for this artist
+    const result = db.prepare(
+      'SELECT COUNT(*) as count FROM downloaded_posts WHERE artist = ?'
+    ).get(artist);
+    
+    if (result.count === 0) {
+      // No more posts from this artist, delete the artist record
+      db.prepare('DELETE FROM downloaded_artists WHERE artist = ?').run(artist);
+    } else {
+      // Update post count, preserve last_download_date
+      db.prepare(`
+        UPDATE downloaded_artists 
+        SET post_count = ?
+        WHERE artist = ?
+      `).run(result.count, artist);
+    }
+  } catch (error) {
+    console.error('❌ updateArtistAfterPostDelete FAILED for artist', artist, ':', error.message);
+    throw error;
+  }
+}
+
+function getDownloadedArtist(artist) {
+  if (!db) throw new Error('Database not initialized');
+  
+  const stmt = db.prepare(
+    'SELECT artist, post_count, last_download_date, last_download_source FROM downloaded_artists WHERE artist = ?'
+  );
+  return stmt.get(artist);
+}
+
+function getAllDownloadedArtists() {
+  if (!db) throw new Error('Database not initialized');
+  
+  const stmt = db.prepare(`
+    SELECT artist, post_count, last_download_date, last_download_source 
+    FROM downloaded_artists 
+    ORDER BY post_count DESC, last_download_date DESC
+  `);
+  return stmt.all();
+}
+
+function getDownloadedArtistCount() {
+  if (!db) throw new Error('Database not initialized');
+  
+  const stmt = db.prepare('SELECT COUNT(*) as count FROM downloaded_artists');
+  const row = stmt.get();
+  
+  return row.count;
+}
+
+function searchDownloadedArtists(query) {
+  if (!db) throw new Error('Database not initialized');
+  
+  const searchTerm = `%${query}%`;
+  const stmt = db.prepare(`
+    SELECT artist, post_count, last_download_date, last_download_source
+    FROM downloaded_artists
+    WHERE artist LIKE ?
+    ORDER BY post_count DESC, last_download_date DESC
+  `);
+  return stmt.all(searchTerm);
+}
+
+// Update artist loaded dates when posts are displayed in gallery
+// Accepts an array of artists (or single artist) and a creation date
+// Only updates existing artists - does NOT create new entries
+function updateArtistLoadedDates(artists, createdAt) {
+  if (!db) throw new Error('Database not initialized');
+  if (!artists || !createdAt) return;
+  
+  // Normalize to array
+  const artistList = Array.isArray(artists) ? artists : [artists];
+  
+  try {
+    for (const artist of artistList) {
+      // Only process non-empty artist names
+      if (!artist || !artist.trim()) continue;
+      
+      const trimmedArtist = artist.trim();
+      
+      // Check if artist exists
+      const existing = db.prepare(
+        'SELECT last_download_date FROM downloaded_artists WHERE artist = ?'
+      ).get(trimmedArtist);
+      
+      if (existing) {
+        // Artist exists, update last_download_date if createdAt is newer
+        if (!existing.last_download_date || createdAt > existing.last_download_date) {
+          db.prepare(
+            'UPDATE downloaded_artists SET last_download_date = ? WHERE artist = ?'
+          ).run(createdAt, trimmedArtist);
+        }
+      }
+      // NOTE: Don't create new artist entries here - artists are only created when posts are downloaded
+    }
+  } catch (error) {
+    console.error('❌ updateArtistLoadedDates FAILED:', error.message);
+    throw error;
+  }
 }
 
 function searchDownloadedPosts(query) {
@@ -257,14 +473,16 @@ function getDownloadedPostCount() {
 function bulkImportPosts(posts) {
   if (!db) throw new Error('Database not initialized');
   
-  const stmt = db.prepare(`
+  const postStmt = db.prepare(`
     INSERT OR REPLACE INTO downloaded_posts 
     (id, image_url, thumbnail_url, tags, artist, score, source, aspect_ratio, created_at, downloaded_at)
     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
   `);
   
   const insertMany = db.transaction((posts) => {
+    const artistStats = new Map(); // Track artist stats for efficient bulk update
     let count = 0;
+    
     for (const post of posts) {
       // Handle score objects (e.g., e621 returns {up: X, down: Y, total: Z})
       let scoreValue = post.score;
@@ -273,23 +491,65 @@ function bulkImportPosts(posts) {
       }
       
       try {
-        stmt.run(
+        const artist = post.artist || post.author || null;
+        const downloadedAt = post.downloadedAt || Date.now();
+        
+        postStmt.run(
           post.id,
           post.imageUrl || null,
           post.thumbnailUrl || null,
           JSON.stringify(post.tags || []),
-          post.artist || post.author || null,
+          artist,
           scoreValue !== undefined ? Number(scoreValue) : null,
           post.source || null,
           post.aspectRatio || null,
           post.createdAt || null,
-          post.downloadedAt || Date.now()
+          downloadedAt
         );
+        
+        // Track artist statistics
+        if (artist && artist.trim()) {
+          if (!artistStats.has(artist)) {
+            artistStats.set(artist, { count: 0, latestDate: downloadedAt, latestCreatedAt: post.createdAt || null, latestSource: post.source || null });
+          }
+          const stats = artistStats.get(artist);
+          stats.count++;
+          stats.latestDate = Math.max(stats.latestDate, downloadedAt);
+          // Track the latest createdAt date for this artist
+          if (post.createdAt && (!stats.latestCreatedAt || post.createdAt > stats.latestCreatedAt)) {
+            stats.latestCreatedAt = post.createdAt;
+          }
+          // Always update to the most recent source
+          stats.latestSource = post.source || null;
+        }
+        
         count++;
       } catch (error) {
         console.error(`❌ Failed to import post ${post?.id}:`, error.message);
       }
     }
+    
+    // Update artist statistics
+    const selectStmt = db.prepare('SELECT post_count, last_download_date FROM downloaded_artists WHERE artist = ?');
+    const insertStmt = db.prepare('INSERT INTO downloaded_artists (artist, post_count, last_download_date, last_download_source) VALUES (?, ?, ?, ?)');
+    const updateStmt = db.prepare('UPDATE downloaded_artists SET post_count = post_count + ?, last_download_source = ? WHERE artist = ?');
+    
+    for (const [artist, stats] of artistStats) {
+      try {
+        const existing = selectStmt.get(artist);
+        if (existing) {
+          // Artist exists, increment post count and update source
+          updateStmt.run(stats.count, stats.latestSource || null, artist);
+        } else {
+          // New artist, insert with post_count
+          // Use the latest createdAt date from this artist's posts as initial last_download_date
+          insertStmt.run(artist, stats.count, stats.latestCreatedAt || null, stats.latestSource || null);
+        }
+      } catch (error) {
+        console.error(`❌ Failed to update artist stats for ${artist}:`, error.message);
+      }
+    }
+    
     return count;
   });
   
@@ -297,7 +557,7 @@ function bulkImportPosts(posts) {
 }
 
 // Tabs operations
-function saveTabs(tabs, activeTabId, isViewingDownloadsGallery, isViewingScroller, downloadsSearchText) {
+function saveTabs(tabs, activeTabId, isViewingDownloadsGallery, isViewingScroller, downloadsSearchText, isViewingHomepage) {
   if (!db) throw new Error('Database not initialized');
   
   const deleteStmt = db.prepare('DELETE FROM tabs');
@@ -312,6 +572,7 @@ function saveTabs(tabs, activeTabId, isViewingDownloadsGallery, isViewingScrolle
     settingStmt.run('activeTabId', activeTabId);
     settingStmt.run('isViewingDownloadsGallery', isViewingDownloadsGallery ? '1' : '0');
     settingStmt.run('isViewingScroller', isViewingScroller ? '1' : '0');
+    settingStmt.run('isViewingHomepage', isViewingHomepage ? '1' : '0');
     settingStmt.run('downloadsSearchText', downloadsSearchText || '');
   });
   
@@ -337,10 +598,13 @@ function loadTabs() {
   const scrollerRow = settingStmt.get('isViewingScroller');
   const isViewingScroller = scrollerRow ? scrollerRow.value === '1' : false;
   
+  const homepageRow = settingStmt.get('isViewingHomepage');
+  const isViewingHomepage = homepageRow ? homepageRow.value === '1' : false;
+  
   const downloadsSearchRow = settingStmt.get('downloadsSearchText');
   const downloadsSearchText = downloadsSearchRow ? downloadsSearchRow.value : '';
   
-  return { tabs, activeTabId, isViewingDownloadsGallery, isViewingScroller, downloadsSearchText };
+  return { tabs, activeTabId, isViewingDownloadsGallery, isViewingScroller, isViewingHomepage, downloadsSearchText };
 }
 
 // Settings operations
@@ -367,6 +631,40 @@ function clearSettings() {
   
   db.prepare('DELETE FROM tabs').run();
   db.prepare('DELETE FROM settings').run();
+  
+  return true;
+}
+
+// Homepage operations
+function saveHomepageData(key, data) {
+  if (!db) throw new Error('Database not initialized');
+  
+  const stmt = db.prepare('INSERT OR REPLACE INTO homepage (key, data) VALUES (?, ?)');
+  stmt.run(key, JSON.stringify(data));
+  
+  return true;
+}
+
+function loadHomepageData(key) {
+  if (!db) throw new Error('Database not initialized');
+  
+  const stmt = db.prepare('SELECT data FROM homepage WHERE key = ?');
+  const row = stmt.get(key);
+  
+  return row ? JSON.parse(row.data) : null;
+}
+
+function initializeHomepageSetup() {
+  if (!db) throw new Error('Database not initialized');
+  
+  // Initialize setup entry with empty posts array if it doesn't exist
+  const existing = loadHomepageData('setup');
+  if (!existing) {
+    saveHomepageData('setup', {
+      posts: [],
+      currentBatchIndex: 0
+    });
+  }
   
   return true;
 }
@@ -552,6 +850,152 @@ function migrateTagSuggestionsSchema() {
   }
 }
 
+// Migrate downloaded_artists table schema
+function migrateDownloadedArtistsSchema() {
+  if (!db) throw new Error('Database not initialized');
+
+  try {
+    const tableInfo = db.prepare('PRAGMA table_info(downloaded_artists)').all();
+    const columns = tableInfo.map(col => col.name);
+    const hasOldColumn = columns.includes('latest_download_date');
+    const hasNewColumn = columns.includes('last_download_date');
+
+    // If table has old column and not new column, rename it
+    if (hasOldColumn && !hasNewColumn) {
+      db.exec(`
+        CREATE TABLE downloaded_artists_new (
+          artist TEXT PRIMARY KEY,
+          post_count INTEGER DEFAULT 0,
+          last_download_date INTEGER,
+          last_download_source TEXT
+        );
+      `);
+
+      db.exec(`
+        INSERT INTO downloaded_artists_new (artist, post_count, last_download_date, last_download_source)
+        SELECT artist, post_count, latest_download_date, NULL FROM downloaded_artists;
+      `);
+
+      db.exec(`
+        DROP TABLE downloaded_artists;
+        ALTER TABLE downloaded_artists_new RENAME TO downloaded_artists;
+      `);
+
+      console.log('✓ Verified downloaded_artists table has last_download_date column');
+    }
+  } catch (error) {
+    console.warn('⚠ Error checking/migrating downloaded_artists schema:', error.message);
+  }
+}
+
+// Add last_download_source column to existing databases
+function migrateDownloadedArtistsAddSourceColumn() {
+  if (!db) throw new Error('Database not initialized');
+
+  try {
+    const tableInfo = db.prepare('PRAGMA table_info(downloaded_artists)').all();
+    const columns = tableInfo.map(col => col.name);
+    const hasSourceColumn = columns.includes('last_download_source');
+
+    console.log('Downloaded artists columns before migration:', columns.join(', '));
+
+    if (!hasSourceColumn) {
+      console.log('⚠ last_download_source column missing, attempting to add...');
+      
+      try {
+        // Try direct ALTER TABLE first
+        db.prepare('ALTER TABLE downloaded_artists ADD COLUMN last_download_source TEXT').run();
+        console.log('✓ Successfully added last_download_source column via ALTER TABLE');
+      } catch (alterError) {
+        console.warn('⚠ ALTER TABLE failed:', alterError.message);
+        console.log('Attempting to recreate table with new schema...');
+        
+        // Fallback: recreate the table with the new column
+        try {
+          db.exec(`
+            CREATE TABLE downloaded_artists_backup AS 
+            SELECT artist, post_count, last_download_date FROM downloaded_artists;
+            
+            DROP TABLE downloaded_artists;
+            
+            CREATE TABLE downloaded_artists (
+              artist TEXT PRIMARY KEY,
+              post_count INTEGER DEFAULT 0,
+              last_download_date INTEGER,
+              last_download_source TEXT
+            );
+            
+            INSERT INTO downloaded_artists (artist, post_count, last_download_date, last_download_source)
+            SELECT artist, post_count, last_download_date, NULL FROM downloaded_artists_backup;
+            
+            DROP TABLE downloaded_artists_backup;
+            
+            CREATE INDEX IF NOT EXISTS idx_downloaded_artists_last_download ON downloaded_artists(last_download_date);
+          `);
+          console.log('✓ Successfully recreated table with last_download_source column');
+        } catch (recreateError) {
+          console.error('❌ Failed to recreate table:', recreateError.message);
+          throw recreateError;
+        }
+      }
+    } else {
+      console.log('✓ last_download_source column already exists');
+    }
+    
+    // Verify the column now exists
+    const finalTableInfo = db.prepare('PRAGMA table_info(downloaded_artists)').all();
+    const finalColumns = finalTableInfo.map(col => col.name);
+    console.log('Downloaded artists columns after migration:', finalColumns.join(', '));
+    
+  } catch (error) {
+    console.error('❌ Error during schema migration:', error.message);
+  }
+}
+
+// Clean up artists with 0 downloaded posts
+function cleanupZeroCountArtists() {
+  if (!db) throw new Error('Database not initialized');
+
+  try {
+    // First, check how many records have post_count = 0
+    const checkStmt = db.prepare('SELECT COUNT(*) as count FROM downloaded_artists WHERE post_count = 0 OR post_count IS NULL');
+    const checkResult = checkStmt.get();
+    
+    if (checkResult && checkResult.count > 0) {
+      console.log(`⚠ Found ${checkResult.count} artist records with post_count = 0 or NULL, cleaning up...`);
+      
+      const result = db.prepare('DELETE FROM downloaded_artists WHERE post_count = 0 OR post_count IS NULL').run();
+      console.log(`✓ Cleaned up ${result.changes} artist records with post_count = 0 or NULL`);
+    } else {
+      console.log('✓ No artist records with post_count = 0 to clean up');
+    }
+  } catch (error) {
+    console.warn('⚠ Error cleaning up zero-count artists:', error.message);
+  }
+}
+
+// Verify the last_download_source column was added and check database state
+function verifyDownloadedArtistsSchema() {
+  if (!db) throw new Error('Database not initialized');
+
+  try {
+    const tableInfo = db.prepare('PRAGMA table_info(downloaded_artists)').all();
+    const columns = tableInfo.map(col => col.name);
+    
+    console.log('Downloaded Artists table columns:', columns.join(', '));
+    
+    const artistCount = db.prepare('SELECT COUNT(*) as count FROM downloaded_artists').get();
+    console.log(`Total artists in table: ${artistCount.count}`);
+    
+    const withSourceCount = db.prepare('SELECT COUNT(*) as count FROM downloaded_artists WHERE last_download_source IS NOT NULL').get();
+    if (withSourceCount) {
+      console.log(`Artists with last_download_source: ${withSourceCount.count}`);
+    }
+  } catch (error) {
+    console.warn('⚠ Error verifying schema:', error.message);
+  }
+}
+
 // ============== Ensure Default CSS Presets ==============
 
 function ensureDefaultCSSPresets() {
@@ -708,6 +1152,11 @@ module.exports = {
   getDownloadedPostsByArtist,
   getDownloadedPostCount,
   bulkImportPosts,
+  getDownloadedArtist,
+  getAllDownloadedArtists,
+  getDownloadedArtistCount,
+  searchDownloadedArtists,
+  updateArtistLoadedDates,
   saveTabs,
   loadTabs,
   saveSetting,
@@ -725,5 +1174,11 @@ module.exports = {
   getActiveCSSPresets,
   removeCSSPreset,
   updateCSSPresetActiveStatus,
-  ensureDefaultCSSPresets
+  ensureDefaultCSSPresets,
+  updateArtistStatistics,
+  updateArtistAfterPostDelete,
+  verifyDownloadedArtistsSchema,
+  saveHomepageData,
+  loadHomepageData,
+  initializeHomepageSetup
 };

@@ -232,8 +232,28 @@ document.addEventListener('DOMContentLoaded', () => {
   if (document.getElementById('booru-gallery-counter')) {
     setupBooruGalleryCounter();
   }
-    fillBooruEndTags();
+  fillBooruEndTags();
+  
+  // Fetch first batch of favorite posts on app startup
+  fetchFavoriteBatch().catch(error => {
+    console.warn('Failed to fetch favorite batch on startup:', error);
+  });
 });
+
+// Function to fetch the next batch of favorite posts from artists
+async function fetchFavoriteBatch() {
+  try {
+    const response = await fetch('http://localhost:3001/api/get-favorite-batch');
+    const data = await response.json();
+    
+    if (!response.ok) {
+      console.warn('⚠️ Error fetching favorite batch:', data.error || 'Unknown error');
+      return;
+    }
+  } catch (error) {
+    console.warn('⚠️ Error calling get-favorite-batch endpoint:', error.message);
+  }
+}
 
 // Setup booru panel drag functionality with snap-to-state
 function setupBooruPanelDrag() {
@@ -612,6 +632,12 @@ function abortPendingHQLoad(postId) {
 // Tab-aware HQ cache tracking: Map of tabId -> Set of blob URLs
 window._tabHQCacheMap = window._tabHQCacheMap || new Map();
 
+// Post blob cache: Maps postId -> Blob object (prevents re-downloading HQ version)
+window._postBlobCache = window._postBlobCache || new Map();
+
+// Preview blob URLs: Maps postId -> blobUrl for preview display (prevents web re-fetch)
+window._previewBlobUrls = window._previewBlobUrls || new Map();
+
 // Register a high-quality blob URL with a tab for memory management
 function registerTabHQCache(tabId, blobUrl) {
   if (!tabId || !blobUrl || !blobUrl.startsWith('blob:')) return;
@@ -736,13 +762,13 @@ async function loadImageWithProgress(url, onProgress) {
       // Report progress in real-time
       if (totalBytes > 0 && onProgress) {
         const remaining = Math.max(0, totalBytes - loadedBytes);
-        onProgress(remaining);
+        onProgress(remaining, totalBytes);
       }
     }
     
     // Combine chunks into blob
     const blob = new Blob(chunks, { type: response.headers.get('content-type') });
-    return blob;
+    return { blob, totalBytes };
   } catch (error) {
     console.error('[loadImageWithProgress] Error loading image with progress:', error);
     throw error;
@@ -760,7 +786,7 @@ const downloadQueue = {
   _active: 0,
   enqueue(task) {
     return new Promise((resolve, reject) => {
-      this._queue.push({ task, resolve, reject, attempts: 0 });
+      this._queue.push({ task, resolve, reject, isHQLoad: task._isHQLoad || false });
       this._process();
     });
   },
@@ -771,24 +797,25 @@ const downloadQueue = {
       this._active++;
       (async () => {
         try {
-          const res = await runDownloadWithRetries(item.task, 3, (pct, status) => {
-            // progress callback -> update toast and gallery progress bar (if present)
-            if (item.task.toast) item.task.toast.update(pct, status);
-            try {
-              if (item.task.progressBar) {
-                item.task.progressBar.style.width = Math.max(0, Math.min(100, pct)) + '%';
-                if (item.task.progressContainer) {
-                  item.task.progressContainer.style.display = (pct > 0 && pct < 100) ? 'block' : (pct >= 100 ? 'none' : item.task.progressContainer.style.display);
-                }
-              }
-            } catch (e) { /* ignore DOM errors */ }
-            // progress callback -> update mosaicEstimatedTime
-            
-          });
-          item.resolve(res);
+          if (item.isHQLoad) {
+            // Preview-only HQ load (hover) - execute task directly without download wrapper
+            const res = await item.task();
+            item.resolve(res);
+          } else {
+            // Download task - includes HQ loading if needed via loadAndDownloadPost
+            const res = await loadAndDownloadPost(item.task);
+            item.resolve(res);
+          }
         } catch (err) {
           item.reject(err);
         } finally {
+          // Clear download-in-progress flag from media element (only for downloads, not HQ loads)
+          if (!item.isHQLoad && item.task.postDiv) {
+            const mediaElement = item.task.postDiv.querySelector('img, video');
+            if (mediaElement) {
+              mediaElement.dataset.downloadInProgress = 'false';
+            }
+          }
           this._active--;
           // process next
           setTimeout(() => this._process(), 0);
@@ -798,35 +825,177 @@ const downloadQueue = {
   }
 };
 
-window.imageLoadConcurrency = window.imageLoadConcurrency || 3;
-const loadingQueue = {
-  _queue: [],
-  _active: 0,
-  enqueue(task) {
-    return new Promise((resolve, reject) => {
-      this._queue.push({ task, resolve, reject });
-      this._process();
-    });
-  },
-  async _process() {
-    const concurrency = parseInt(window.imageLoadConcurrency, 10) || 3;
-    while (this._active < concurrency && this._queue.length > 0) {
-      const item = this._queue.shift();
-      this._active++;
-      (async () => {
+// Unified load + download routine: combines HQ loading and downloading into one atomic operation
+async function loadAndDownloadPost(task) {
+  // Check if we already have a cached blob for this post
+  let blobData = task.blobData || window._postBlobCache?.get(String(task.postId));
+  
+  // Detect if this is a video file (check media element or URL)
+  const mediaElement = task.postDiv?.querySelector('img, video');
+  const isVideo = mediaElement?.tagName === 'VIDEO' || 
+                  (task.imageUrl && /\.(mp4|webm|mov|avi|mkv)$/i.test(task.imageUrl));
+  
+  // For videos, skip HQ loading phase and go straight to server download with progress polling
+  // This maintains streaming behavior and proper progress tracking via server
+  if (!isVideo && !blobData) {
+    if (mediaElement) {
+      let taskId = `download-${task.postId || Date.now()}-${Math.random().toString(36).substr(2, 9)}`;
+      let hasInitializedProgress = false;
+      
+      try {
+        // Report loading state
+        if (task.toast) task.toast.update(10, 'Downloading');
+        
+        // Fetch high-quality image
+        const imageUrl = mediaElement.dataset.imageUrl || task.imageUrl;
+        const proxyImageUrl = getImageUrl(imageUrl);
+        
+        // Attempt HEAD probe to get content length
+        let contentLength = 0;
         try {
-          const res = await item.task();
-          item.resolve(res);
-        } catch (err) {
-          item.reject(err);
-        } finally {
-          this._active--;
-          setTimeout(() => this._process(), 0);
+          if (proxyImageUrl && !proxyImageUrl.startsWith('data:') && !proxyImageUrl.includes('blob:') && !proxyImageUrl.includes('localhost')) {
+            const headResp = await proxyFetch(proxyImageUrl, { method: 'HEAD', silent: true });
+            if (headResp && (headResp.ok || headResp.status === 302)) {
+              const proxyContentLength = headResp.headers.get('X-Proxy-Content-Length');
+              contentLength = parseInt(proxyContentLength || headResp.headers.get('Content-Length') || '0', 10);
+            }
+          }
+        } catch (e) {
+          // HEAD probe optional - continue without it
         }
-      })();
+        
+        // Load the HQ image with progress tracking
+        const imageLoadResult = await loadImageWithProgress(proxyImageUrl, (remainingBytes, totalBytes) => {
+          // Update contentLength on first callback if totalBytes is provided
+          if (contentLength === 0 && totalBytes > 0) {
+            contentLength = totalBytes;
+          }
+          
+          // Initialize progress tracking on first callback if we have a content length
+          if (!hasInitializedProgress && contentLength > 0) {
+            updateHqLoadingCounter(1, taskId, null, contentLength);
+            hasInitializedProgress = true;
+          }
+          
+          const loadedBytes = contentLength - remainingBytes;
+          const progressPercent = Math.max(0, Math.min(100, (loadedBytes / contentLength) * 100));
+          
+          // Update progress counter with real-time bytes progress
+          if (contentLength > 0) {
+            updateHqLoadingCounter(0, taskId, remainingBytes);
+          }
+          
+          // Update toast with HQ load progress
+          if (task.toast) {
+            task.toast.update(Math.round(progressPercent * 0.3), 'Downloading');
+            if (contentLength > 0) task.toast.setSize(contentLength);
+          }
+          
+          // Store progress in mediaElement dataset for reference
+          if (mediaElement) {
+            mediaElement.dataset.hqLoadProgress = String(Math.round(progressPercent));
+            mediaElement.dataset.hqLoadedBytes = String(loadedBytes);
+            mediaElement.dataset.hqTotalBytes = String(contentLength);
+          }
+        });
+        
+        // Extract blob from result
+        blobData = imageLoadResult?.blob || imageLoadResult;
+        
+        // Cache the loaded blob for future downloads
+        if (blobData && task.postId) {
+          if (!window._postBlobCache) window._postBlobCache = new Map();
+          window._postBlobCache.set(String(task.postId), blobData);
+          
+          // Create blob URL and store in mediaElement
+          if (mediaElement) {
+            try {
+              const blobUrl = URL.createObjectURL(blobData);
+              mediaElement.dataset.currentQualityUrl = blobUrl;
+              mediaElement.dataset.highQualityUrl = blobUrl;
+            } catch (e) {
+              console.warn('Failed to create blob URL:', e);
+            }
+          }
+        }
+        
+        // Clean up progress tracking after HQ load completes
+        if (hasInitializedProgress) {
+          updateHqLoadingCounter(-1, taskId);
+        }
+      } catch (err) {
+        console.error('[loadAndDownloadPost] Failed to load HQ image:', err);
+        // Clean up progress tracking on error
+        if (hasInitializedProgress) {
+          updateHqLoadingCounter(-1, taskId);
+        }
+        throw new Error(`Failed to load high-quality version: ${err.message}`);
+      }
     }
   }
-};
+  
+  // Now download using the loaded blob or original URL
+  if (blobData) {
+    task.blobData = blobData;
+  }
+  
+  // Execute download with retries
+  const downloadResult = await runDownloadWithRetries(task, 3, (pct, status) => {
+    // progress callback -> update toast and gallery progress bar (if present)
+    if (task.toast) task.toast.update(pct, status);
+    try {
+      if (task.progressBar) {
+        task.progressBar.style.width = Math.max(0, Math.min(100, pct)) + '%';
+        if (task.progressContainer) {
+          task.progressContainer.style.display = (pct > 0 && pct < 100) ? 'block' : (pct >= 100 ? 'none' : task.progressContainer.style.display);
+        }
+      }
+    } catch (e) { /* ignore DOM errors */ }
+  });
+  
+  // Clean up HQ progress tracking properties after download completes
+  if (mediaElement) {
+    // Mark as high-quality loaded and downloaded
+    mediaElement.dataset.highQualityLoaded = "true";
+    
+    // Set the mediaElement's src to display the high-quality blob URL
+    if (mediaElement.dataset.highQualityUrl) {
+      try {
+        mediaElement.src = mediaElement.dataset.highQualityUrl;
+      } catch (e) {
+        console.warn('Failed to set mediaElement src to high-quality URL:', e);
+      }
+    }
+    
+    // Update preview image if it's currently showing this post
+    if (mediaElement.dataset.currentQualityUrl) {
+      try {
+        const previewImg = booruPreviewMediaContainer?.querySelector('img');
+        if (previewImg) {
+          const previewPostId = previewImg.dataset.postId;
+          const previewPostSource = previewImg.dataset.postSource;
+          const galleryPostId = task.postDiv?.dataset.postId;
+          const galleryPostSource = task.postDiv?.dataset.postSource;
+          
+          // If preview is showing this post, update its src to the quality blob URL
+          if (previewPostId === galleryPostId && previewPostSource === galleryPostSource) {
+            previewImg.src = mediaElement.dataset.currentQualityUrl;
+            previewImg.alt = 'Preview (High Quality)';
+          }
+        }
+      } catch (e) {
+        console.warn('Failed to update preview image src:', e);
+      }
+    }
+    
+    // Clean up progress tracking
+    delete mediaElement.dataset.hqLoadProgress;
+    delete mediaElement.dataset.hqLoadedBytes;
+    delete mediaElement.dataset.hqTotalBytes;
+  }
+  
+  return downloadResult;
+}
 
 // Scraper post detail fetching queue - async background scraping of post details
 window.scraperDetailConcurrency = window.scraperDetailConcurrency || 2;
@@ -876,6 +1045,46 @@ async function runDownloadWithRetries(task, maxAttempts = 3, onProgress) {
     try {
       // perform download (server request)
       if (onProgress) onProgress(10, 'Starting');
+      
+      // Check if we have a cached blob to use instead of web fetch
+      if (task.blobData && typeof task.blobData.arrayBuffer === 'function') {
+        // Use cached blob - convert to ArrayBuffer and stream to server
+        
+        const arrayBuffer = await task.blobData.arrayBuffer();
+        const taskId = `dl-blob-${Date.now()}-${Math.random().toString(36).substr(2, 9)}`;
+        
+        // Send blob via fetch to /download-from-blob endpoint
+        try {
+          const resp = await fetch('http://localhost:3001/download-from-blob', {
+            method: 'POST',
+            body: arrayBuffer,
+            headers: {
+              'X-Filename': task.filename,
+              'X-TaskId': taskId,
+              'Content-Type': 'application/octet-stream'
+            }
+          });
+          
+          const data = await resp.json();
+          if (data && data.success) {
+            task.totalBytes = task.blobData.size;
+            // Update toast with file size
+            if (task.toast && task.toast.setSize) {
+              task.toast.setSize(task.blobData.size);
+            }
+            if (onProgress) onProgress(100, 'Saved');
+            return data;
+          } else {
+            throw new Error(data && data.error ? data.error : 'Blob upload failed');
+          }
+        } catch (err) {
+          // Blob upload failed - fall through to normal download retry
+          if (onProgress) onProgress(35, 'Blob upload failed, retrying normal download');
+          lastError = err;
+          continue;
+        }
+      }
+      
       // include current source headers if available
       let extra = {};
       if (typeof booruSourcesManager !== 'undefined' && booruSourcesManager) {
@@ -919,6 +1128,10 @@ async function runDownloadWithRetries(task, maxAttempts = 3, onProgress) {
                   // Always store totalBytes if available (for coin animation)
                   if (progressData.totalBytes) {
                     task.totalBytes = progressData.totalBytes;
+                    // Update toast with file size
+                    if (task.toast && task.toast.setSize) {
+                      task.toast.setSize(progressData.totalBytes);
+                    }
                   }
                   // When transitioning from Starting to Downloading, reset progress to 0
                   if (lastStatus !== 'Downloading' && progressData.status === 'Downloading') {
@@ -941,7 +1154,7 @@ async function runDownloadWithRetries(task, maxAttempts = 3, onProgress) {
             } catch (e) {
               // Polling failed - continue anyway
             }
-          }, 100); // Poll every 100ms for smooth updates
+          }, 350); // Poll every 350ms to reduce resource usage with multiple concurrent downloads
         });
       };
       
@@ -966,8 +1179,8 @@ async function runDownloadWithRetries(task, maxAttempts = 3, onProgress) {
       lastError = err;
       // If there are more attempts left, show failed status and wait 1s before retrying
       if (attempt < maxAttempts) {
-        if (onProgress) onProgress(Math.min(80, 20 + attempt * 20), `Failed — retrying in 1s (attempt ${attempt})`);
-        await new Promise(r => setTimeout(r, 1000));
+        if (onProgress) onProgress(Math.min(80, 20 + attempt * 20), `Failed — retrying in 3s (attempt ${attempt})`);
+        await new Promise(r => setTimeout(r, 3000));
         // continue to next attempt
       } else {
         // final failure - update progress/status and exit loop
@@ -2845,6 +3058,99 @@ function sortDownloadedPosts(posts) {
   return posts;
 }
 
+// Function to show homepage gallery (basic booru window without search and source)
+async function showHomepage(forceReload = false) {
+  if (window.isViewingHomepage && !forceReload) return; // Already on homepage
+
+  const booruGallery = document.getElementById('booru-gallery');
+  
+  // Hide scroller if visible
+  const scrollerContent = document.getElementById('scroller-content');
+  if (scrollerContent) {
+    scrollerContent.style.display = 'none';
+  }
+  
+  // Show booru content
+  const booruContent = document.getElementById('booru-content');
+  if (booruContent) {
+    booruContent.style.display = 'block';
+  }
+  
+  window.isViewingHomepage = true;
+  window.isViewingDownloadsGallery = false;
+  window.isViewingScroller = false;
+  activeTabId = null;
+  
+  const showHomepageBtn = document.getElementById('show-homepage-btn');
+  const showDownloadsBtn = document.getElementById('show-downloads-gallery-btn');
+  const showScrollerBtn = document.getElementById('show-scroller-btn');
+  
+  // Set homepage button active, remove active from downloads and scroller and all booru tabs
+  if (showHomepageBtn) showHomepageBtn.classList.add('active');
+  if (showDownloadsBtn) showDownloadsBtn.classList.remove('active');
+  if (showScrollerBtn) showScrollerBtn.classList.remove('active');
+  document.querySelectorAll('.booru-tab-item.active').forEach(tab => tab.classList.remove('active'));
+  
+  // Restore controls that scroller may have hidden
+  const sortControl = document.querySelector('.control-section-sort');
+  if (sortControl) sortControl.style.display = '';
+  const limitControl = document.querySelector('.control-section-limit');
+  if (limitControl) limitControl.style.display = '';
+  const sliderControl = document.querySelector('.control-section-slider');
+  if (sliderControl) sliderControl.style.display = '';
+  const galleryQualityToggleBtn = document.getElementById('gallery-quality-toggle');
+  if (galleryQualityToggleBtn) galleryQualityToggleBtn.style.display = '';
+  
+  // Hide search and source controls
+  const searchControl = document.querySelector('.control-section-search');
+  if (searchControl) {
+    searchControl.style.display = 'none';
+  }
+  const booru_control_right = document.querySelector('.booru-control-right');
+  if (booru_control_right) {
+    booru_control_right.querySelectorAll('*').forEach(el => {
+      // Don't hide the counter - we need it visible for homepage
+      if (el.id === 'booru-total-count') {
+        el.style.display = 'block';
+      } else {
+        el.style.display = 'none';
+      }
+    });
+  }
+  
+  // Hide downloads-specific controls if they exist
+  const artistSection = document.querySelector('.control-section-artist');
+  if (artistSection) artistSection.style.display = 'none';
+  const sourceSection = document.querySelector('.control-section-source');
+  if (sourceSection) sourceSection.style.display = 'none';
+  const downloadsDateSortSection = document.querySelector('.control-section-downloads-date-order');
+  if (downloadsDateSortSection) downloadsDateSortSection.style.display = 'none';
+  const downloadsMediaTypeSection = document.querySelector('.control-section-downloads-media-type');
+  if (downloadsMediaTypeSection) downloadsMediaTypeSection.style.display = 'none';
+  
+  // Show the control bar
+  const controlBar = document.querySelector('header.control-bar.booru-control-bar');
+  if (controlBar) {
+    controlBar.style.display = 'flex';
+  }
+  
+  // Ensure counter is visible on homepage
+  const booruCounter = document.getElementById('booru-total-count');
+  if (booruCounter) {
+    booruCounter.style.display = 'block';
+  }
+  
+  // Clear gallery
+  booruGallery.innerHTML = '';
+  document.getElementById('load-more-icon')?.remove();
+  
+  // Save state
+  if (window.debouncedSave) window.debouncedSave();
+  
+  // Auto-load posts from API
+  await loadHomepagePosts();
+}
+
 // Function to show downloads gallery
 async function showDownloadsGallery(forceReload = false) {
 
@@ -2852,6 +3158,12 @@ async function showDownloadsGallery(forceReload = false) {
 
   const appContent = document.getElementById('app-content');
   const booruGallery = document.getElementById('booru-gallery');
+  
+  // Clear homepage mode
+  window.isViewingHomepage = false;
+  const showHomepageBtn = document.getElementById('show-homepage-btn');
+  if (showHomepageBtn) showHomepageBtn.classList.remove('active');
+  
   cleanupDownloadsGallery();
   booruGallery.innerHTML = '<i class="fas fa-circle-notch fa-spin image-loader" style="position: relative; color: var(--accent); font-size: 60px; width: 100%; height: 200px; line-height: 200px; text-align: center;"></i>';
   document.getElementById('load-more-icon')?.remove();
@@ -3343,6 +3655,112 @@ async function showDownloadsGallery(forceReload = false) {
 
 // Make it global
 window.showDownloadsGallery = showDownloadsGallery;
+window.showHomepage = showHomepage;
+
+// Function to load all homepage posts from API
+async function loadHomepagePosts() {
+  // Show loading spinner and ensure counter is visible
+  const booruGallery = document.getElementById('booru-gallery');
+  const booruCounter = document.getElementById('booru-total-count');
+  
+  // Always ensure counter is visible on homepage
+  if (booruCounter) {
+    booruCounter.style.display = 'block';
+    booruCounter.textContent = 'Homepage';
+  }
+  
+  if (booruGallery) {
+    if (typeof $.fn.justifiedGallery !== 'undefined') {
+      $(booruGallery).find('img').off('load error');
+      $(booruGallery).justifiedGallery('destroy');
+    }
+    booruGallery.innerHTML = '<i class="fas fa-circle-notch fa-spin image-loader" style="position: relative; color: var(--accent); font-size: 60px; width: 100%; height: 200px; line-height: 200px; text-align: center;"></i>';
+  }
+  
+  try {
+    // Load posts from the homepage table in the database
+    const response = await fetch('http://localhost:3001/api/db/settings/homepage-data');
+    
+    const data = await response.json();
+    
+    if (!response.ok) {
+      const errMsg = data.error || 'Unknown error';
+      showToast(`Error loading posts: ${errMsg}`, 'info');
+      // Clear gallery on error
+      if (booruGallery) {
+        booruGallery.innerHTML = '';
+      }
+      return;
+    }
+    
+    // Extract posts from homepage data
+    let allPosts = [];
+    if (data && data.posts && Array.isArray(data.posts)) {
+      allPosts = data.posts;
+    }
+    
+    if (allPosts.length === 0) {
+      showToast('No posts available. Fetching first batch...', 'info');
+      // Show loading spinner
+      if (booruGallery) {
+        booruGallery.innerHTML = '<i class="fas fa-circle-notch fa-spin image-loader" style="position: relative; color: var(--accent); font-size: 60px; width: 100%; height: 200px; line-height: 200px; text-align: center;"></i>';
+      }
+      // Fetch new batch and refresh the view
+      try {
+        await fetchFavoriteBatch();
+        // After fetch completes, reload the posts
+        await loadHomepagePosts();
+      } catch (error) {
+        showToast(`Error fetching batch: ${error.message}`, 'error');
+        if (booruGallery) {
+          booruGallery.innerHTML = '';
+        }
+      }
+      return;
+    }
+    
+    // Validate posts
+    for (const post of allPosts) {
+      if (typeof post.tags === 'string') {
+        post.tags = post.tags.split(/\s+/).filter(t => t.length > 0);
+      } else if (!Array.isArray(post.tags)) {
+        post.tags = [];
+      }
+      if (!post.imageUrl) {
+        post.imageUrl = post.file_url || post.sample_url || post.preview_url;
+      }
+    }
+    
+    // Clear gallery
+    if (booruGallery) {
+      booruGallery.innerHTML = '';
+    }
+    
+    // Set window state
+    window.booruPosts = allPosts;
+    window.totalResultCount = allPosts.length;
+    window.hasMoreResults = false;
+    
+    // Render gallery
+    renderBooruGallery(allPosts, false, false);
+    
+    // Update counter
+    const booruCounter = document.getElementById('booru-total-count');
+    if (booruCounter) {
+      booruCounter.innerHTML = `HOMEPAGE <b>${allPosts.length}</b>`;
+      booruCounter.style.display = 'block'; // Ensure it's visible
+    }
+    
+    showToast(`Loaded ${allPosts.length} posts`, 'success');
+    
+  } catch (error) {
+    showToast(`Error loading posts: ${error.message}`, 'error');
+    // Clear gallery on error
+    if (booruGallery) {
+      booruGallery.innerHTML = '';
+    }
+  }
+}
 
 function cleanupDownloadsGallery() {
   const galleryWrapper = document.getElementById('gallery-wrapper');
@@ -3424,8 +3842,11 @@ function initBooruBrowser() {
     showScrollerBtn.addEventListener('click', () => {
       showScrollerBtn.classList.add('active');
       if (showDownloadsBtn) showDownloadsBtn.classList.remove('active');
+      const showHomepageBtn = document.getElementById('show-homepage-btn');
+      if (showHomepageBtn) showHomepageBtn.classList.remove('active');
       document.querySelectorAll('.booru-tab-item.active').forEach(tab => tab.classList.remove('active'));
       window.isViewingDownloadsGallery = false;
+      window.isViewingHomepage = false;
       window.isViewingScroller = true;
       activeTabId = null;
       
@@ -3648,21 +4069,12 @@ function initBooruBrowser() {
                 // Add loading spinner overlay
                 const loadingOverlay = document.createElement('div');
                 loadingOverlay.className = 'preview-loading-overlay';
-                loadingOverlay.innerHTML = '<i class="fas fa-circle-notch fa-spin"></i>';
-                loadingOverlay.style.cssText = `
-                  position: absolute;
-                  top: 10px;
-                  right: 10px;
-                  width: 45px;
-                  height: 45px;
-                  display: flex;
-                  align-items: center;
-                  justify-content: center;
-                  background: rgba(0, 0, 0, 0.5);
-                  border-radius: 50%;
-                  color: var(--accent);
-                  font-size: 28px;
-                  z-index: 10;
+                loadingOverlay.innerHTML = `
+                  <svg class="preview-progress-circle" viewBox="0 0 100 100" width="45" height="45">
+                    <circle class="preview-progress-bg" cx="50" cy="50" r="42" />
+                    <circle class="preview-progress-fill" cx="50" cy="50" r="42" />
+                  </svg>
+                  <div class="preview-loading-percent">0%</div>
                 `;
                 imageContainer.style.position = 'relative';
                 imageContainer.appendChild(loadingOverlay);
@@ -4338,6 +4750,14 @@ function initBooruBrowser() {
 
     });
   }
+
+  // Add handler for show-homepage-btn
+  const showHomepageBtn = document.getElementById('show-homepage-btn');
+  if (showHomepageBtn) {
+    showHomepageBtn.addEventListener('click', async () => {
+      await showHomepage();
+    });
+  }
   
   // When switching to a booru tab, revert downloads gallery UI changes
   document.getElementById('booru-tabs-container')?.addEventListener('click', (e) => {
@@ -4371,8 +4791,30 @@ function initBooruBrowser() {
     // Always remove active classes from downloads and scroller buttons when switching to a booru tab
     const showDownloadsBtn = document.getElementById('show-downloads-gallery-btn');
     const showScrollerBtn = document.getElementById('show-scroller-btn');
+    const showHomepageBtn = document.getElementById('show-homepage-btn');
     if (showDownloadsBtn) showDownloadsBtn.classList.remove('active');
     if (showScrollerBtn) showScrollerBtn.classList.remove('active');
+    if (showHomepageBtn) showHomepageBtn.classList.remove('active');
+    
+    // Restore controls when exiting homepage mode
+    if (window.isViewingHomepage) {
+      window.isViewingHomepage = false;
+      // Save state change
+      if (window.debouncedSave) window.debouncedSave();
+      const controlBar = document.querySelector('header.control-bar.booru-control-bar');
+      if (controlBar) {
+        // Restore search control
+        const searchControl = controlBar.querySelector('.control-section-search');
+        if (searchControl) {
+          searchControl.style.display = '';
+        }
+        // Restore booru-control-right
+        const booruControlRight = controlBar.querySelector('.booru-control-right');
+        if (booruControlRight) {
+          booruControlRight.querySelectorAll('*').forEach(el => el.style.display = '');
+        }
+      }
+    }
     
     // Restore controls when exiting scroller mode
     if (window.isViewingScroller) {
@@ -4532,7 +4974,7 @@ function initBooruBrowser() {
   if (aiFilterToggleBtn) {
     aiFilterToggleBtn.addEventListener('click', toggleAiFilter);
   }
-
+  
   if (galleryQualityToggleBtn) {
     galleryQualityToggleBtn.addEventListener('click', () => {
       showHighQualityGallery = !showHighQualityGallery;
@@ -4549,8 +4991,185 @@ function initBooruBrowser() {
     updateGalleryQualityButton();
   }
   
+  // Function to load all homepage posts from API
+  async function loadHomepagePosts() {
+    const booruGallery = document.getElementById('booru-gallery');
+    
+    try {
+      const response = await fetch('http://localhost:3001/api/db/settings/homepage-data');
+      const data = await response.json();
+      
+      if (!response.ok) {
+        const errMsg = data.error || 'Unknown error';
+        console.error('❌ loadHomepagePosts: HTTP error', response.status, errMsg);
+        showToast(`Error loading posts: ${errMsg}`, 'error');
+        // Clear gallery on error
+        if (booruGallery) {
+          if (typeof $.fn.justifiedGallery !== 'undefined') {
+            $(booruGallery).find('img').off('load error');
+            $(booruGallery).justifiedGallery('destroy');
+          }
+          booruGallery.innerHTML = '';
+        }
+        return;
+      }
+      
+      // Extract posts from homepage data
+      let allPosts = [];
+      if (data && data.posts && Array.isArray(data.posts)) {
+        allPosts = data.posts;
+      } else {
+        console.warn('⚠️ loadHomepagePosts: data.posts is not an array or missing');
+      }
+      
+      // Clear gallery first (before checking if posts exist)
+      if (booruGallery) {
+        if (typeof $.fn.justifiedGallery !== 'undefined') {
+          $(booruGallery).find('img').off('load error');
+          $(booruGallery).justifiedGallery('destroy');
+        }
+        booruGallery.innerHTML = '';
+      }
+      
+      // STEP 1: Sort posts by createdAt (descending - newest first)
+      allPosts.sort((a, b) => {
+        const timeA = a.createdAt || 0;
+        const timeB = b.createdAt || 0;
+        return timeB - timeA;
+      });
+      
+      // STEP 2: Filter out posts with displayed_count >= 3
+      allPosts = allPosts.filter(post => (post.displayed_count || 0) < 3);
+      
+      // STEP 3: Filter out already downloaded posts
+      try {
+        const downloadedPosts = await dbStore.getAllDownloadedPosts();
+        const downloadedIds = new Set(downloadedPosts.map(p => String(p.id)));
+        allPosts = allPosts.filter(post => !downloadedIds.has(String(post.id)));
+      } catch (error) {
+        console.warn('⚠️ loadHomepagePosts: Could not filter downloaded posts:', error.message);
+      }
+      
+      if (allPosts.length === 0) {
+        showToast('No posts available. Fetching first batch...', 'info');
+        
+        // Save the filtered homepage data back to database
+        try {
+          await fetch('http://localhost:3001/api/db/settings/homepage-data', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ posts: allPosts, currentBatchIndex: data.currentBatchIndex || 0 })
+          });
+        } catch (error) {
+          console.warn('⚠️ loadHomepagePosts: Could not save filtered posts:', error.message);
+        }
+        
+        return;
+      }
+      
+      // STEP 4: Increment displayed_count for posts that will be displayed
+      const originalPosts = data.posts || [];
+      const originalMap = new Map(originalPosts.map(p => [String(p.id), p]));
+      
+      for (const post of allPosts) {
+        const originalPost = originalMap.get(String(post.id));
+        if (originalPost) {
+          post.displayed_count = (originalPost.displayed_count || 0) + 1;
+        } else {
+          post.displayed_count = (post.displayed_count || 0) + 1;
+        }
+      }
+      
+      // STEP 5: Save updated posts back to database
+      const updatedData = { posts: allPosts, currentBatchIndex: data.currentBatchIndex || 0 };
+      try {
+        const saveResponse = await fetch('http://localhost:3001/api/db/settings/homepage-data', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify(updatedData)
+        });
+        if (!saveResponse.ok) {
+          console.warn('⚠️ loadHomepagePosts: Failed to save updated posts:', saveResponse.status);
+        }
+      } catch (error) {
+        console.warn('⚠️ loadHomepagePosts: Could not save updated posts:', error.message);
+      }
+      
+      // Validate posts
+      for (const post of allPosts) {
+        if (typeof post.tags === 'string') {
+          post.tags = post.tags.split(/\s+/).filter(t => t.length > 0);
+        } else if (!Array.isArray(post.tags)) {
+          post.tags = [];
+        }
+        if (!post.imageUrl) {
+          post.imageUrl = post.file_url || post.sample_url || post.preview_url;
+        }
+      }
+      
+      // Set window state
+      window.booruPosts = allPosts;
+      window.totalResultCount = allPosts.length;
+      window.hasMoreResults = false;
+      
+      // Render gallery
+      renderBooruGallery(allPosts, false, false);
+      
+      // Update counter
+      const booruCounter = document.getElementById('booru-total-count');
+      if (booruCounter) {
+        booruCounter.innerHTML = `HOMEPAGE <b>${allPosts.length}</b>`;
+      }
+      
+      showToast(`Loaded ${allPosts.length} posts`, 'success');
+      
+    } catch (error) {
+      console.error('❌ loadHomepagePosts: Exception:', error);
+      showToast(`Error loading posts: ${error.message}`, 'error');
+      // Clear gallery on error
+      if (booruGallery) {
+        if (typeof $.fn.justifiedGallery !== 'undefined') {
+          $(booruGallery).find('img').off('load error');
+          $(booruGallery).justifiedGallery('destroy');
+        }
+        booruGallery.innerHTML = '';
+      }
+    }
+  }
+  
   if (reloadBooruBtn) {
     reloadBooruBtn.addEventListener('click', async () => {
+      if (window.isViewingHomepage) {
+        // Show loading spinner immediately in gallery
+        const booruGallery = document.getElementById('booru-gallery');
+        if (booruGallery) {
+          if (typeof $.fn.justifiedGallery !== 'undefined') {
+            $(booruGallery).find('img').off('load error');
+            $(booruGallery).justifiedGallery('destroy');
+          }
+          booruGallery.innerHTML = '<i class="fas fa-circle-notch fa-spin image-loader" style="position: relative; color: var(--accent); font-size: 60px; width: 100%; height: 200px; line-height: 200px; text-align: center;"></i>';
+        }
+        
+        // Disable reload button
+        reloadBooruBtn.disabled = true;
+        reloadBooruBtn.innerHTML = '<i class="fas fa-sync-alt fa-spin"></i>';
+        
+        // Fetch new batch first, then load posts
+        try {
+          await fetchFavoriteBatch();
+        } catch (error) {
+          console.warn('⚠️ Error calling get-favorite-batch endpoint:', error.message);
+        }
+        
+        // Load posts (this will replace the spinner with actual posts)
+        await loadHomepagePosts();
+        
+        // Re-enable reload button
+        reloadBooruBtn.disabled = false;
+        reloadBooruBtn.innerHTML = '<i class="fas fa-sync-alt"></i>';
+        return;
+      }
+      
       // Check if we're viewing downloads gallery
       if (window.isViewingDownloadsGallery) {
         if (!window.allDownloadedPosts) {
@@ -5003,7 +5622,7 @@ function updateGalleryImageQuality() {
   
   const items = Array.from(document.querySelectorAll('.booru-image-item img'));
   
-  // If turning off quality mode, immediately restore all images to low quality
+  // If turning off quality mode, cancel any ongoing HQ loading but keep current images
   if (!showHighQualityGallery) {
     items.forEach(img => {
       // Remove blur from any images that were loading
@@ -5015,13 +5634,6 @@ function updateGalleryImageQuality() {
         const isDownloaded = img.closest('.booru-image-item')?.dataset.downloaded === 'true';
         downloadBtn.innerHTML = isDownloaded ? '<i class="fas fa-times"></i>' : '<i class="fas fa-download"></i>';
       }
-      
-      const low = img.dataset.resolvedThumbnailUrl || getImageUrl(img.dataset.sampleUrl || img.dataset.thumbnailUrl);
-      if (img.src !== low) {
-        img.src = low; // changing src aborts any previous HQ load
-      }
-      // clear any stored HQ flag so we don't incorrectly show HQ on next hover
-      delete img.dataset.currentQualityUrl;
     });
     // nothing more to do when lowering quality
     return;
@@ -6601,10 +7213,14 @@ function waitForGalleryImagesToLoad() {
 
 // Render booru gallery using Justified Gallery
 function renderBooruGallery(posts, append = true, addSeparators = true) {
+  
   // Expose globally for use in other scripts
   window.renderBooruGallery = renderBooruGallery;
 
-  if (!booruGallery) return;
+  if (!booruGallery) {
+    console.warn('[RENDER BOORU GALLERY] Gallery element not found, early return');
+    return;
+  }
 
   // Update the active tab's name to reflect the current search when starting a fresh render
   if (!append && typeof updateTabName === 'function' && typeof activeTabId !== 'undefined' && activeTabId) {
@@ -6616,6 +7232,7 @@ function renderBooruGallery(posts, append = true, addSeparators = true) {
   document.querySelector('.booru-end-message')?.remove();
 
   booruGallery = document.getElementById('booru-gallery'); // Refresh reference in case it was replaced
+  
   const isDownloadsGallery = booruGallery.classList.contains('downloads-gallery');
   
   // Destroy existing Justified Gallery instance if replacing content
@@ -7339,6 +7956,42 @@ function createBooruImageElement(post, maxHeight = null, imageWidth = null) {
     mediaElement.classList.add('loaded');
     loader.style.display = 'none';
     
+    // Update artist loaded dates when post is displayed in gallery
+    try {
+      // Get post data from window.booruPosts
+      const postId = container.dataset.postId;
+      const postSource = container.dataset.postSource;
+      let postData = null;
+      
+      if (window.booruPosts && postId && postSource) {
+        postData = window.booruPosts.find(p => normalizePostId(p.id) === postId && p.source === postSource);
+      }
+      
+      // Update artist loaded dates if post has artists and a creation date
+      if (postData) {
+        const createdAt = postData.createdAt;
+        const artists = postData.artist || postData.artists;
+        
+        if (createdAt && artists) {
+          // Ensure artists is an array
+          const artistList = Array.isArray(artists) ? artists : (artists ? [artists] : []);
+          
+          // Only update if we have artists
+          if (artistList.length > 0 && typeof dbStore !== 'undefined') {
+            try {
+              await dbStore.updateArtistLoadedDates(artistList, createdAt);
+            } catch (error) {
+              // Log but don't break UI
+              console.warn('Failed to update artist loaded dates:', error);
+            }
+          }
+        }
+      }
+    } catch (error) {
+      // Log but don't break UI
+      console.warn('Error in artist tracking:', error);
+    }
+    
     // Extract actual aspect ratio from loaded thumbnail
     if (mediaElement.naturalWidth && mediaElement.naturalHeight) {
       const postId = container.dataset.postId;
@@ -7717,11 +8370,14 @@ function createBooruImageElement(post, maxHeight = null, imageWidth = null) {
 
       downloadBtn.innerHTML = '<i class="fas fa-circle-notch fa-spin"></i>';
 
+      // Get media element for tracking
+      const mediaElement = container?.querySelector('img, video');
+
       try {
         // Record download timestamp when initiated (before enqueue)
         const downloadInitiatedAt = Date.now();
         
-        // Enqueue download through pipeline (retries handled centrally)
+        // Create task - loadAndDownloadPost will handle both HQ loading and downloading
         const task = {
           postId: post.id,
           imageUrl: post.imageUrl,
@@ -7732,7 +8388,20 @@ function createBooruImageElement(post, maxHeight = null, imageWidth = null) {
           progressContainer,
           toast
         };
+        
+        // Mark download in progress to prevent interference
+        if (mediaElement) {
+          mediaElement.dataset.downloadInProgress = 'true';
+          // Cancel any pending HQ load timer
+          if (mediaElement._hqDelayTimer) {
+            clearTimeout(mediaElement._hqDelayTimer);
+            mediaElement._hqDelayTimer = null;
+          }
+          // Abort any in-progress HQ load
+          abortPendingHQLoad(post.id);
+        }
 
+        // Enqueue unified load+download task
         await downloadQueue.enqueue(task);
 
         // On success: Save post to dbStore and update preview UI
@@ -7746,7 +8415,6 @@ function createBooruImageElement(post, maxHeight = null, imageWidth = null) {
           postToSave.artists = post.artists;
           try { await dbStore.saveDownloadedPost(postToSave); } catch (e) { console.warn('Failed to save downloaded post to dbStore', e); }
         }
-        const mediaElement = container.querySelector('img, video');
         if (mediaElement) {
           mediaElement.dataset.author = artist;
         }
@@ -8453,7 +9121,7 @@ async function fetchScraperPostDetails(postId, sourceId, forceFresh = true) {
 }
 
 // Function to show preview for a media element
-function showPreviewForElement(mediaElement, forceVideoLoad = false) {
+function showPreviewForElement(mediaElement, forceVideoLoad = false, hidden = false) {
   // Don't show preview if lightbox is open or any modal overlay is actually visible to the user
   if (lightboxModal && lightboxModal.classList.contains('active')) {
     return;
@@ -8544,21 +9212,12 @@ function showPreviewForElement(mediaElement, forceVideoLoad = false) {
           if (!loadingOverlay) {
             loadingOverlay = document.createElement('div');
             loadingOverlay.className = 'preview-loading-overlay';
-            loadingOverlay.innerHTML = '<i class="fas fa-circle-notch fa-spin"></i>';
-            loadingOverlay.style.cssText = `
-              position: absolute;
-              top: 10px;
-              right: 10px;
-              width: 45px;
-              height: 45px;
-              display: flex;
-              align-items: center;
-              justify-content: center;
-              background: rgba(0, 0, 0, 0.5);
-              border-radius: 50%;
-              color: var(--accent);
-              font-size: 28px;
-              z-index: 10;
+            loadingOverlay.innerHTML = `
+              <svg class="preview-progress-circle" viewBox="0 0 100 100" width="45" height="45">
+                <circle class="preview-progress-bg" cx="50" cy="50" r="42" />
+                <circle class="preview-progress-fill" cx="50" cy="50" r="42" />
+              </svg>
+              <div class="preview-loading-percent">0%</div>
             `;
             booruPreviewMediaContainer.style.position = 'relative';
             booruPreviewMediaContainer.appendChild(loadingOverlay);
@@ -8572,80 +9231,68 @@ function showPreviewForElement(mediaElement, forceVideoLoad = false) {
           // Fetch details in background
           fetchScraperPostDetails(postId, postSource, true).then((detailData) => {
             mediaElement._scraperDetailFetchInProgress = false;
+            mediaElement._scraperDetailsLoaded = true;
             
-            // When details are fetched, proceed with quality image loading as normal
-            // Re-call showPreviewForElement to display updated preview and trigger quality load
+            // Update mediaElement dataset with fetched details
+            if (detailData) {
+              if (detailData.tags && detailData.tags.general) {
+                mediaElement.dataset.tags = detailData.tags.general.join(' ');
+              }
+              if (detailData.tags && (detailData.tags.artist || detailData.tags.artists)) {
+                const artistList = detailData.tags.artist || detailData.tags.artists || [];
+                const artistStr = Array.isArray(artistList) ? artistList.join(', ') : (artistList || 'Unknown');
+                mediaElement.dataset.author = artistStr;
+              }
+              if (detailData.uploadDate) {
+                mediaElement.dataset.createdAt = detailData.uploadDate;
+              }
+              if (detailData.detailImageUrl) {
+                mediaElement.dataset.imageUrl = detailData.detailImageUrl;
+              }
+            }
+            
+            // Always start HQ loading after detail fetch completes, regardless of hover state
+            // Set skip delay flag so HQ loading happens immediately (0ms delay)
+            mediaElement._skipHqDelay = true;
+            
+            // Verify user is still hovering
             const elementsUnderCursor = document.elementsFromPoint(lastMouseX, lastMouseY);
             const isStillHovering = elementsUnderCursor.some(el => el === mediaElement);
             
             if (isStillHovering) {
-              // Skip the HQ loading delay since we just finished detail fetching
-              mediaElement._skipHqDelay = true;
+              // User hovering: display preview and trigger HQ load via showPreviewForElement
               showPreviewForElement(mediaElement, false);
             } else {
-              // User moved away, but still update the gallery with fetched data
-              // Update gallery item visual representation with new tags and media type
-              if (detailData) {
-                if (detailData.tags && detailData.tags.general) {
-                  galleryItem.dataset.tags = detailData.tags.general.join(' ');
-                  mediaElement.dataset.tags = detailData.tags.general.join(' ');
-                }
+              // User moved away: update gallery data, but still trigger HQ load via showPreviewForElement
+              // (showPreviewForElement has guards to prevent displaying preview if not hovering)
+              const galleryItem = mediaElement.closest('.booru-image-item');
+              if (detailData.tags && detailData.tags.general) {
+                galleryItem.dataset.tags = detailData.tags.general.join(' ');
+              }
+              
+              if (detailData.detailImageUrl) {
+                const isNewVideo = detailData.detailImageUrl.toLowerCase().endsWith('.mp4') ||
+                                 detailData.detailImageUrl.toLowerCase().endsWith('.webm') ||
+                                 detailData.detailImageUrl.toLowerCase().endsWith('.mov');
+                const isNewGif = detailData.detailImageUrl.toLowerCase().endsWith('.gif');
                 
-                if (detailData.detailImageUrl) {
-                  // Update media type CSS classes if it changed
-                  const isNewVideo = detailData.detailImageUrl.toLowerCase().endsWith('.mp4') ||
-                                   detailData.detailImageUrl.toLowerCase().endsWith('.webm') ||
-                                   detailData.detailImageUrl.toLowerCase().endsWith('.mov');
-                  const isNewGif = detailData.detailImageUrl.toLowerCase().endsWith('.gif');
-                  
-                  // Update classes if media type changed
-                  galleryItem.classList.remove('file-type-image', 'file-type-gif', 'file-type-video');
-                  if (isNewVideo) {
-                    galleryItem.classList.add('file-type-video');
-                  } else if (isNewGif) {
-                    galleryItem.classList.add('file-type-gif');
-                  } else {
-                    galleryItem.classList.add('file-type-image');
-                  }
-                                      downloadBtn.innerHTML = '<i class="fas fa-circle-notch fa-spin"></i>';
-                  
-                  // Update mediaElement src and quality URL attributes
-                  const resolvedUrl = getImageUrl(detailData.detailImageUrl);
-                  mediaElement.dataset.imageUrl = detailData.detailImageUrl;
-                  mediaElement.dataset.highQualityUrl = resolvedUrl;
-                  mediaElement.dataset.highQualityLoaded = 'true';
-                  mediaElement.dataset.currentQualityUrl = resolvedUrl;
-                  
-                  // Only set src for non-video files (images and gifs)
-                  if (!isNewVideo) {
-                    mediaElement.src = resolvedUrl;
-                    mediaElement.addEventListener('load', () => {
-                      if (downloadBtn && originalDownloadHTML !== null) {
-                        downloadBtn.innerHTML = originalDownloadHTML;
-                      }
-                    });
-                  } else {
-                    if (downloadBtn && originalDownloadHTML !== null) {
-                      downloadBtn.innerHTML = originalDownloadHTML;
-                    }
-                  }
-                }
-                
-                // Update artists if present
-                if (detailData.tags && (detailData.tags.artist || detailData.tags.artists)) {
-                  const artistList = detailData.tags.artist || detailData.tags.artists || [];
-                  const artistStr = Array.isArray(artistList) ? artistList.join(', ') : (artistList || 'Unknown');
-                  galleryItem.dataset.artist = artistStr;
-                  mediaElement.dataset.author = artistStr;
-                }
-                
-                // Update upload date if present
-                if (detailData.uploadDate) {
-                  mediaElement.dataset.createdAt = detailData.uploadDate;
+                galleryItem.classList.remove('file-type-image', 'file-type-gif', 'file-type-video');
+                if (isNewVideo) {
+                  galleryItem.classList.add('file-type-video');
+                } else if (isNewGif) {
+                  galleryItem.classList.add('file-type-gif');
+                } else {
+                  galleryItem.classList.add('file-type-image');
                 }
               }
               
-              // Update tab cache with new scraper details (similar to quality load)
+              if (detailData.tags && (detailData.tags.artist || detailData.tags.artists)) {
+                const artistList = detailData.tags.artist || detailData.tags.artists || [];
+                const artistStr = Array.isArray(artistList) ? artistList.join(', ') : (artistList || 'Unknown');
+                galleryItem.dataset.artist = artistStr;
+              }
+              
+              // Update tab cache
               try {
                 const postId = mediaElement.closest('.booru-image-item')?.dataset.postId;
                 const postSource = mediaElement.closest('.booru-image-item')?.dataset.postSource;
@@ -8654,30 +9301,20 @@ function showPreviewForElement(mediaElement, forceVideoLoad = false) {
                   if (tab && Array.isArray(tab.booruPosts)) {
                     const post = tab.booruPosts.find(p => String(p.id) === String(postId) && String(p.source) === String(postSource));
                     if (post && detailData) {
-                      if (detailData.detailImageUrl) {
-                        post.imageUrl = detailData.detailImageUrl;
-                      }
-                      if (detailData.tags && detailData.tags.general) {
-                        post.tags = detailData.tags.general;
-                      }
+                      if (detailData.detailImageUrl) post.imageUrl = detailData.detailImageUrl;
+                      if (detailData.tags && detailData.tags.general) post.tags = detailData.tags.general;
                       if (detailData.tags && (detailData.tags.artist || detailData.tags.artists)) {
                         post.artists = detailData.tags.artist || detailData.tags.artists || [];
                       }
-                      if (detailData.uploadDate) {
-                        post.createdAt = detailData.uploadDate;
-                      }
+                      if (detailData.uploadDate) post.createdAt = detailData.uploadDate;
                       post._scraperDetailsLoaded = true;
                     }
                   }
                 }
               } catch (e) { /* ignore */ }
               
-              // Clean up UI (but don't reset button yet — let quality loading reset it when done)
-              const overlay = booruPreviewMediaContainer.querySelector('.preview-loading-overlay');
-              if (overlay) overlay.remove();
-              if (imageLoader) {
-                imageLoader.style.display = 'none';
-              }
+              // Still trigger HQ loading even though user moved away
+              showPreviewForElement(mediaElement, false, true);
             }
           }).catch((err) => {
             mediaElement._scraperDetailFetchInProgress = false;
@@ -8714,8 +9351,7 @@ function showPreviewForElement(mediaElement, forceVideoLoad = false) {
   }
   if (booruPreviewSource) {
     const sourceName = galleryItem?.dataset.postSource || '';
-    const isDownloadsGallery = galleryItem?.closest('.booru-gallery')?.classList.contains('downloads-gallery');
-    booruPreviewSource.textContent = isDownloadsGallery ? sourceName : '';
+    booruPreviewSource.textContent = sourceName;
   }
   if (booruPreviewSource.textContent === '') {
     booruPreviewSource.style.display = 'none';
@@ -8765,7 +9401,12 @@ function showPreviewForElement(mediaElement, forceVideoLoad = false) {
       if (!overlay && cachedPreview.isLoading) {
         overlay = document.createElement('div');
         overlay.className = 'preview-loading-overlay';
-        overlay.innerHTML = '<i class="fas fa-circle-notch fa-spin"></i>';
+        overlay.innerHTML = `
+          <svg class="preview-progress-circle" viewBox="0 0 100 100" width="45" height="45">
+            <circle class="preview-progress-bg" cx="50" cy="50" r="42"></circle>
+            <circle class="preview-progress-fill" cx="50" cy="50" r="42"></circle>
+          </svg>
+          <div class="preview-loading-percent">0%</div>`;
         overlay.style.cssText = `
           position: absolute;
           top: 10px;
@@ -8863,12 +9504,20 @@ function showPreviewForElement(mediaElement, forceVideoLoad = false) {
     
     booruPreviewMediaContainer.appendChild(img);
 
-    // Create preview loading overlay (same as for images)
+    // Create preview loading overlay for videos (show loading indicator during HQ load)
     let loadingOverlay = booruPreviewMediaContainer.querySelector('.preview-loading-overlay');
-    if (!loadingOverlay && mediaElement.dataset.highQualityLoading === 'true') {
+    if (!loadingOverlay && (mediaElement.tagName === 'VIDEO' || (mediaElement.tagName === 'IMG' && mediaElement.dataset.thumbnailUrl && mediaElement.dataset.imageUrl !== mediaElement.dataset.thumbnailUrl))) {
+      // For videos, always show loading overlay since HQ loading may take time
+      // For images, show overlay if HQ version exists and differs from thumbnail
       loadingOverlay = document.createElement('div');
       loadingOverlay.className = 'preview-loading-overlay';
-      loadingOverlay.innerHTML = '<i class="fas fa-circle-notch fa-spin"></i>';
+      loadingOverlay.innerHTML = `
+        <svg class="preview-progress-circle" viewBox="0 0 100 100" width="45" height="45">
+          <circle class="preview-progress-bg" cx="50" cy="50" r="42" />
+          <circle class="preview-progress-fill" cx="50" cy="50" r="42" />
+        </svg>
+        <div class="preview-loading-percent">0%</div>
+      `;
       loadingOverlay.dataset.hqLoading = 'true';
       booruPreviewMediaContainer.style.position = 'relative';
       booruPreviewMediaContainer.appendChild(loadingOverlay);
@@ -8902,12 +9551,12 @@ function showPreviewForElement(mediaElement, forceVideoLoad = false) {
     video.style.width = 'auto';
     video.style.height = 'auto';
     video.style.objectFit = 'contain';
-    // assign src last so browsers start fetching after our cache entry exists
-    video.src = getImageUrl(mediaElement.dataset.imageUrl);
-
     // Store post source and ID for middle-click handler
     video.dataset.postSource = mediaElement.closest('.booru-image-item')?.dataset.postSource;
     video.dataset.postId = mediaElement.closest('.booru-image-item')?.dataset.postId;
+    
+    // Set video src directly for streaming (don't fetch full video into memory)
+    video.src = getImageUrl(mediaElement.dataset.imageUrl);
 
     // Add middle click handler to open post URL
     video.addEventListener('mousedown', (e) => {
@@ -8981,8 +9630,8 @@ function showPreviewForElement(mediaElement, forceVideoLoad = false) {
           mediaElement.dataset.previewLoading = 'false';
         } catch (e) { /* ignore */ }
       }
-      updateHqLoadingCounter(-1);
       // remove preview loading overlay and restore gallery download button
+      updateHqLoadingCounter(-1);
       const overlay = booruPreviewMediaContainer.querySelector('.preview-loading-overlay');
       if (overlay) overlay.remove();
       if (galleryLoader) galleryLoader.style.display = 'none';
@@ -9118,7 +9767,14 @@ function showPreviewForElement(mediaElement, forceVideoLoad = false) {
           if (!loadingOverlay) {
             loadingOverlay = document.createElement('div');
             loadingOverlay.className = 'preview-loading-overlay';
-            loadingOverlay.innerHTML = '<i class="fas fa-circle-notch fa-spin"></i>';
+            // Create SVG circular progress bar
+            loadingOverlay.innerHTML = `
+              <svg class="preview-progress-circle" viewBox="0 0 100 100" width="45" height="45">
+                <circle class="preview-progress-bg" cx="50" cy="50" r="42" />
+                <circle class="preview-progress-fill" cx="50" cy="50" r="42" />
+              </svg>
+              <div class="preview-loading-percent">0%</div>
+            `;
             booruPreviewMediaContainer.style.position = 'relative';
             booruPreviewMediaContainer.appendChild(loadingOverlay);
           }
@@ -9144,38 +9800,18 @@ function showPreviewForElement(mediaElement, forceVideoLoad = false) {
             downloadBtn.innerHTML = '<i class="fas fa-circle-notch fa-spin"></i>';
           }
           galleryItem.querySelector('.image-loader').style.display = 'none';
-          updateHqLoadingCounter(1);
           
-          loadingQueue.enqueue(async () => {
+          // Enqueue HQ load task to unified download queue for concurrency management
+          const hqLoadTask = async () => {
             let taskId = `hq-${mediaElement.dataset.postId || Date.now()}-${Math.random().toString(36).substr(2, 9)}`;
-            
             let contentLength = 0;
+            let hasInitializedProgress = false;
+            
             try {
               const highQualityUrl = mediaElement.dataset.imageUrl;
-              let response = null;
-              try {
-                // Only attempt HEAD probe if URL is actually a remote HTTP(S) URL
-                // Skip for localhost, data URLs, or blob URLs to avoid unnecessary proxy errors
-                if (highQualityUrl && !highQualityUrl.startsWith('data:') && !highQualityUrl.includes('blob:') && !highQualityUrl.includes('localhost')) {
-                  response = await proxyFetch(highQualityUrl, { method: 'HEAD', silent: true });
-                }
-              } catch (err) {
-                // optional HEAD probe failed; continue without HEAD metadata
-              }
-              if (response && (response.ok || response.status === 302)) {
-                const proxyContentLength = response.headers.get('X-Proxy-Content-Length');
-                contentLength = parseInt(proxyContentLength || response.headers.get('Content-Length') || '0', 10);
-                if (contentLength > 0) {
-                  // Track initial bytes for progress calculation
-                  _hqTotalBytesInitial += contentLength;
-                  // Initialize remaining bytes and update display
-                  _hqBytesRemaining.set(taskId, contentLength);
-                  _hqTotalBytes += contentLength;
-                  updateHqLoadingCounter(0); // refresh display
-                }
-              } else if (response && response.status !== 302) {
-                // optional HEAD probe returned non-OK status; continue without HEAD metadata
-              }
+              // Skip HEAD probe for hover preview loads to avoid double-fetching the same URL
+              // (once via /api/proxy-fetch for Content-Length, again via /proxy-image for actual data)
+              // Progress tracking is optional; performance matters more for hover previews
               
               // Store the proxied high-quality URL for future preview reuse.
               // This avoids reloading the raw source URL again on subsequent hovers.
@@ -9205,9 +9841,27 @@ function showPreviewForElement(mediaElement, forceVideoLoad = false) {
                     throw new Error('Image URL is a blob URL - cannot fetch. This may indicate a data corruption issue.');
                   }
                   
-                  const blob = await loadImageWithProgress(imageUrl, (remainingBytes) => {
+                  const imageLoadResult = await loadImageWithProgress(imageUrl, (remainingBytes, totalBytes) => {
+                    // Set contentLength from totalBytes on first callback
+                    if (contentLength === 0 && totalBytes > 0) {
+                      contentLength = totalBytes;
+                    }
+                    
+                    // Initialize progress tracking on first callback if we have a content length
+                    if (!hasInitializedProgress && contentLength > 0) {
+                      updateHqLoadingCounter(1, taskId, null, contentLength);
+                      hasInitializedProgress = true;
+                    }
+                    
                     // Update remaining bytes in real-time and refresh counter display
                     updateHqLoadingCounter(0, taskId, remainingBytes);
+                    
+                    // Store progress data in mediaElement.dataset for download handler to read
+                    const loadedBytes = contentLength - remainingBytes;
+                    const progressPercent = Math.max(0, Math.min(100, (loadedBytes / contentLength) * 100));
+                    mediaElement.dataset.hqLoadProgress = String(Math.round(progressPercent));
+                    mediaElement.dataset.hqLoadedBytes = String(loadedBytes);
+                    mediaElement.dataset.hqTotalBytes = String(contentLength);
                     
                     // Also update preview overlay with progress percentage - ONLY if this post matches the current preview
                     const overlay = booruPreviewMediaContainer?.querySelector('.preview-loading-overlay');
@@ -9221,6 +9875,8 @@ function showPreviewForElement(mediaElement, forceVideoLoad = false) {
                       if (previewElement && previewElement.dataset.postId === targetPostId && previewElement.dataset.postSource === targetPostSource) {
                         const loadedBytes = contentLength - remainingBytes;
                         const progressPercent = Math.max(0, Math.min(100, (loadedBytes / contentLength) * 100));
+                        
+                        // Update percentage text
                         let percentDiv = overlay.querySelector('.preview-loading-percent');
                         if (!percentDiv) {
                           percentDiv = document.createElement('div');
@@ -9228,12 +9884,53 @@ function showPreviewForElement(mediaElement, forceVideoLoad = false) {
                           overlay.appendChild(percentDiv);
                         }
                         percentDiv.textContent = `${Math.round(progressPercent)}%`;
+                        
+                        // Update circular progress bar
+                        const progressCircle = overlay.querySelector('.preview-progress-fill');
+                        if (progressCircle) {
+                          const circumference = 2 * Math.PI * 42; // radius = 42
+                          const strokeDashoffset = circumference * (1 - progressPercent / 100);
+                          progressCircle.style.strokeDashoffset = strokeDashoffset;
+                          
+                          // Smooth color gradient: Red -> Orange -> Green
+                          // Failure (red): hsl(0, 100%, 50%)
+                          // Warning (orange): hsl(39, 100%, 42%)
+                          // Success (green): hsl(120, 75%, 50%)
+                          let hue, saturation, lightness;
+                          
+                          if (progressPercent <= 50) {
+                            // 0-50%: Red to Orange
+                            const t = progressPercent / 50;
+                            hue = 0 + t * 39;
+                            saturation = 100;
+                            lightness = 50 - t * 8;
+                          } else {
+                            // 50-100%: Orange to Green
+                            const t = (progressPercent - 50) / 50;
+                            hue = 39 + t * 81;
+                            saturation = 100 - t * 25;
+                            lightness = 42 + t * 8;
+                          }
+                          
+                          const color = `hsl(${hue}, ${saturation}%, ${lightness}%)`;
+                          progressCircle.style.stroke = color;
+                        }
                       }
                     }
                   });
                   
+                  // Extract blob from result
+                  const blob = imageLoadResult?.blob || imageLoadResult;
+                  
                   // Convert blob to object URL (single conversion for both uses)
                   blobUrl = URL.createObjectURL(blob);
+                  
+                  // Store the blob in _postBlobCache for download reuse (prevents re-downloading HQ from web)
+                  const galleryPostId = mediaElement.closest('.booru-image-item')?.dataset.postId;
+                  if (galleryPostId && blob && typeof blob.size === 'number') {
+                    if (!window._postBlobCache) window._postBlobCache = new Map();
+                    window._postBlobCache.set(String(galleryPostId), blob);
+                  }
                 }
                 
                 // Register this blob URL with the current tab for memory management
@@ -9287,7 +9984,7 @@ function showPreviewForElement(mediaElement, forceVideoLoad = false) {
                   _hqBytesRemaining.forEach(bytes => {
                     _hqTotalBytes += bytes;
                   });
-                  updateHqLoadingCounter(-1);
+                  updateHqLoadingCounter(-1, taskId);
                   // Restore download button when gallery image loads
                   const currentGalleryItem = mediaElement.closest('.booru-image-item');
                   const currentDownloadBtn = currentGalleryItem?.querySelector('.booru-download-btn');
@@ -9321,12 +10018,12 @@ function showPreviewForElement(mediaElement, forceVideoLoad = false) {
                   if (previewElement && previewElement.dataset.postId === galleryPostId) {
                     // Update preview media with HQ blob URL, regardless of whether preview is currently active
                     previewElement.src = blobUrl;
-                  }
-                  
-                  // Always remove overlay when load completes, regardless of preview visibility
-                  const overlay = booruPreviewMediaContainer?.querySelector('.preview-loading-overlay');
-                  if (overlay && overlay.dataset.hqLoading === 'true') {
-                    overlay.remove();
+                    
+                    // Only remove overlay if it's for this same post
+                    const overlay = booruPreviewMediaContainer?.querySelector('.preview-loading-overlay');
+                    if (overlay && overlay.dataset.hqLoading === 'true') {
+                      overlay.remove();
+                    }
                   }
                 }, { once: true });
                 
@@ -9338,7 +10035,7 @@ function showPreviewForElement(mediaElement, forceVideoLoad = false) {
                   _hqBytesRemaining.forEach(bytes => {
                     _hqTotalBytes += bytes;
                   });
-                  updateHqLoadingCounter(-1);
+                  updateHqLoadingCounter(-1, taskId);
                   const loader = mediaElement.parentElement?.querySelector('.image-loader');
                   if (loader) loader.style.display = 'none';
                   // Restore download button on error
@@ -9347,10 +10044,17 @@ function showPreviewForElement(mediaElement, forceVideoLoad = false) {
                   if (currentDownloadBtn && originalDownloadHTML !== null) {
                     currentDownloadBtn.innerHTML = originalDownloadHTML;
                   }
-                  // Remove loading overlay on error
-                  const overlay = booruPreviewMediaContainer?.querySelector('.preview-loading-overlay');
-                  if (overlay && overlay.dataset.hqLoading === 'true') {
-                    overlay.remove();
+                  // Remove loading overlay on error only if it's for this same post
+                  const previewImg = booruPreviewMediaContainer?.querySelector('img');
+                  const previewVideo = booruPreviewMediaContainer?.querySelector('video');
+                  const previewElement = previewImg || previewVideo;
+                  const galleryPostId = currentGalleryItem?.dataset.postId;
+                  
+                  if (previewElement && previewElement.dataset.postId === galleryPostId) {
+                    const overlay = booruPreviewMediaContainer?.querySelector('.preview-loading-overlay');
+                    if (overlay && overlay.dataset.hqLoading === 'true') {
+                      overlay.remove();
+                    }
                   }
                   delete mediaElement.dataset.highQualityLoading;
                 }, { once: true });
@@ -9373,7 +10077,7 @@ function showPreviewForElement(mediaElement, forceVideoLoad = false) {
                 _hqBytesRemaining.forEach(bytes => {
                   _hqTotalBytes += bytes;
                 });
-                updateHqLoadingCounter(-1);
+                updateHqLoadingCounter(-1, taskId);
                 const loader = mediaElement.parentElement?.querySelector('.image-loader');
                 if (loader) loader.style.display = 'none';
                 const currentGalleryItem = mediaElement.closest('.booru-image-item');
@@ -9415,12 +10119,16 @@ function showPreviewForElement(mediaElement, forceVideoLoad = false) {
               _hqBytesRemaining.forEach(bytes => {
                 _hqTotalBytes += bytes;
               });
-              updateHqLoadingCounter(-1);
+              updateHqLoadingCounter(-1, taskId);
             }
-          }).catch(err => {
+          };
+          
+          // Mark as HQ load task and enqueue to unified download queue
+          hqLoadTask._isHQLoad = true;
+          downloadQueue.enqueue(hqLoadTask).catch(err => {
             console.error('Queued high quality hover load failed:', err);
           });
-        }, window.hqHoverDelay ?? 150); // hover delay (configurable in Settings)
+        }, hqDelay); // use calculated delay (0 if skipping delay after detail fetch, 400ms otherwise)
       }
       // If already loading, keep thumbnail for now
     }
@@ -9454,7 +10162,12 @@ function showPreviewForElement(mediaElement, forceVideoLoad = false) {
         if (!overlay) {
           overlay = document.createElement('div');
           overlay.className = 'preview-loading-overlay';
-          overlay.innerHTML = '<i class="fas fa-circle-notch fa-spin"></i><div class="preview-loading-percent">0%</div>';
+          overlay.innerHTML = `
+            <svg class="preview-progress-circle" viewBox="0 0 100 100" width="45" height="45">
+              <circle class="preview-progress-bg" cx="50" cy="50" r="42"></circle>
+              <circle class="preview-progress-fill" cx="50" cy="50" r="42"></circle>
+            </svg>
+            <div class="preview-loading-percent">0%</div>`;
           overlay.dataset.hqLoading = 'true';
           booruPreviewMediaContainer.appendChild(overlay);
         }

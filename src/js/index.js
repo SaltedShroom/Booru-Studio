@@ -1966,13 +1966,9 @@ async function loadSession() {
     progressData.appendChild(percentageDisplay);
     progressData.appendChild(sizeDisplay);
 
-    const img = document.createElement('img');
-    img.className = 'dt-preview';
-
     toast.appendChild(top);
     toast.appendChild(progressTrack);
     toast.appendChild(progressData);
-    toast.appendChild(img);
     container.appendChild(toast);
 
     // show animation (match other toasts) — add .show after a short tick so CSS transition runs
@@ -1992,8 +1988,6 @@ async function loadSession() {
         }
       },
       done(success, msg, imageUrl) {
-        // hide progress data (percentage and size) when download is done
-        progressData.style.display = 'none';
         // update final state
         this.update(100, msg || (success ? 'Completed' : 'Failed'));
         // show downloaded image inside the toast on success
@@ -2002,20 +1996,6 @@ async function loadSession() {
             toast.classList.remove('show');
             setTimeout(() => toast.remove(), 300);
           }, 7000);
-
-          img.src = getImageUrl(imageUrl);
-          img.onload = () => {
-            clearTimeout(removeDelay);
-            removeDelay = null;
-            img.classList.add('loaded');
-            img.style.maxHeight = '200px';
-            // keep visible longer when image is shown
-            const delay = success && imageUrl ? 3000 : 2000;
-            setTimeout(() => {
-              toast.classList.remove('show');
-              setTimeout(() => toast.remove(), 300);
-            }, delay);
-          }
 
           requestAnimationFrame(() => {
             //plaxeholder 

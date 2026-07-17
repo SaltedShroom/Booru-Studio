@@ -1539,6 +1539,347 @@ const server = isWorkerMode ? null : http.createServer((req, res) => {
     }
     return;
   }
+
+  // Fetch new posts for all artists
+  if (req.method === 'GET' && req.url === '/api/get-favorite-batch') {
+    (async () => {
+      try {
+        // Load all artists
+        const artists = database.getAllDownloadedArtists();
+        
+        if (!artists || artists.length === 0) {
+          res.writeHead(200, { 'Content-Type': 'application/json' });
+          res.end(JSON.stringify({ ok: true, message: 'No artists to fetch', postsAdded: 0 }));
+          return;
+        }
+
+        // Load homepage setup to get current batch index
+        let homepageSetup = database.loadHomepageData('setup') || { posts: [], currentBatchIndex: 0 };
+        const currentIndex = homepageSetup.currentBatchIndex || 0;
+        const batchSize = 5;
+        
+        // Get the next batch of 5 artists with wrapping
+        const batchIndices = [];
+        for (let i = 0; i < batchSize; i++) {
+          const idx = (currentIndex + i) % artists.length;
+          batchIndices.push(idx);
+        }
+        
+        const batchArtists = batchIndices.map(idx => artists[idx]);
+
+        // Load booru sources
+        let booruSources = [];
+        try {
+          booruSources = database.loadSetting('booru-sources') || [];
+        } catch (e) {
+          console.warn('⚠️ Could not load booru sources:', e.message);
+        }
+
+        // Load session credentials
+        let sessionData = {};
+        try {
+          sessionData = database.loadSession() || {};
+        } catch (e) {
+          console.warn('⚠️ Could not load session:', e.message);
+        }
+
+        const newPosts = [];
+
+        // Fetch posts for each artist in this batch
+        for (const artist of batchArtists) {
+          const source = booruSources.find(s => s.id === artist.last_download_source);
+          
+          if (!source) {
+            console.warn(`⚠️ Source not found for artist ${artist.artist}`);
+            continue;
+          }
+
+          try {
+            // Get credentials for this source
+            let userId = '';
+            let apiKey = '';
+            
+            if (source.auth.required && sessionData.booruApiCredentials) {
+              const sourceCreds = sessionData.booruApiCredentials[source.id];
+              if (sourceCreds) {
+                userId = sourceCreds.userId || '';
+                apiKey = sourceCreds.apiKey || '';
+              }
+            }
+
+            // Fetch posts for this artist
+            const posts = await fetchArtistPostsFromSource(artist, source, userId, apiKey);
+            
+            if (posts.length > 0) {
+              // Transform and add posts
+              for (const post of posts) {
+                // Extract artists from tag_info
+                const postArtists = [];
+                if (Array.isArray(post.tag_info)) {
+                  post.tag_info.forEach(tag => {
+                    if (tag.type === 'artist') {
+                      postArtists.push(tag.tag);
+                    }
+                  });
+                }
+
+                // Parse tags (convert space-separated string to array if needed)
+                let postTags = [];
+                if (typeof post.tags === 'string') {
+                  postTags = post.tags.split(/\s+/).filter(t => t.length > 0);
+                } else if (Array.isArray(post.tags)) {
+                  postTags = post.tags;
+                }
+
+                // Calculate aspect ratio
+                const aspectRatio = post.width && post.height ? post.height / post.width : 1;
+
+                // Map post to output format
+                const mappedPost = {
+                  id: String(post.id),
+                  imageUrl: post.file_url || post.sample_url || post.preview_url,
+                  thumbnailUrl: post.preview_url || post.sample_url || post.file_url,
+                  sampleUrl: post.sample_url || post.file_url || post.preview_url,
+                  tags: postTags,
+                  artists: postArtists,
+                  score: post.score || 0,
+                  rating: post.rating || 'unknown',
+                  source: source.id,
+                  width: post.width || 0,
+                  height: post.height || 0,
+                  aspectRatio: aspectRatio,
+                  createdAt: post.change ? post.change * 1000 : Date.now(),
+                  displayed_count: 0  // Add displayed_count field
+                };
+
+                newPosts.push(mappedPost);
+              }
+            }
+          } catch (error) {
+            console.error(`❌ Error fetching for artist ${artist.artist} from ${source.id}:`, error.message);
+          }
+        }
+
+        // Merge new posts with existing posts, avoiding duplicates
+        const existingPosts = homepageSetup.posts || [];
+        const existingIds = new Set(existingPosts.map(p => p.id));
+        
+        let actuallyAdded = 0;
+        for (const post of newPosts) {
+          if (!existingIds.has(post.id)) {
+            existingPosts.push(post);
+            existingIds.add(post.id);
+            actuallyAdded++;
+          }
+        }
+
+        // Update the batch index for next call
+        const nextIndex = (currentIndex + batchSize) % artists.length;
+        
+        // Save updated homepage setup
+        homepageSetup.posts = existingPosts;
+        homepageSetup.currentBatchIndex = nextIndex;
+        database.saveHomepageData('setup', homepageSetup);
+
+        res.writeHead(200, { 'Content-Type': 'application/json' });
+        res.end(JSON.stringify({ 
+          ok: true, 
+          message: 'Batch processed successfully',
+          postsFetched: newPosts.length,
+          postsAdded: actuallyAdded,
+          duplicatesSkipped: newPosts.length - actuallyAdded,
+          totalPosts: existingPosts.length,
+          batchIndex: nextIndex,
+          artistsProcessed: batchArtists.map(a => a.artist)
+        }));
+      } catch (error) {
+        console.error(`❌ Error in /api/get-favorite-batch:`, error.message);
+        res.writeHead(500, { 'Content-Type': 'application/json' });
+        res.end(JSON.stringify({ error: error.message }));
+      }
+    })();
+    return;
+  }
+
+  // Helper function to fetch posts for a specific artist from a source
+  async function fetchArtistPostsFromSource(artist, source, userId, apiKey) {
+    return new Promise((resolve, reject) => {
+      const allPosts = [];
+      const lastDownloadDate = artist.last_download_date || 0;
+      let page = 0;
+      let foundOlderPosts = false;
+      let retryWithoutProxy = false;
+
+      const fetchPage = () => {
+        if (foundOlderPosts || page >= 100) {
+          resolve(allPosts);
+          return;
+        }
+
+        try {
+          const pageUrl = buildArtistFetchUrl(source, artist.artist, page, userId, apiKey);
+          
+          const parsedUrl = new URL(pageUrl);
+          const protocol = parsedUrl.protocol === 'http:' ? http : https;
+          
+          let agent = null;
+          if (!retryWithoutProxy) {
+            try {
+              agent = requireProxyAgent(parsedUrl.protocol === 'http:' ? 'http' : 'https');
+            } catch (agentError) {
+              console.error(`❌ Proxy error for ${artist.artist}:`, agentError.message);
+              agent = null;
+            }
+          }
+          
+          const options = {
+            hostname: parsedUrl.hostname,
+            port: parsedUrl.port,
+            path: parsedUrl.pathname + parsedUrl.search,
+            method: 'GET',
+            headers: {
+              'User-Agent': source.userAgent || 'Mozilla/5.0'
+            }
+          };
+
+          if (source.cookies) {
+            options.headers['Cookie'] = source.cookies;
+          }
+
+          if (agent) {
+            options.agent = agent;
+          }
+
+          const proxyReq = protocol.request(options, (proxyRes) => {
+            let responseBody = '';
+            
+            proxyRes.on('data', chunk => {
+              responseBody += chunk;
+            });
+            
+            proxyRes.on('end', () => {
+              try {
+                // Check for HTTP errors
+                if (proxyRes.statusCode >= 400) {
+                  reject(new Error(`HTTP ${proxyRes.statusCode}`));
+                  return;
+                }
+                
+                const data = JSON.parse(responseBody);
+                
+                if (!Array.isArray(data) || data.length === 0) {
+                  resolve(allPosts);
+                  return;
+                }
+
+                // Process posts
+                for (const post of data) {
+                  const postDate = parsePostDateFromSource(post, source);
+
+                  if (postDate && postDate <= lastDownloadDate) {
+                    foundOlderPosts = true;
+                    break;
+                  }
+
+                  allPosts.push(post);
+                }
+                
+                if (foundOlderPosts) {
+                  resolve(allPosts);
+                } else {
+                  page++;
+                  fetchPage();
+                }
+              } catch (error) {
+                console.error(`❌ Parse error for ${artist.artist} page ${page}:`, error.message);
+                reject(new Error(`Parse error: ${error.message}`));
+              }
+            });
+
+            proxyRes.on('error', (error) => {
+              console.error(`❌ Response error for ${artist.artist}:`, error.message);
+              reject(error);
+            });
+          });
+
+          proxyReq.on('error', (error) => {
+            const errorMsg = error.message || error.code || 'Unknown error';
+            
+            // If proxy request fails and we haven't retried yet, retry without proxy
+            if (!retryWithoutProxy && agent && errorMsg.includes('Error')) {
+              retryWithoutProxy = true;
+              page = 0;
+              allPosts.length = 0;
+              fetchPage();
+              return;
+            }
+            
+            console.error(`❌ Request error for ${artist.artist}:`, errorMsg);
+            reject(new Error(`Request failed: ${errorMsg}`));
+          });
+
+          proxyReq.end();
+        } catch (error) {
+          console.error(`❌ Error fetching ${artist.artist}:`, error.message);
+          reject(error);
+        }
+      };
+
+      fetchPage();
+    });
+  }
+
+  // Helper function to build artist fetch URL
+  function buildArtistFetchUrl(source, artist, page, userId = '', apiKey = '') {
+    const apiBaseUrl = source.apiUrl || source.baseUrl;
+    let url = `${apiBaseUrl}${source.api.basePath}`;
+
+    // Add json parameter if supported
+    if (source.api.jsonSupport) {
+      url += url.includes('?') ? '&json=1' : '?json=1';
+    }
+
+    // Add limit and page
+    const limit = 100;
+    const pageParam = source.api.pageParam || 'pid';
+    const limitParam = source.api.limitParam || 'limit';
+    url += url.includes('?') ? `&${limitParam}=${limit}&${pageParam}=${page}` : `?${limitParam}=${limit}&${pageParam}=${page}`;
+
+    // Add tags (artist name)
+    const tagsParam = source.api.tagsParam || 'tags';
+    url += `&${tagsParam}=${encodeURIComponent(artist)}`;
+
+    // Add authentication if required and credentials are available
+    if (source.auth.required && userId && apiKey) {
+      const userIdKey = source.auth.userIdKey || 'user_id';
+      const apiKeyKey = source.auth.apiKeyKey || 'api_key';
+      url += `&${userIdKey}=${encodeURIComponent(userId)}&${apiKeyKey}=${encodeURIComponent(apiKey)}`;
+    }
+
+    // Add fields parameter
+    url += '&fields=tag_info';
+
+    return url;
+  }
+
+  // Helper function to parse post date
+  function parsePostDateFromSource(post, source) {
+    const dateField = source.fields.createdAt || 'created_at';
+    const dateType = source.fields.dateType || 'timestamp';
+    let dateValue = post[dateField];
+
+    if (!dateValue) return null;
+
+    if (dateType === 'timestamp') {
+      return parseInt(dateValue) * 1000;
+    } else if (dateType === 'iso') {
+      return new Date(dateValue).getTime();
+    } else if (dateType === 'seconds-unix') {
+      return parseInt(dateValue) * 1000;
+    }
+
+    return null;
+  }
   
   // Get post count (must be before generic /api/db/posts/ route)
   if (req.method === 'GET' && req.url === '/api/db/posts/count') {
@@ -1665,14 +2006,97 @@ const server = isWorkerMode ? null : http.createServer((req, res) => {
     return;
   }
 
+  // ============== Downloaded Artists API ==============
+
+  // Get artist count (must be before generic /api/db/artists/ route)
+  if (req.method === 'GET' && req.url === '/api/db/artists/count') {
+    try {
+      const count = database.getDownloadedArtistCount();
+      res.writeHead(200, { 'Content-Type': 'application/json' });
+      res.end(JSON.stringify({ count }));
+    } catch (error) {
+      res.writeHead(500, { 'Content-Type': 'application/json' });
+      res.end(JSON.stringify({ error: error.message }));
+    }
+    return;
+  }
+
+  // Search artists (must be before generic /api/db/artists/ route)
+  if (req.method === 'GET' && req.url.startsWith('/api/db/artists/search?')) {
+    try {
+      const queryString = req.url.replace('/api/db/artists/search?q=', '');
+      const query = decodeURIComponent(queryString);
+      const artists = database.searchDownloadedArtists(query);
+      res.writeHead(200, { 'Content-Type': 'application/json' });
+      res.end(JSON.stringify(artists));
+    } catch (error) {
+      res.writeHead(500, { 'Content-Type': 'application/json' });
+      res.end(JSON.stringify({ error: error.message }));
+    }
+    return;
+  }
+
+  // Get all artists
+  if (req.method === 'GET' && req.url === '/api/db/artists') {
+    try {
+      const artists = database.getAllDownloadedArtists();
+      res.writeHead(200, { 'Content-Type': 'application/json' });
+      res.end(JSON.stringify(artists));
+    } catch (error) {
+      res.writeHead(500, { 'Content-Type': 'application/json' });
+      res.end(JSON.stringify({ error: error.message }));
+    }
+    return;
+  }
+
+  // Get specific artist
+  if (req.method === 'GET' && req.url.startsWith('/api/db/artists/')) {
+    try {
+      const artist = decodeURIComponent(req.url.replace('/api/db/artists/', ''));
+      const result = database.getDownloadedArtist(artist);
+      
+      if (!result) {
+        res.writeHead(404, { 'Content-Type': 'application/json' });
+        res.end(JSON.stringify({ error: 'Artist not found' }));
+        return;
+      }
+      
+      res.writeHead(200, { 'Content-Type': 'application/json' });
+      res.end(JSON.stringify(result));
+    } catch (error) {
+      res.writeHead(500, { 'Content-Type': 'application/json' });
+      res.end(JSON.stringify({ error: error.message }));
+    }
+    return;
+  }
+
+  // Update artist loaded dates
+  if (req.method === 'POST' && req.url === '/api/db/artists/loaded-dates') {
+    let body = '';
+    req.on('data', chunk => body += chunk.toString());
+    req.on('end', () => {
+      try {
+        const { artists, createdAt } = JSON.parse(body);
+        database.updateArtistLoadedDates(artists, createdAt);
+        res.writeHead(200, { 'Content-Type': 'application/json' });
+        res.end(JSON.stringify({ success: true }));
+      } catch (error) {
+        console.error('❌ POST /api/db/artists/loaded-dates error:', error.message);
+        res.writeHead(500, { 'Content-Type': 'application/json' });
+        res.end(JSON.stringify({ error: error.message }));
+      }
+    });
+    return;
+  }
+
   // Save tabs
   if (req.method === 'POST' && req.url === '/api/db/tabs') {
     let body = '';
     req.on('data', chunk => body += chunk.toString());
     req.on('end', () => {
       try {
-        const { tabs, activeTabId, isViewingDownloadsGallery, isViewingScroller, downloadsSearchText } = JSON.parse(body);
-        database.saveTabs(tabs, activeTabId, isViewingDownloadsGallery, isViewingScroller, downloadsSearchText);
+        const { tabs, activeTabId, isViewingDownloadsGallery, isViewingScroller, isViewingHomepage, downloadsSearchText } = JSON.parse(body);
+        database.saveTabs(tabs, activeTabId, isViewingDownloadsGallery, isViewingScroller, downloadsSearchText, isViewingHomepage);
         res.writeHead(200, { 'Content-Type': 'application/json' });
         res.end(JSON.stringify({ success: true }));
       } catch (error) {
@@ -1714,8 +2138,8 @@ const server = isWorkerMode ? null : http.createServer((req, res) => {
     return;
   }
 
-  // Load setting
-  if (req.method === 'GET' && req.url.startsWith('/api/db/settings/')) {
+  // Load setting (but NOT homepage-data, which has its own endpoint)
+  if (req.method === 'GET' && req.url.startsWith('/api/db/settings/') && !req.url.startsWith('/api/db/settings/homepage-data')) {
     try {
       const key = decodeURIComponent(req.url.replace('/api/db/settings/', ''));
       const value = database.loadSetting(key);
@@ -1838,6 +2262,44 @@ const server = isWorkerMode ? null : http.createServer((req, res) => {
   }
 
   // ============== END CSS PRESETS API ENDPOINTS ==============
+
+  // ============== HOMEPAGE API ENDPOINTS ==============
+
+  // Update homepage data (POST)
+  if (req.method === 'POST' && req.url.startsWith('/api/db/settings/homepage-data')) {
+    let body = '';
+    req.on('data', chunk => body += chunk.toString());
+    req.on('end', () => {
+      try {
+        const updatedData = JSON.parse(body);
+        database.saveHomepageData('setup', updatedData);
+        res.writeHead(200, { 'Content-Type': 'application/json' });
+        res.end(JSON.stringify({ success: true, postsCount: updatedData.posts ? updatedData.posts.length : 0 }));
+      } catch (error) {
+        console.error('❌ Error saving homepage data:', error.message);
+        res.writeHead(500, { 'Content-Type': 'application/json' });
+        res.end(JSON.stringify({ error: error.message }));
+      }
+    });
+    return;
+  }
+
+  // Get homepage data (GET)
+  if (req.method === 'GET' && req.url.startsWith('/api/db/settings/homepage-data')) {
+    try {
+      const homepageData = database.loadHomepageData('setup');
+      const responseData = homepageData || { posts: [], currentBatchIndex: 0 };
+      res.writeHead(200, { 'Content-Type': 'application/json' });
+      res.end(JSON.stringify(responseData));
+    } catch (error) {
+      console.error('❌ Error loading homepage data:', error.message);
+      res.writeHead(500, { 'Content-Type': 'application/json' });
+      res.end(JSON.stringify({ error: error.message }));
+    }
+    return;
+  }
+
+  // ============== END HOMEPAGE API ENDPOINTS ==============
 
   // ============== END DATABASE API ENDPOINTS ==============
 
@@ -3389,6 +3851,76 @@ const server = isWorkerMode ? null : http.createServer((req, res) => {
         res.end(JSON.stringify({ success: false, error: error.message }));
       }
     });
+  } else if (req.method === 'POST' && req.url === '/download-from-blob') {
+    // Handle binary blob uploads from cached HQ downloads
+    res.setHeader('Access-Control-Allow-Origin', '*');
+    res.setHeader('Access-Control-Allow-Methods', 'POST, OPTIONS');
+    res.setHeader('Access-Control-Allow-Headers', 'Content-Type, X-Filename, X-TaskId');
+    
+    if (req.method === 'OPTIONS') {
+      res.writeHead(200);
+      res.end();
+      return;
+    }
+    
+    try {
+      const filename = req.headers['x-filename'];
+      const taskId = req.headers['x-taskid'];
+      
+      if (!downloadFolder) {
+        throw new Error('Download folder not set');
+      }
+
+      if (!fs.existsSync(downloadFolder)) {
+        fs.mkdirSync(downloadFolder, { recursive: true });
+      }
+
+      const filepath = path.join(downloadFolder, filename);
+      const fileStream = fs.createWriteStream(filepath);
+      
+      let totalBytes = 0;
+      
+      // Track data arrival
+      req.on('data', (chunk) => {
+        totalBytes += chunk.length;
+        if (taskId) {
+          setDownloadProgress(taskId, totalBytes, totalBytes, 'Saving');
+        }
+      });
+      
+      // Pipe request body to file
+      req.pipe(fileStream);
+      
+      // Handle completion
+      fileStream.on('finish', () => {
+        trackDownload();
+        if (taskId) setDownloadProgress(taskId, totalBytes, totalBytes, 'Completed');
+        res.writeHead(200, { 'Content-Type': 'application/json' });
+        res.end(JSON.stringify({ success: true, filepath: filename, taskId }));
+        // Clean up progress after a short delay
+        if (taskId) setTimeout(() => clearDownloadProgress(taskId), 5000);
+      });
+      
+      // Handle errors
+      fileStream.on('error', (err) => {
+        if (fs.existsSync(filepath)) fs.unlinkSync(filepath);
+        res.writeHead(500, { 'Content-Type': 'application/json' });
+        res.end(JSON.stringify({ success: false, error: err.message }));
+        if (taskId) clearDownloadProgress(taskId);
+      });
+      
+      req.on('error', (err) => {
+        fileStream.destroy();
+        if (fs.existsSync(filepath)) fs.unlinkSync(filepath);
+        res.writeHead(500, { 'Content-Type': 'application/json' });
+        res.end(JSON.stringify({ success: false, error: err.message }));
+        if (taskId) clearDownloadProgress(taskId);
+      });
+      
+    } catch (error) {
+      res.writeHead(500, { 'Content-Type': 'application/json' });
+      res.end(JSON.stringify({ success: false, error: error.message }));
+    }
   } else if (req.method === 'POST' && req.url === '/check-downloaded-images') {
     res.setHeader('Access-Control-Allow-Origin', '*');
     res.setHeader('Access-Control-Allow-Methods', 'POST, OPTIONS');
@@ -3988,8 +4520,21 @@ if (!isWorkerMode) {
       console.warn('Could not initialize server blacklist tags from session:', e.message);
     }
 
+    // Initialize homepage setup
+    try {
+      database.initializeHomepageSetup();
+    } catch (e) {
+      console.warn('Could not initialize homepage setup:', e.message);
+    }
+
     // Start 5-minute Tor circuit rotation timer if applicable
     resetTorRotateTimer();
+    
+    // Configure server for connection pooling and resource management
+    // This prevents ERR_INSUFFICIENT_RESOURCES when handling multiple concurrent downloads
+    server.maxConnections = 1000;
+    server.keepAliveTimeout = 5000; // 5 seconds
+    server.requestTimeout = 30000; // 30 seconds
     
     server.listen(PORT, () => {
       console.log(`Image save server running on http://localhost:${PORT}`);

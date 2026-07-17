@@ -171,6 +171,97 @@ class DBStore {
     }
   }
 
+  // ============== Downloaded Artists ==============
+
+  async getDownloadedArtist(artist) {
+    try {
+      const response = await fetch(`${DB_API_BASE}/artists/${encodeURIComponent(artist)}`);
+      
+      if (response.status === 404) {
+        return null;
+      }
+      
+      if (!response.ok) {
+        const error = await response.json();
+        throw new Error(error.error || 'Failed to get artist');
+      }
+      
+      return await response.json();
+    } catch (error) {
+      console.error('DBStore.getDownloadedArtist error:', error);
+      throw error;
+    }
+  }
+
+  async getAllDownloadedArtists() {
+    try {
+      const response = await fetch(`${DB_API_BASE}/artists`);
+      
+      if (!response.ok) {
+        const error = await response.json();
+        throw new Error(error.error || 'Failed to get artists');
+      }
+      
+      return await response.json();
+    } catch (error) {
+      console.error('DBStore.getAllDownloadedArtists error:', error);
+      throw error;
+    }
+  }
+
+  async getDownloadedArtistCount() {
+    try {
+      const response = await fetch(`${DB_API_BASE}/artists/count`);
+      
+      if (!response.ok) {
+        const error = await response.json();
+        throw new Error(error.error || 'Failed to get artist count');
+      }
+      
+      const data = await response.json();
+      return data.count;
+    } catch (error) {
+      console.error('DBStore.getDownloadedArtistCount error:', error);
+      throw error;
+    }
+  }
+
+  async searchDownloadedArtists(query) {
+    try {
+      const response = await fetch(`${DB_API_BASE}/artists/search?q=${encodeURIComponent(query)}`);
+      
+      if (!response.ok) {
+        const error = await response.json();
+        throw new Error(error.error || 'Failed to search artists');
+      }
+      
+      return await response.json();
+    } catch (error) {
+      console.error('DBStore.searchDownloadedArtists error:', error);
+      throw error;
+    }
+  }
+
+  async updateArtistLoadedDates(artists, createdAt) {
+    try {
+      const response = await fetch(`${DB_API_BASE}/artists/loaded-dates`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ artists, createdAt })
+      });
+      
+      if (!response.ok) {
+        const error = await response.json();
+        throw new Error(error.error || 'Failed to update artist loaded dates');
+      }
+      
+      return true;
+    } catch (error) {
+      console.error('DBStore.updateArtistLoadedDates error:', error);
+      throw error;
+    }
+  }
+
   // ============== Tabs ==============
 
   async saveTabs(tabs, activeTabId) {

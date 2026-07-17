@@ -548,8 +548,8 @@ function applyState(state) {
       localStorage.setItem('downloadsImageSize', imageSizeSlider.value);
     } catch (e) {}
     window._lastGalleryType = 'downloads';
-  } else if (window.isViewingDownloadsGallery === false || window.isViewingDownloadsGallery === undefined) {
-    // Only update booruImageSize if NOT in downloads gallery
+  } else if (window.isViewingHomepage || window.isViewingDownloadsGallery === false || window.isViewingDownloadsGallery === undefined) {
+    // Only update booruImageSize if NOT in downloads gallery (includes homepage and booru tabs)
     window.sessionBooruImageSize = imageSizeSlider.value;
     try {
       localStorage.setItem('booruImageSize', imageSizeSlider.value);
@@ -1133,9 +1133,10 @@ function closeBooruTab(tabId) {
 async function saveBooruTabsToSession() {
   const tabsData = {
     tabs: booruTabs,
-    activeTabId: (window.isViewingScroller || window.isViewingDownloadsGallery) ? null : activeTabId, // Clear activeTabId when not viewing a booru tab
+    activeTabId: (window.isViewingScroller || window.isViewingDownloadsGallery || window.isViewingHomepage) ? null : activeTabId, // Clear activeTabId when not viewing a booru tab
     isViewingDownloadsGallery: window.isViewingDownloadsGallery || false,
     isViewingScroller: window.isViewingScroller || false,
+    isViewingHomepage: window.isViewingHomepage || false,
     downloadsSearchText: window.downloadsSearchText || ''
   };
   
@@ -1189,6 +1190,12 @@ async function loadBooruTabsFromSession() {
           // Show downloads gallery
           if (window.showDownloadsGallery) {
             window.showDownloadsGallery();
+          }
+        } else if (data.isViewingHomepage) {
+          // Show homepage
+          const showHomepageBtn = document.getElementById('show-homepage-btn');
+          if (showHomepageBtn) {
+            showHomepageBtn.click();
           }
         } else {
           // Switch to saved active tab
