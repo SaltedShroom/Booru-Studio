@@ -70,8 +70,8 @@ to install, download the latest *Setup.exe*
 ### Installation
 
 1. Download the latest installer from the GitHub releases page:
-   - `https://github.com/SaltedShroom/Booru-Studio/releases`
-2. Run `Booru-Studio-Setup-x.x.x.exe` and follow the install prompts
+   -  <a href="https://github.com/SaltedShroom/Booru-Studio/releases">`https://github.com/SaltedShroom/Booru-Studio/releases`</a>
+3. Run `Booru-Studio-Setup-x.x.x.exe` and follow the install prompts
 
 ## Updates / Releases
 
