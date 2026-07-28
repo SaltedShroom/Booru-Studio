@@ -265,7 +265,11 @@
     <div id="booru-tab" class="tab-content">
       <!-- Booru Sub-Tabs -->
       <div class="booru-tabs-bar">
-        <div class="booru-tabs-left-fade" id="booru-tabs-left-fade"></div>
+        <button id="show-homepage-btn" class="booru-tab-btn" title="Keep track of your favorite artists">
+          My Feed<i class="fas fa-home"></i>
+          <div class="booru-tabs-left-fade" id="booru-tabs-left-fade"></div>
+        </button>
+        
         <div id="booru-tabs-container" class="booru-tabs-container">
           <!-- Tabs will be dynamically added here -->
         </div>
@@ -274,9 +278,6 @@
         </button>
         <button id="show-scroller-btn" class="booru-tab-btn" title="Scroll recommended posts">
           Scroller<i class="fa-solid fa-arrows-up-down"></i>
-        </button>
-        <button id="show-homepage-btn" class="booru-tab-btn" title="View homepage gallery">
-          Homepage<i class="fas fa-home"></i>
         </button>
         <button id="show-downloads-gallery-btn" class="booru-tab-btn" title="Show all downloaded images">
           Downloads<i class="fas fa-download"></i>
@@ -350,6 +351,7 @@
         <div class="booru-content-wrapper">
           <div class="booru-content-wrapper-inner">
             <div id="booru-content" class="booru-content">
+              <div id="booru-tab-descriptor" class="booru-tab-descriptor" style="display: none;"></div>
               <h1 id="booru-total-count"></h1>
               <div class="gallery-wrapper" id="gallery-wrapper">
                 <div id="booru-gallery" class="booru-gallery"></div>
@@ -590,6 +592,16 @@
               <label class="checkbox-label" for="coin-animation-enabled">Download coin animation</label>
               <input type="checkbox" id="coin-animation-enabled" class="settings-checkbox" checked>
               <small>Show animated binary digits when downloads complete</small>
+            </div>
+            <div class="settings-group">
+              <label class="checkbox-label" for="animate-gifs-enabled">Animate GIFs in gallery</label>
+              <input type="checkbox" id="animate-gifs-enabled" class="settings-checkbox">
+              <small>When disabled, GIFs display only their first frame in the gallery for better performance</small>
+            </div>
+            <div class="settings-group">
+              <label class="checkbox-label" for="show-descriptor-enabled">Show homepage descriptor</label>
+              <input type="checkbox" id="show-descriptor-enabled" class="settings-checkbox" checked>
+              <small>Display the "My Feed" descriptor on the homepage</small>
             </div>
             <div class="settings-group">
               <label for="blacklist-tags-input">Global blacklisted tags</label>

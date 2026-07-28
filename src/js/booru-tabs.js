@@ -668,6 +668,10 @@ function handleCloseActiveTabShortcut(e) {
 
 // Switch to a specific tab
 function switchToTab(tabId) {
+
+  const searchControl = document.getElementById('search-control');
+  if (searchControl) searchControl.style.display = 'flex';
+  document.getElementById('show-homepage-btn')?.classList.remove('active');
   document.getElementById('load-more-icon')?.remove();
   const existingSidebar = document.getElementById('downloads-sidebar');
   if (existingSidebar)
@@ -718,6 +722,8 @@ function switchToTab(tabId) {
   // Set downloads gallery to false when switching to a tab
   let wasViewingDownloads = window.isViewingDownloadsGallery;
   window.isViewingDownloadsGallery = false;
+  let wasViewingHomepage = window.isViewingHomepage;
+  window.isViewingHomepage = false;
   debouncedSave();
   
   if (wasViewingDownloads) {
@@ -736,17 +742,9 @@ function switchToTab(tabId) {
     window.allDownloadedPosts = null;
     window.downloadsPaginationIndex = 0;
     
-    // Restore header controls
-    const controlBar = document.querySelector('header.control-bar.booru-control-bar');
-    if (controlBar) {
-      controlBar.querySelectorAll('.booru-control-left > *').forEach(el => el.style.display = '');
-      controlBar.querySelectorAll('.booru-control-right > *').forEach(el => el.style.display = '');
-      const aiFilter = controlBar.querySelector('#ai-filter-toggle');
-      if (aiFilter) aiFilter.style.display = '';
-      const galleryQualityToggleBtn = controlBar.querySelector('#gallery-quality-toggle');
-      if (galleryQualityToggleBtn) galleryQualityToggleBtn.style.display = '';
-      const reloadBtn = controlBar.querySelector('#reload-booru-btn');
-      if (reloadBtn) reloadBtn.style.display = '';
+    // Restore control bar to normal tab mode
+    if (typeof window.updateControlBar === 'function') {
+      window.updateControlBar('normal_tab');
     }
     const downloadsDateSortSection = document.querySelector('.control-section-downloads-date-order');
     if (downloadsDateSortSection) downloadsDateSortSection.remove();
@@ -779,6 +777,13 @@ function switchToTab(tabId) {
     if (shuffleBtn) shuffleBtn.remove();
     const sortArtistBtn = document.getElementById('downloads-sort-artist-btn');
     if (sortArtistBtn) sortArtistBtn.remove();
+  }
+
+  if (wasViewingHomepage) {
+    // Restore control bar to normal tab mode
+    if (typeof window.updateControlBar === 'function') {
+      window.updateControlBar('normal_tab');
+    }
   }
 
   if (tabButton) {
@@ -825,10 +830,9 @@ function switchToTab(tabId) {
   activeTabId = tabId;
   window.activeTabId = activeTabId;
   
-  // Show control bar when a tab is active
-  const controlBar = document.querySelector('.booru-control-bar');
-  if (controlBar) {
-    controlBar.style.display = 'flex';
+  // Set up control bar for normal tab mode
+  if (typeof window.updateControlBar === 'function') {
+    window.updateControlBar('normal_tab');
   }
   
   // Update tab button appearance

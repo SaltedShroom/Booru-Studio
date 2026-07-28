@@ -806,7 +806,7 @@ body, html {
   transform: translateY(0);
 }
 
-#ai-filter-toggle,#gallery-quality-toggle {
+#ai-filter-toggle,#gallery-quality-toggle,#reload-booru-date-btn {
   width: 24px;
   height: 24px;
 }
@@ -2083,6 +2083,7 @@ body, html {
 
 /* Lightbox Modal */
 .lightbox-modal {
+  position: relative;
   display: flex;
   opacity: 0;
   pointer-events: none;
@@ -2865,6 +2866,7 @@ body, html {
   gap: 4px;
   flex: 1;
   padding-right: 50px;
+  padding-left: 10px;
   height: 100%;
   overflow-x: auto;
   overflow-y: hidden;
@@ -2884,16 +2886,15 @@ body, html {
 
 .booru-tabs-left-fade {
   width: 30px;
-  height: 100%;
+  height: 42px;
   position: absolute;
-  left: 0px;
-  top: 0;
-  z-index: 200;
+  right: -32px;
+  bottom: 0;
+  z-index: 200 !important;
   pointer-events: none;
   background: linear-gradient(to right, var(--bg-medium), rgba(30, 33, 39, 0));
   opacity: 0;
   transition: opacity 0.3s ease;
-  transform: translateX(24px);
 }
 
 .booru-tabs-left-fade.active {
@@ -2985,6 +2986,7 @@ body, html {
 
 #add-booru-tab-btn {
   box-shadow: -20px 0 30px 30px var(--bg-medium);
+  margin: 0;
 }
 
 .booru-tab-btn:hover, .booru-control-button:hover {
@@ -3023,6 +3025,11 @@ body, html {
 
 #show-homepage-btn, #show-scroller-btn {
   background: var(--surface-hover);
+}
+
+#show-homepage-btn {
+  margin: 0;
+  box-shadow: 0 0 5px 3px var(--bg-medium);
 }
 
 #show-homepage-btn:hover, #show-scroller-btn:hover {
@@ -3599,13 +3606,13 @@ body, html {
   border-radius: 8px;
   overflow: hidden;
   box-shadow: 0 8px 32px rgba(0, 0, 0, 0.6);
-  max-width: min(680px, 90vw);
+  width: 680px;
   max-height: 90vh;
   flex-direction: column;
 }
 
 .booru-hover-preview:has(video) {
-  max-width: min(680px, 90vw);
+  width: 680px;
 }
 
 .booru-hover-preview.frozen {
@@ -6150,4 +6157,62 @@ textarea.settings-input {
 }
 #browse-booru-source-btn:hover {
   border-color: white;
+}
+
+.control-section-reset-algorithm {
+  padding: 0;
+}
+
+#reset-algorithm-btn {
+  background: var(--accent);
+  border: none;
+  color: white;
+  padding: 4px 8px;
+  font-size: 12px;
+  height: 100%;
+  width: 100%;
+  cursor: pointer;
+  transition: background 0.2s ease;
+}
+#reset-algorithm-btn:hover {
+  background: var(--accent-hover);
+}
+#reset-algorithm-btn:disabled {
+  opacity: 0.4;
+  cursor: not-allowed;
+}
+
+.booru-tab-descriptor {
+  position: relative;
+  background: #00000020;
+  border: 1px solid var(--border);
+  padding: 10px 20px;
+  box-sizing: border-box;
+  margin-bottom: 20px;
+}
+.booru-tab-descriptor h1 {
+  font-size: 13px;
+  margin: 0;
+  margin-bottom: 8px;
+}
+.booru-tab-descriptor p {
+  font-size: 11px;
+  margin: 0;
+  line-height: 1.4;
+}
+.booru-tab-descriptor button {
+  position: absolute;
+  top: 10px;
+  right: 10px;
+  background: none;
+  border: none;
+  color: var(--text-primary);
+  font-size: 14px;
+  cursor: pointer;
+  padding: 0;
+  width: 20px;
+  height: 20px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
 }

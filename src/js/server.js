@@ -491,7 +491,7 @@ const server = isWorkerMode ? null : http.createServer((req, res) => {
   // Enable CORS
   res.setHeader('Access-Control-Allow-Origin', '*');
   res.setHeader('Access-Control-Allow-Methods', 'GET, POST, PUT, DELETE, OPTIONS');
-  res.setHeader('Access-Control-Allow-Headers', 'Content-Type');
+  res.setHeader('Access-Control-Allow-Headers', 'Content-Type, X-Filename, X-TaskId');
 
   // Prevent browser caching for all responses
   res.setHeader('Cache-Control', 'no-store, no-cache, must-revalidate, max-age=0');
@@ -1540,37 +1540,45 @@ const server = isWorkerMode ? null : http.createServer((req, res) => {
     return;
   }
 
-  // Fetch new posts for all artists
+  // Fetch new posts for all artists (sorted by score) until we have 100 posts
   if (req.method === 'GET' && req.url === '/api/get-favorite-batch') {
     (async () => {
+      const batchStartTime = Date.now();
       try {
-        // Load all artists
-        const artists = database.getAllDownloadedArtists();
+        console.log(`\n📥 ============ /api/get-favorite-batch START ============`);
+        
+        // Fetch artists from the new endpoint (sorted by score)
+        const artistFetchStart = Date.now();
+        const artistResponse = await new Promise((resolve, reject) => {
+          const req = http.get('http://localhost:3001/api/downloaded-artists', (res) => {
+            let data = '';
+            res.on('data', chunk => data += chunk);
+            res.on('end', () => {
+              try {
+                resolve(JSON.parse(data));
+              } catch (e) {
+                reject(e);
+              }
+            });
+          });
+          req.on('error', reject);
+        });
+
+        const artists = Array.isArray(artistResponse) ? artistResponse : [];
+        console.log(`✓ Fetched ${artists.length} artists (${Date.now() - artistFetchStart}ms)`);
         
         if (!artists || artists.length === 0) {
+          console.log(`⚠️ No artists to fetch`);
           res.writeHead(200, { 'Content-Type': 'application/json' });
           res.end(JSON.stringify({ ok: true, message: 'No artists to fetch', postsAdded: 0 }));
           return;
         }
 
-        // Load homepage setup to get current batch index
-        let homepageSetup = database.loadHomepageData('setup') || { posts: [], currentBatchIndex: 0 };
-        const currentIndex = homepageSetup.currentBatchIndex || 0;
-        const batchSize = 5;
-        
-        // Get the next batch of 5 artists with wrapping
-        const batchIndices = [];
-        for (let i = 0; i < batchSize; i++) {
-          const idx = (currentIndex + i) % artists.length;
-          batchIndices.push(idx);
-        }
-        
-        const batchArtists = batchIndices.map(idx => artists[idx]);
-
         // Load booru sources
         let booruSources = [];
         try {
           booruSources = database.loadSetting('booru-sources') || [];
+          console.log(`✓ Loaded ${booruSources.length} booru sources`);
         } catch (e) {
           console.warn('⚠️ Could not load booru sources:', e.message);
         }
@@ -1579,89 +1587,126 @@ const server = isWorkerMode ? null : http.createServer((req, res) => {
         let sessionData = {};
         try {
           sessionData = database.loadSession() || {};
+          console.log(`✓ Loaded session data`);
         } catch (e) {
           console.warn('⚠️ Could not load session:', e.message);
         }
 
-        const newPosts = [];
+        console.log(`✓ Starting to fetch posts from ${artists.length} artists until we reach 100 posts...`);
 
-        // Fetch posts for each artist in this batch
-        for (const artist of batchArtists) {
-          const source = booruSources.find(s => s.id === artist.last_download_source);
+        const newPosts = [];
+        const artistStats = [];
+        const MIN_POSTS = 100;
+        const PARALLEL_BATCH_SIZE = 8; // Fetch 8 artists in parallel
+
+        // Helper to fetch from a batch of artists
+        const fetchArtistBatch = async (artistsToFetch, label = '') => {
+          let artistIndex = 0;
+          for (let batchStart = 0; batchStart < artistsToFetch.length; batchStart += PARALLEL_BATCH_SIZE) {
+            if (newPosts.length >= MIN_POSTS) {
+              console.log(`✓ Reached ${MIN_POSTS} posts, stopping fetch`);
+              break;
+            }
+
+            const batchEnd = Math.min(batchStart + PARALLEL_BATCH_SIZE, artistsToFetch.length);
+            const batch = artistsToFetch.slice(batchStart, batchEnd);
+            console.log(`${label}[${batchStart + 1}-${batchEnd}/${artistsToFetch.length}] [found: ${newPosts.length}] Fetching artists in parallel...`);
+
+            const batchPromises = batch.map(async (artist) => {
+
+              const artistStartTime = Date.now();
+              try {
+                const source = booruSources.find(s => s.id === artist.last_download_source);
+                if (!source) {
+                  console.warn(`  ⚠️ Source not found for ${artist.artist}`);
+                  return { artist: artist.artist, posts: [], postsFoundCount: 0, source: null, error: 'Source not found', duration: Date.now() - artistStartTime };
+                }
+
+                let userId = '', apiKey = '';
+                if (source.auth.required && sessionData.booruApiCredentials) {
+                  const sourceCreds = sessionData.booruApiCredentials[source.id];
+                  if (sourceCreds) { userId = sourceCreds.userId || ''; apiKey = sourceCreds.apiKey || ''; }
+                }
+
+                if (!artist.last_download_date || artist.last_download_date === null) {
+                  console.log(`  ⚠️ Artist ${artist.artist} has no last_download_date`);
+                }
+
+                const posts = await fetchArtistPostsFromSource(artist, source, userId, apiKey);
+                return { artist: artist.artist, posts, postsFoundCount: posts.length, source, error: null, duration: Date.now() - artistStartTime };
+              } catch (error) {
+                console.error(`  ❌ Error fetching ${artist.artist}: ${error.message}`);
+                return { artist: artist.artist, posts: [], postsFoundCount: 0, source: null, error: error.message, duration: Date.now() - artistStartTime };
+              }
+            });
+
+            const batchResults = await Promise.all(batchPromises);
+            for (const result of batchResults) {
+              if (result.posts.length > 0) {
+                for (const post of result.posts) {
+                  // Map post fields using source configuration
+                  const mappedPost = {
+                    ...mapPostFromSource(post, result.source),
+                    source: result.source.id,
+                    displayed_count: 0
+                  };
+                  newPosts.push(mappedPost);
+                }
+              }
+
+              database.updateArtistLastCheckedOut(result.artist, Date.now());
+              artistStats.push({
+                name: result.artist,
+                score: 0,
+                newPostsFound: result.postsFoundCount,
+                source: result.source ? result.source.id : 'unknown',
+                error: result.error,
+                duration: result.duration
+              });
+            }
+          }
+        };
+
+        // Pre-filter artists: exclude those that should be skipped
+        const eligibleArtists = [];
+        for (const artist of artists) {
+          if (artist.last_checked_out !== null && artist.last_checked_out !== undefined) {
+            const thirtyDaysAgo = Date.now() - (30 * 24 * 60 * 60 * 1000);
+            if (artist.last_checked_out > thirtyDaysAgo) continue;
+          }
+          eligibleArtists.push(artist);
+        }
+
+        console.log(`✓ Filtered to ${eligibleArtists.length} eligible artists (skipped ${artists.length - eligibleArtists.length})`);
+
+        // First attempt
+        await fetchArtistBatch(eligibleArtists);
+
+        // If not enough posts, reset and try again with all artists
+        if (newPosts.length < MIN_POSTS) {
+          console.log(`⚠️ Not enough posts from eligible artists (found ${newPosts.length}/${MIN_POSTS}). Resetting last_checked_out and trying again...`);
           
-          if (!source) {
-            console.warn(`⚠️ Source not found for artist ${artist.artist}`);
-            continue;
+          try {
+            for (const artist of artists) {
+              database.updateArtistLastCheckedOut(artist.artist, null);
+            }
+            console.log(`✓ Reset last_checked_out for all ${artists.length} artists`);
+          } catch (err) {
+            console.warn(`⚠️ Error resetting artist checkout dates: ${err.message}`);
           }
 
-          try {
-            // Get credentials for this source
-            let userId = '';
-            let apiKey = '';
-            
-            if (source.auth.required && sessionData.booruApiCredentials) {
-              const sourceCreds = sessionData.booruApiCredentials[source.id];
-              if (sourceCreds) {
-                userId = sourceCreds.userId || '';
-                apiKey = sourceCreds.apiKey || '';
-              }
-            }
-
-            // Fetch posts for this artist
-            const posts = await fetchArtistPostsFromSource(artist, source, userId, apiKey);
-            
-            if (posts.length > 0) {
-              // Transform and add posts
-              for (const post of posts) {
-                // Extract artists from tag_info
-                const postArtists = [];
-                if (Array.isArray(post.tag_info)) {
-                  post.tag_info.forEach(tag => {
-                    if (tag.type === 'artist') {
-                      postArtists.push(tag.tag);
-                    }
-                  });
-                }
-
-                // Parse tags (convert space-separated string to array if needed)
-                let postTags = [];
-                if (typeof post.tags === 'string') {
-                  postTags = post.tags.split(/\s+/).filter(t => t.length > 0);
-                } else if (Array.isArray(post.tags)) {
-                  postTags = post.tags;
-                }
-
-                // Calculate aspect ratio
-                const aspectRatio = post.width && post.height ? post.height / post.width : 1;
-
-                // Map post to output format
-                const mappedPost = {
-                  id: String(post.id),
-                  imageUrl: post.file_url || post.sample_url || post.preview_url,
-                  thumbnailUrl: post.preview_url || post.sample_url || post.file_url,
-                  sampleUrl: post.sample_url || post.file_url || post.preview_url,
-                  tags: postTags,
-                  artists: postArtists,
-                  score: post.score || 0,
-                  rating: post.rating || 'unknown',
-                  source: source.id,
-                  width: post.width || 0,
-                  height: post.height || 0,
-                  aspectRatio: aspectRatio,
-                  createdAt: post.change ? post.change * 1000 : Date.now(),
-                  displayed_count: 0  // Add displayed_count field
-                };
-
-                newPosts.push(mappedPost);
-              }
-            }
-          } catch (error) {
-            console.error(`❌ Error fetching for artist ${artist.artist} from ${source.id}:`, error.message);
+          if (artists.length > 0) {
+            console.log(`✓ Starting SECOND ATTEMPT with all ${artists.length} artists`);
+            await fetchArtistBatch(artists, '[RETRY] ');
+            console.log(`✓ SECOND ATTEMPT COMPLETE: Found ${newPosts.length} total posts (target: ${MIN_POSTS})`);
           }
         }
 
-        // Merge new posts with existing posts, avoiding duplicates
-        const existingPosts = homepageSetup.posts || [];
+
+        // Load existing posts and merge with new posts (avoiding duplicates)
+        const mergeStartTime = Date.now();
+        const existingPosts = database.loadHomepageData() || [];
+        
         const existingIds = new Set(existingPosts.map(p => p.id));
         
         let actuallyAdded = 0;
@@ -1672,14 +1717,13 @@ const server = isWorkerMode ? null : http.createServer((req, res) => {
             actuallyAdded++;
           }
         }
-
-        // Update the batch index for next call
-        const nextIndex = (currentIndex + batchSize) % artists.length;
-        
-        // Save updated homepage setup
-        homepageSetup.posts = existingPosts;
-        homepageSetup.currentBatchIndex = nextIndex;
-        database.saveHomepageData('setup', homepageSetup);
+        // Save all posts to the database
+        const saveStartTime = Date.now();
+        database.saveHomepageData(existingPosts);
+        const uniqueSources = new Set(artistStats.map(a => a.source || 'Unknown')).size;
+        const totalDuration = Date.now() - batchStartTime;
+        console.log(`\n✓ BATCH COMPLETE: Added ${actuallyAdded} new posts from ${artistStats.length} artists, ${uniqueSources} sources. Total: ${totalDuration}ms`);
+        console.log(`✓ ============ /api/get-favorite-batch END (${totalDuration}ms total) ============\n`);
 
         res.writeHead(200, { 'Content-Type': 'application/json' });
         res.end(JSON.stringify({ 
@@ -1689,16 +1733,187 @@ const server = isWorkerMode ? null : http.createServer((req, res) => {
           postsAdded: actuallyAdded,
           duplicatesSkipped: newPosts.length - actuallyAdded,
           totalPosts: existingPosts.length,
-          batchIndex: nextIndex,
-          artistsProcessed: batchArtists.map(a => a.artist)
+          artistsProcessed: artistStats,
+          duration: totalDuration
         }));
       } catch (error) {
-        console.error(`❌ Error in /api/get-favorite-batch:`, error.message);
+        const errorDuration = Date.now() - batchStartTime;
+        console.error(`❌ Error in /api/get-favorite-batch (${errorDuration}ms): ${error.message}`);
         res.writeHead(500, { 'Content-Type': 'application/json' });
-        res.end(JSON.stringify({ error: error.message }));
+        res.end(JSON.stringify({ error: error.message, duration: errorDuration }));
       }
     })();
     return;
+  }
+
+  // Reset algorithm: clear homepage and reset artist tracking
+  if (req.method === 'POST' && req.url === '/api/reset-algorithm') {
+    try {
+      
+      // Clear homepage table
+      database.saveHomepageData([]);
+      console.log(`✓ Cleared homepage table`);
+      
+      // Reset artist tracking and last_download_date
+      database.resetAlgorithm();
+      console.log(`✓ Reset artist tracking and last_download_date`);
+      console.log(`✓ Starting first fetch for first 100 posts after reset...`);
+      
+      res.writeHead(200, { 'Content-Type': 'application/json' });
+      res.end(JSON.stringify({ 
+        ok: true, 
+        message: 'Algorithm reset successfully',
+        homepageCleared: true,
+        artistsReset: true
+      }));
+    } catch (error) {
+      console.error(`❌ Error in /api/reset-algorithm: ${error.message}`);
+      res.writeHead(500, { 'Content-Type': 'application/json' });
+      res.end(JSON.stringify({ error: error.message }));
+    }
+    return;
+  }
+
+  // Helper function to resolve dot-notation field paths (e.g., "file.url" -> post.file.url)
+  function resolveField(obj, path) {
+    if (!path || obj == null) return undefined;
+    if (!path.includes('.')) return obj[path];
+    return path.split('.').reduce((cur, key) => (cur != null && typeof cur === 'object' ? cur[key] : undefined), obj);
+  }
+
+  // Helper function to parse URL templates with {placeholder} replacement
+  function parseUrlTemplate(template, post) {
+    if (!template) return null;
+    return template.replace(/\{([^}]+)\}/g, (match, placeholder) => {
+      if (placeholder.endsWith('.noext')) {
+        const fieldName = placeholder.slice(0, -6);
+        const value = post[fieldName];
+        if (!value) return match;
+        const lastDotIndex = value.lastIndexOf('.');
+        return lastDotIndex > 0 ? value.substring(0, lastDotIndex) : value;
+      }
+      return post[placeholder] !== undefined ? post[placeholder] : match;
+    });
+  }
+
+  // Helper function to construct URLs with template and prefix support
+  function constructUrl(urlOrFilename, post, source, urlType = 'image') {
+    if (source.fields.useUrlTemplates) {
+      let template;
+      if (urlType === 'image' && source.fields.imageUrlTemplate) {
+        template = source.fields.imageUrlTemplate;
+      } else if (urlType === 'sample' && source.fields.sampleUrlTemplate) {
+        template = source.fields.sampleUrlTemplate;
+      } else if (urlType === 'thumbnail' && source.fields.thumbnailUrlTemplate) {
+        template = source.fields.thumbnailUrlTemplate;
+      }
+      if (template) {
+        return parseUrlTemplate(template, post);
+      }
+    }
+
+    if (!urlOrFilename) return urlOrFilename;
+
+    if (source.fields.partialUrls && source.fields.urlPrefix) {
+      if (!urlOrFilename.startsWith('http://') && !urlOrFilename.startsWith('https://')) {
+        const prefix = source.fields.urlPrefix.endsWith('/') 
+          ? source.fields.urlPrefix 
+          : source.fields.urlPrefix + '/';
+        const filename = urlOrFilename.startsWith('/') ? urlOrFilename.slice(1) : urlOrFilename;
+        return prefix + filename;
+      }
+    }
+
+    return urlOrFilename;
+  }
+
+  // Helper function to map a post object using source field configuration (matches frontend normalizePosts)
+  function mapPostFromSource(post, source) {
+    // Parse tags
+    const tagsField = source.fields?.tags || 'tags';
+    let tags = [];
+    const tagsRaw = resolveField(post, tagsField);
+    
+    if (typeof tagsRaw === 'string') {
+      tags = tagsRaw.split(/\s+/).filter(t => t.length > 0);
+      if (source.fields?.tagsFilter) {
+        const filterRegex = new RegExp(source.fields.tagsFilter, 'g');
+        tags = tags.filter(t => t !== '+' && !filterRegex.test(t));
+      }
+    } else if (tagsRaw && typeof tagsRaw === 'object') {
+      // e621-style: object of tag-category arrays
+      tags = Object.values(tagsRaw).flat().filter(t => typeof t === 'string' && t.length > 0);
+    }
+
+    // Parse artists
+    let artists = post['tag_info']?.filter(item => item.type === 'artist')?.map(item => item.tag) ?? ['?'];
+    if (artists.length > 0 && artists[0] === '?') {
+      const artistRaw = resolveField(post, source.fields?.artistTag || 'artist');
+      if (Array.isArray(artistRaw)) {
+        artists = artistRaw.length > 0 ? artistRaw : ['?'];
+      } else if (typeof artistRaw === 'string' && artistRaw) {
+        artists = artistRaw.split(/[\s,]+/).filter(t => t.length > 0);
+      }
+    }
+
+    // Parse created date
+    let createdAt = Date.now(); // Default to now
+    const createdField = source.fields?.createdAt || 'created_at';
+    const createdVal = resolveField(post, createdField);
+    if (createdVal !== undefined && createdVal !== null && createdVal !== '') {
+      let dateType = source.fields?.dateType || 'timestamp';
+      
+      // Auto-detect ISO dates even if dateType is wrong
+      if (typeof createdVal === 'string' && createdVal.includes('T')) {
+        dateType = 'iso';
+      }
+      
+      if (dateType === 'timestamp') {
+        const parsed = parseInt(createdVal) * 1000;
+        if (!isNaN(parsed)) createdAt = parsed;
+      } else if (dateType === 'iso' || dateType === 'dateString') {
+        const parsed = new Date(createdVal).getTime();
+        if (!isNaN(parsed)) createdAt = parsed;
+      } else if (dateType === 'seconds-unix') {
+        const parsed = parseInt(createdVal) * 1000;
+        if (!isNaN(parsed)) createdAt = parsed;
+      }
+    }
+
+    // Extract width/height
+    const widthField = source.fields?.width || 'width';
+    const heightField = source.fields?.height || 'height';
+    let widthVal = resolveField(post, widthField);
+    let heightVal = resolveField(post, heightField);
+    if (widthVal != null) widthVal = parseFloat(widthVal);
+    if (heightVal != null) heightVal = parseFloat(heightVal);
+
+    // Construct URLs
+    const imageUrl = constructUrl(resolveField(post, source.fields?.imageUrl || 'file_url'), post, source, 'image');
+    const thumbnailUrl = constructUrl(
+      resolveField(post, source.fields?.previewUrl || 'preview_url') || 
+      resolveField(post, source.fields?.sampleUrl || 'sample_url') || 
+      resolveField(post, source.fields?.imageUrl || 'file_url'),
+      post,
+      source, 
+      'thumbnail'
+    );
+    const sampleUrl = constructUrl(resolveField(post, source.fields?.sampleUrl || 'sample_url'), post, source, 'sample');
+
+    return {
+      id: String(post.id),
+      imageUrl,
+      thumbnailUrl,
+      sampleUrl,
+      tags,
+      artists,
+      score: source.fields?.scoreField ? (resolveField(post, source.fields.scoreField) || 0) : (post.score || 0),
+      rating: post.rating || 'unknown',
+      width: widthVal || 0,
+      height: heightVal || 0,
+      aspectRatio: widthVal && heightVal ? heightVal / widthVal : 1,
+      createdAt: createdAt
+    };
   }
 
   // Helper function to fetch posts for a specific artist from a source
@@ -1710,13 +1925,41 @@ const server = isWorkerMode ? null : http.createServer((req, res) => {
       let foundOlderPosts = false;
       let retryWithoutProxy = false;
 
-      const fetchPage = () => {
-        if (foundOlderPosts || page >= 100) {
+      const fetchComplete = async () => {
+        try {
+
+          // Fetch the total post count for this artist
+          const countFetchStart = Date.now();
+          const totalCount = await fetchArtistPostCount(artist.artist, source, userId, apiKey);
+          const countFetchDuration = Date.now() - countFetchStart;
+          
+          // Update the artist's existing_count in the database
+          if (totalCount !== null && totalCount > 0) {
+            try {
+              const dbUpdateStart = Date.now();
+              database.updateArtistExistingCount(artist.artist, totalCount);
+            } catch (err) {
+              console.error(`⚠️ Failed to update existing_count for ${artist.artist}: ${err.message}`);
+            }
+          }
+          
           resolve(allPosts);
+        } catch (err) {
+          console.error(`⚠️ Error fetching post count for ${artist.artist}: ${err.message}`);
+          // Still resolve with posts even if count fetch fails
+          resolve(allPosts);
+        }
+      };
+
+      const fetchPage = () => {
+        // Stop if found older posts or reached page limit
+        if (foundOlderPosts || page >= 100) {
+          fetchComplete();
           return;
         }
 
         try {
+          const pageStartTime = Date.now();
           const pageUrl = buildArtistFetchUrl(source, artist.artist, page, userId, apiKey);
           
           const parsedUrl = new URL(pageUrl);
@@ -1750,69 +1993,78 @@ const server = isWorkerMode ? null : http.createServer((req, res) => {
             options.agent = agent;
           }
 
+          const requestStartTime = Date.now();
           const proxyReq = protocol.request(options, (proxyRes) => {
             let responseBody = '';
+            let bytesReceived = 0;
             
             proxyRes.on('data', chunk => {
               responseBody += chunk;
+              bytesReceived += chunk.length;
             });
             
             proxyRes.on('end', () => {
+              const responseTime = Date.now() - requestStartTime;
+              
               try {
                 // Check for HTTP errors
                 if (proxyRes.statusCode >= 400) {
+                  console.error(`   ✗ HTTP error: ${proxyRes.statusCode} (${responseTime}ms, ${bytesReceived} bytes)`);
                   reject(new Error(`HTTP ${proxyRes.statusCode}`));
                   return;
                 }
                 
+                const parseStart = Date.now();
                 const data = JSON.parse(responseBody);
+                const parseDuration = Date.now() - parseStart;
                 
                 if (!Array.isArray(data) || data.length === 0) {
-                  resolve(allPosts);
+                  fetchComplete();
                   return;
                 }
 
-                // Process posts
+                // Process posts - add only newer posts
+                let addedCount = 0;
+                const processStart = Date.now();
                 for (const post of data) {
-                  const postDate = parsePostDateFromSource(post, source);
+                  const postDate = parsePostDateFromSource(post, source, artist.artist);
+                  
+                  // Log date comparison for debugging
+                  const dateFieldName = source.fields.createdAt || 'created_at';
+                  const dateFieldValue = resolveField(post, dateFieldName);
 
+                  // Stop if post is older than or equal to last download date
                   if (postDate && postDate <= lastDownloadDate) {
                     foundOlderPosts = true;
                     break;
                   }
 
                   allPosts.push(post);
+                  addedCount++;
                 }
-                
+
                 if (foundOlderPosts) {
-                  resolve(allPosts);
+                  fetchComplete();
                 } else {
+                  // Continue to next page
                   page++;
                   fetchPage();
                 }
               } catch (error) {
-                console.error(`❌ Parse error for ${artist.artist} page ${page}:`, error.message);
+                console.error(`❌ Parse error for ${artist.artist} page ${page}: ${error.message} (${Date.now() - pageStartTime}ms total)`);
                 reject(new Error(`Parse error: ${error.message}`));
               }
             });
 
             proxyRes.on('error', (error) => {
-              console.error(`❌ Response error for ${artist.artist}:`, error.message);
+              console.error(`❌ Response error for ${artist.artist}: ${error.message} (${Date.now() - pageStartTime}ms total)`);
               reject(error);
             });
           });
 
           proxyReq.on('error', (error) => {
             const errorMsg = error.message || error.code || 'Unknown error';
-            
-            // If proxy request fails and we haven't retried yet, retry without proxy
-            if (!retryWithoutProxy && agent && errorMsg.includes('Error')) {
-              retryWithoutProxy = true;
-              page = 0;
-              allPosts.length = 0;
-              fetchPage();
-              return;
-            }
+            console.error(`❌ Request error for ${artist.artist} page ${page}: ${errorMsg} (${Date.now() - pageStartTime}ms total)`);
             
             console.error(`❌ Request error for ${artist.artist}:`, errorMsg);
             reject(new Error(`Request failed: ${errorMsg}`));
@@ -1827,6 +2079,207 @@ const server = isWorkerMode ? null : http.createServer((req, res) => {
 
       fetchPage();
     });
+  }
+
+  // Helper function to fetch total post count for an artist from a source
+  async function fetchArtistPostCount(artist, source, userId, apiKey) {
+    return new Promise((resolve, reject) => {
+      try {
+        const countStartTime = Date.now();
+        
+        // Build count URL using source's countBasePath if available
+        const apiBaseUrl = source.apiUrl || source.baseUrl;
+        const countBasePath = source.api.countBasePath || source.api.basePath;
+        let countUrl = `${apiBaseUrl}${countBasePath}`;
+        
+        // Add json parameter if supported
+        if (source.api.jsonSupport && source.response.countParser === 'json') {
+          countUrl += countUrl.includes('?') ? '&json=1' : '?json=1';
+        }
+        
+        // Add limit=0 and page=0 for count endpoint (optimization)
+        const limitParam = source.api.limitParam || 'limit';
+        const pageParam = source.api.pageParam || 'pid';
+        countUrl += countUrl.includes('?') ? `&${limitParam}=0&${pageParam}=0` : `?${limitParam}=0&${pageParam}=0`;
+        
+        // Add authentication if required and credentials are available
+        if (source.auth.required && userId && apiKey) {
+          const userIdKey = source.auth.userIdKey || 'user_id';
+          const apiKeyKey = source.auth.apiKeyKey || 'api_key';
+          countUrl += `&${userIdKey}=${encodeURIComponent(userId)}&${apiKeyKey}=${encodeURIComponent(apiKey)}`;
+        }
+        
+        // Add tags (artist name)
+        const tagsParam = source.api.tagsParam || 'tags';
+        countUrl += `&${tagsParam}=${encodeURIComponent(artist)}`;
+        
+        const parsedUrl = new URL(countUrl);
+        const protocol = parsedUrl.protocol === 'http:' ? http : https;
+        
+        let agent = null;
+        try {
+          agent = requireProxyAgent(parsedUrl.protocol === 'http:' ? 'http' : 'https');
+        } catch (agentError) {
+          agent = null;
+        }
+
+        const options = {
+          hostname: parsedUrl.hostname,
+          port: parsedUrl.port,
+          path: parsedUrl.pathname + parsedUrl.search,
+          method: 'GET',
+          timeout: 10000,
+          headers: {
+            'User-Agent': source.userAgent || 'Mozilla/5.0'
+          }
+        };
+
+        if (source.cookies) {
+          options.headers['Cookie'] = source.cookies;
+        }
+
+        if (agent) {
+          options.agent = agent;
+        }
+
+        const requestStartTime = Date.now();
+        const proxyReq = protocol.request(options, (proxyRes) => {
+          let responseBody = '';
+          let bytesReceived = 0;
+
+          proxyRes.on('data', chunk => {
+            responseBody += chunk;
+            bytesReceived += chunk.length;
+          });
+
+          proxyRes.on('end', () => {
+            const countResponseTime = Date.now() - requestStartTime;
+            try {
+              if (proxyRes.statusCode >= 400) {
+                console.log(`      ⚠️ Count request HTTP ${proxyRes.statusCode} (${countResponseTime}ms)`);
+                resolve(null);
+                return;
+              }
+
+              // Parse count based on source configuration
+              const totalCount = parseArtistCountFromResponse(responseBody, source);
+
+              resolve(totalCount);
+            } catch (error) {
+              resolve(null);
+            }
+          });
+
+          proxyRes.on('error', (error) => {
+            console.error(`      ❌ Count response error (${Date.now() - countStartTime}ms): ${error.message}`);
+            resolve(null);
+          });
+        });
+
+        proxyReq.on('error', (error) => {
+          console.error(`      ❌ Count request error (${Date.now() - countStartTime}ms): ${error.message}`);
+          resolve(null);
+        });
+
+        proxyReq.on('timeout', () => {
+          console.warn(`      ⏱️ Count request timeout (${Date.now() - countStartTime}ms)`);
+          proxyReq.destroy();
+          resolve(null);
+        });
+
+        proxyReq.end();
+      } catch (error) {
+        console.error(`      ❌ Count build error: ${error.message}`);
+        resolve(null);
+      }
+    });
+  }
+
+  // Helper function to parse count from response based on source configuration
+  // Mirrors the frontend's parseCount function from booru-browser.js
+  function parseArtistCountFromResponse(responseText, source) {
+    // Helper: extract the largest number from any string
+    function largestNumberIn(str) {
+      const nums = String(str).match(/\d+/g);
+      if (!nums || nums.length === 0) return null;
+      return Math.max(...nums.map(n => parseInt(n, 10)));
+    }
+
+    try {
+      const parserType = source.response.countParser;
+      
+      if (parserType === 'xmlDom') {
+        // Parse XML using DOM-like approach with regex
+        if (source.response.countPath) {
+          const parts = source.response.countPath.split('/');
+          let searchPattern = responseText;
+          
+          for (let i = 0; i < parts.length; i++) {
+            const part = parts[i];
+            if (part.startsWith('@')) {
+              // It's an attribute - extract the value
+              const attrName = part.substring(1);
+              const attrPattern = new RegExp(`${attrName}="([^"]*)"`, 'i');
+              const match = searchPattern.match(attrPattern);
+              if (match && match[1]) {
+                const num = parseInt(match[1], 10);
+                if (!isNaN(num)) {
+                  return num;
+                }
+              }
+            } else {
+              // It's an element - try to find it
+              const elementPattern = new RegExp(`<${part}[^>]*>([^<]*)<\/${part}>`, 'i');
+              const match = searchPattern.match(elementPattern);
+              if (match) {
+                searchPattern = match[0];
+              }
+            }
+          }
+        }
+      } else if (parserType === 'xmlRegex') {
+        // Parse XML using regex - try multiple patterns
+        let countMatch = responseText.match(/<posts\s+count="(\d+)"/i);
+        if (!countMatch) {
+          countMatch = responseText.match(/count="(\d+)"/i);
+        }
+        if (!countMatch) {
+          countMatch = responseText.match(/<count>(\d+)<\/count>/i);
+        }
+        if (countMatch && countMatch[1]) {
+          return parseInt(countMatch[1], 10);
+        }
+      } else if (parserType === 'json') {
+        // Parse JSON
+        const data = JSON.parse(responseText);
+        
+        // Navigate countPath (e.g., "@attributes.count" or "data.count")
+        if (source.response.countPath) {
+          const parts = source.response.countPath.split('.');
+          let value = data;
+          
+          for (const part of parts) {
+            if (value && typeof value === 'object' && part in value) {
+              value = value[part];
+            } else {
+              break;
+            }
+          }
+          
+          if (typeof value === 'number' || typeof value === 'string') {
+            const num = parseInt(value, 10);
+            if (!isNaN(num)) {
+              return num;
+            }
+          }
+        }
+      }
+    } catch (err) {
+      // Silent fail, will use fallback
+    }
+
+    // Fallback: pull all numbers from the raw response and return the largest
+    return largestNumberIn(responseText);
   }
 
   // Helper function to build artist fetch URL
@@ -1863,22 +2316,34 @@ const server = isWorkerMode ? null : http.createServer((req, res) => {
   }
 
   // Helper function to parse post date
-  function parsePostDateFromSource(post, source) {
+  function parsePostDateFromSource(post, source, artistName = 'unknown') {
     const dateField = source.fields.createdAt || 'created_at';
-    const dateType = source.fields.dateType || 'timestamp';
-    let dateValue = post[dateField];
+    let dateValue = resolveField(post, dateField);
 
-    if (!dateValue) return null;
-
-    if (dateType === 'timestamp') {
-      return parseInt(dateValue) * 1000;
-    } else if (dateType === 'iso') {
-      return new Date(dateValue).getTime();
-    } else if (dateType === 'seconds-unix') {
-      return parseInt(dateValue) * 1000;
+    if (!dateValue) {
+      return null;
     }
 
-    return null;
+    let dateType = source.fields.dateType || 'timestamp';
+   
+    // Auto-detect ISO dates even if dateType is wrong
+    if (typeof dateValue === 'string' && dateValue.includes('T')) {
+      dateType = 'iso';
+    }
+
+    let parsed;
+    if (dateType === 'timestamp') {
+      parsed = parseInt(dateValue) * 1000;
+    } else if (dateType === 'iso') {
+      parsed = new Date(dateValue).getTime();
+    } else if (dateType === 'seconds-unix') {
+      parsed = parseInt(dateValue) * 1000;
+    } else {
+      return null;
+    }
+    
+    const result = !isNaN(parsed) ? parsed : null;
+    return result;
   }
   
   // Get post count (must be before generic /api/db/posts/ route)
@@ -2037,18 +2502,6 @@ const server = isWorkerMode ? null : http.createServer((req, res) => {
   }
 
   // Get all artists
-  if (req.method === 'GET' && req.url === '/api/db/artists') {
-    try {
-      const artists = database.getAllDownloadedArtists();
-      res.writeHead(200, { 'Content-Type': 'application/json' });
-      res.end(JSON.stringify(artists));
-    } catch (error) {
-      res.writeHead(500, { 'Content-Type': 'application/json' });
-      res.end(JSON.stringify({ error: error.message }));
-    }
-    return;
-  }
-
   // Get specific artist
   if (req.method === 'GET' && req.url.startsWith('/api/db/artists/')) {
     try {
@@ -2081,7 +2534,26 @@ const server = isWorkerMode ? null : http.createServer((req, res) => {
         res.writeHead(200, { 'Content-Type': 'application/json' });
         res.end(JSON.stringify({ success: true }));
       } catch (error) {
-        console.error('❌ POST /api/db/artists/loaded-dates error:', error.message);
+        console.error('POST /api/db/artists/loaded-dates error:', error.message);
+        res.writeHead(500, { 'Content-Type': 'application/json' });
+        res.end(JSON.stringify({ error: error.message }));
+      }
+    });
+    return;
+  }
+
+  // Update artist existing_count (when a post is downloaded)
+  if (req.method === 'POST' && req.url === '/api/db/artists/existing-count') {
+    let body = '';
+    req.on('data', chunk => body += chunk.toString());
+    req.on('end', () => {
+      try {
+        const { artist, existingCount } = JSON.parse(body);
+        database.updateArtistExistingCount(artist, existingCount);
+        res.writeHead(200, { 'Content-Type': 'application/json' });
+        res.end(JSON.stringify({ success: true }));
+      } catch (error) {
+        console.error('POST /api/db/artists/existing-count error:', error.message);
         res.writeHead(500, { 'Content-Type': 'application/json' });
         res.end(JSON.stringify({ error: error.message }));
       }
@@ -2271,10 +2743,11 @@ const server = isWorkerMode ? null : http.createServer((req, res) => {
     req.on('data', chunk => body += chunk.toString());
     req.on('end', () => {
       try {
-        const updatedData = JSON.parse(body);
-        database.saveHomepageData('setup', updatedData);
+        const posts = JSON.parse(body);
+        const postsArray = Array.isArray(posts) ? posts : (posts.posts || []);
+        database.saveHomepageData(postsArray);
         res.writeHead(200, { 'Content-Type': 'application/json' });
-        res.end(JSON.stringify({ success: true, postsCount: updatedData.posts ? updatedData.posts.length : 0 }));
+        res.end(JSON.stringify({ success: true, postsCount: postsArray.length }));
       } catch (error) {
         console.error('❌ Error saving homepage data:', error.message);
         res.writeHead(500, { 'Content-Type': 'application/json' });
@@ -2287,12 +2760,44 @@ const server = isWorkerMode ? null : http.createServer((req, res) => {
   // Get homepage data (GET)
   if (req.method === 'GET' && req.url.startsWith('/api/db/settings/homepage-data')) {
     try {
-      const homepageData = database.loadHomepageData('setup');
-      const responseData = homepageData || { posts: [], currentBatchIndex: 0 };
+      const posts = database.loadHomepageData();
       res.writeHead(200, { 'Content-Type': 'application/json' });
-      res.end(JSON.stringify(responseData));
+      res.end(JSON.stringify(posts));
     } catch (error) {
       console.error('❌ Error loading homepage data:', error.message);
+      res.writeHead(500, { 'Content-Type': 'application/json' });
+      res.end(JSON.stringify({ error: error.message }));
+    }
+    return;
+  }
+
+  // Remove posts from homepage up to and including downloaded post
+  if (req.method === 'POST' && req.url === '/api/db/homepage/cleanup-until-post') {
+    let body = '';
+    req.on('data', chunk => body += chunk.toString());
+    req.on('end', () => {
+      try {
+        const downloadedPost = JSON.parse(body);
+        const result = database.removeHomepagePostsUntilDownloaded(downloadedPost);
+        res.writeHead(200, { 'Content-Type': 'application/json' });
+        res.end(JSON.stringify(result));
+      } catch (error) {
+        console.error('❌ Error cleaning up homepage posts:', error.message);
+        res.writeHead(500, { 'Content-Type': 'application/json' });
+        res.end(JSON.stringify({ error: error.message }));
+      }
+    });
+    return;
+  }
+
+  // Clear all homepage posts
+  if (req.method === 'DELETE' && req.url === '/api/db/homepage') {
+    try {
+      database.saveHomepageData([]);
+      res.writeHead(200, { 'Content-Type': 'application/json' });
+      res.end(JSON.stringify({ success: true }));
+    } catch (error) {
+      console.error('❌ Error clearing homepage table:', error.message);
       res.writeHead(500, { 'Content-Type': 'application/json' });
       res.end(JSON.stringify({ error: error.message }));
     }
@@ -2580,6 +3085,31 @@ const server = isWorkerMode ? null : http.createServer((req, res) => {
         const { url: fetchUrl, method = 'GET', headers = {}, body: fetchBody } = JSON.parse(body);
 
         await activeRequestJitter();
+        
+        // Debug: Log what headers were sent from client
+        if (headers['Cookie'] || headers['cookie']) {
+          const clientCookie = headers['Cookie'] || headers['cookie'];
+          
+          // Check for invalid chars
+          const invalidChars = [];
+          for (let i = 0; i < clientCookie.length; i++) {
+            const code = clientCookie.charCodeAt(i);
+            if (code < 32 || code > 127) {
+              invalidChars.push({
+                index: i,
+                char: JSON.stringify(clientCookie[i]),
+                code: code,
+                hex: '0x' + code.toString(16).toUpperCase()
+              });
+            }
+          }
+          if (invalidChars.length > 0) {
+            console.error(`[Cookie Debug] CLIENT SENT ${invalidChars.length} invalid character(s):`);
+            invalidChars.forEach(c => {
+              console.error(`  Position ${c.index}: char=${c.char}, code=${c.code} (${c.hex})`);
+            });
+          }
+        }
 
         const parsedUrl = new URL(fetchUrl);
         const protocol = parsedUrl.protocol === 'http:' ? http : https;
@@ -2599,7 +3129,52 @@ const server = isWorkerMode ? null : http.createServer((req, res) => {
             }
           });
           if (matching?.cookies && !headers['Cookie'] && !headers['cookie']) {
-            headers['Cookie'] = matching.cookies;
+            // Log original cookie length and analyze for invalid characters
+            console.log(`[Cookie Debug] Original cookie length: ${matching.cookies.length}`);
+            
+            // Find all invalid characters
+            const invalidChars = [];
+            for (let i = 0; i < matching.cookies.length; i++) {
+              const char = matching.cookies[i];
+              const code = matching.cookies.charCodeAt(i);
+              
+              // Check if character is invalid for HTTP headers (control chars, etc)
+              if (code < 32 || code > 127) {
+                invalidChars.push({
+                  index: i,
+                  char: JSON.stringify(char),
+                  code: code,
+                  hex: '0x' + code.toString(16).toUpperCase()
+                });
+              }
+            }
+            
+            if (invalidChars.length > 0) {
+              console.warn(`[Cookie Debug] Found ${invalidChars.length} invalid character(s):`);
+              invalidChars.forEach(c => {
+                console.warn(`  Position ${c.index}: char=${c.char}, code=${c.code} (${c.hex})`);
+              });
+            }
+            
+            // Sanitize cookie header: percent-encode non-ASCII and control characters
+            let sanitizedCookies = matching.cookies
+              .replace(/[\r\n]/g, '') // Remove newlines and carriage returns
+              .replace(/[\x00-\x1F\x7F]/g, '') // Remove control characters
+              .split('').map(char => {
+                const code = char.charCodeAt(0);
+                // Percent-encode non-ASCII characters (code > 127)
+                if (code > 127) {
+                  return Array.from(Buffer.from(char, 'utf8')).map(b => '%' + b.toString(16).toUpperCase()).join('');
+                }
+                return char;
+              }).join('');
+            
+            if (sanitizedCookies !== matching.cookies) {
+              console.warn(`[Cookie Debug] Sanitized - removed ${matching.cookies.length - sanitizedCookies.length} invalid character(s)`);
+              console.log(`[Cookie Debug] Sanitized cookie length: ${sanitizedCookies.length}`);
+            }
+            
+            headers['Cookie'] = sanitizedCookies;
           }
           if (matching?.userAgent && !headers['User-Agent'] && !headers['user-agent']) {
             headers['User-Agent'] = matching.userAgent;
@@ -2628,13 +3203,113 @@ const server = isWorkerMode ? null : http.createServer((req, res) => {
           options.agent = agent;
         }
 
-        const proxyReq = protocol.request(options, (proxyRes) => {
+        // Debug: Check Cookie header before sending
+        if (headers['Cookie'] || headers['cookie']) {
+          const cookieValue = headers['Cookie'] || headers['cookie'];
+          
+          const invalidChars = [];
+          for (let i = 0; i < cookieValue.length; i++) {
+            const char = cookieValue[i];
+            const code = cookieValue.charCodeAt(i);
+            
+            // Check if character is invalid (non-ASCII or control char)
+            if (code < 32 || code > 127) {
+              invalidChars.push({
+                index: i,
+                char: JSON.stringify(char),
+                code: code,
+                hex: '0x' + code.toString(16).toUpperCase()
+              });
+            }
+          }
+          
+          if (invalidChars.length > 0) {
+            console.warn(`[Cookie Debug] Sanitizing ${invalidChars.length} invalid character(s) in Cookie header:`);
+            invalidChars.forEach(c => {
+              console.warn(`  Position ${c.index}: char=${c.char}, code=${c.code} (${c.hex})`);
+            });
+            
+            // Sanitize: percent-encode non-ASCII and remove control characters
+            const sanitized = cookieValue
+              .replace(/[\r\n]/g, '') // Remove newlines
+              .replace(/[\x00-\x1F\x7F]/g, '') // Remove control characters
+              .split('').map(char => {
+                const code = char.charCodeAt(0);
+                if (code > 127) {
+                  return Array.from(Buffer.from(char, 'utf8')).map(b => '%' + b.toString(16).toUpperCase()).join('');
+                }
+                return char;
+              }).join('');
+            
+            if (headers['Cookie']) {
+              headers['Cookie'] = sanitized;
+            } else {
+              headers['cookie'] = sanitized;
+            }
+          } else {
+            console.log('[Cookie Debug] Cookie header appears valid');
+          }
+        }
+
+        const proxyReq = protocol.request(options, async (proxyRes) => {
           const responseChunks = [];
           proxyRes.on('data', chunk => {
             responseChunks.push(chunk);
           });
-          proxyRes.on('end', () => {
+          proxyRes.on('end', async () => {
             const responseBody = Buffer.concat(responseChunks);
+            const responseBodyStr = responseBody.toString();
+            
+            // Detect Cloudflare challenge (403 + specific HTML markers)
+            const isCloudflareChallenge = proxyRes.statusCode === 403 && 
+              (responseBodyStr.includes('<title>Just a moment...</title>') ||
+               responseBodyStr.includes('<span id="challenge-error-text">') ||
+               responseBodyStr.includes('enable JavaScript and cookies'));
+            
+            if (isCloudflareChallenge) {
+              console.log(`☁️ Cloudflare challenge detected on ${fetchUrl}, retrying with Puppeteer...`);
+              try {
+                const puppeteer = require('puppeteer');
+                const browser = await puppeteer.launch({ headless: true, args: ['--no-sandbox'] });
+                const page = await browser.newPage();
+                
+                // Set cookies if provided
+                if (headers['Cookie'] || headers['cookie']) {
+                  const cookieStr = headers['Cookie'] || headers['cookie'];
+                  const cookieArray = cookieStr.split(';').map(c => {
+                    const [name, value] = c.trim().split('=');
+                    return { name: name.trim(), value: (value || '').trim(), url: fetchUrl };
+                  }).filter(c => c.name && c.value);
+                  if (cookieArray.length > 0) {
+                    await page.setCookie(...cookieArray);
+                  }
+                }
+                
+                // Set User-Agent
+                await page.setUserAgent(headers['User-Agent'] || 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36');
+                
+                // Navigate and wait for Cloudflare to process
+                await page.goto(fetchUrl, { waitUntil: 'networkidle2', timeout: 30000 });
+                
+                // Get response body
+                const puppeteerBody = await page.content();
+                await browser.close();
+                
+                console.log(`✓ Cloudflare bypass successful, returning response`);
+                const responseHeaders = {
+                  'Content-Type': 'text/html; charset=utf-8',
+                  'Access-Control-Allow-Origin': '*'
+                };
+                console.log(`Returning Puppeteer response: ${puppeteerBody}`);
+                res.writeHead(200, responseHeaders);
+                res.end(puppeteerBody);
+                return;
+              } catch (puppeteerError) {
+                console.error(`❌ Puppeteer Cloudflare bypass failed: ${puppeteerError.message}`);
+                // Fall through to normal error response
+              }
+            }
+            
             const responseHeaders = {
               'Content-Type': proxyRes.headers['content-type'] || 'application/json',
               'Access-Control-Allow-Origin': '*',
@@ -2642,6 +3317,10 @@ const server = isWorkerMode ? null : http.createServer((req, res) => {
             };
             if (proxyRes.headers['content-length']) {
               responseHeaders['X-Proxy-Content-Length'] = proxyRes.headers['content-length'];
+            }
+            if (proxyRes.statusCode == 400 || proxyRes.statusCode == 403 || proxyRes.statusCode == 404) {
+              console.log('Proxy fetch response error:', proxyRes.statusCode);
+              console.log('Response body:', responseBodyStr.slice(0, 5000));
             }
             res.writeHead(proxyRes.statusCode, responseHeaders);
             res.end(responseBody);
@@ -2659,6 +3338,8 @@ const server = isWorkerMode ? null : http.createServer((req, res) => {
         }
         proxyReq.end();
       } catch (error) {
+        console.error('[Cookie Debug] Error:', error);
+        console.log('Proxy fetch request error:', error);
         res.writeHead(400, { 'Content-Type': 'application/json' });
         res.end(JSON.stringify({ error: 'Invalid request', message: error.message }));
       }
@@ -3151,10 +3832,11 @@ const server = isWorkerMode ? null : http.createServer((req, res) => {
     // Check if this is an HTML page request (contains s=view) vs API request (contains json=1)
     const isHtmlPage = targetUrl.includes('s=view') && targetUrl.includes('page=post');
     
-    if (isHtmlPage) {
+    // Always use Puppeteer to bypass CAPTCHA and Cloudflare blocks
+    console.log('📄 Using Puppeteer to fetch:', targetUrl);
 
-      // Use Puppeteer for HTML pages to bypass Cloudflare
-      getBrowser().then(async (browser) => {
+    // Use Puppeteer to bypass CAPTCHA and Cloudflare
+    getBrowser().then(async (browser) => {
         const page = await browser.newPage();
         
         try {
@@ -3226,9 +3908,31 @@ const server = isWorkerMode ? null : http.createServer((req, res) => {
           // Detect CAPTCHA pages and return an explicit JSON error so the client can show a toast
           const captchaPattern = /Please enter the CAPTCHA to continue/i;
           if (captchaPattern.test(html)) {
+            console.log('Unexpected HTML response detected: ', html);
             res.writeHead(403, { 'Content-Type': 'application/json', 'Access-Control-Allow-Origin': '*' });
             res.end(JSON.stringify({ error: 'captcha', message: 'Blocked by CAPTCHA' }));
             return;
+          }
+          
+          // For API requests (not HTML pages), try to extract JSON from the response
+          if (!isHtmlPage) {
+            try {
+              // Look for JSON in the HTML response body (inside <body> or <pre> tags)
+              const bodyMatch = html.match(/<body[^>]*>([\s\S]*?)<\/body>/i);
+              const content = bodyMatch ? bodyMatch[1].trim() : html;
+              
+              // Try to parse JSON - if successful, return as JSON
+              const jsonData = JSON.parse(content);
+              res.writeHead(200, { 
+                'Content-Type': 'application/json',
+                'Access-Control-Allow-Origin': '*'
+              });
+              res.end(JSON.stringify(jsonData));
+              return;
+            } catch (parseErr) {
+              // If JSON parsing fails, fall through and return as HTML
+              console.warn('Could not extract JSON from Puppeteer response, returning as HTML:', parseErr.message);
+            }
           }
           
           res.writeHead(200, { 
@@ -3247,82 +3951,6 @@ const server = isWorkerMode ? null : http.createServer((req, res) => {
         res.writeHead(502, { 'Content-Type': 'application/json' });
         res.end(JSON.stringify({ error: 'Failed to initialize browser', message: error.message }));
       });
-    } else {
-      // Use regular HTTP for API requests (with proxy support)
-      
-      // Follow redirects with proxy support
-      const makeRequest = (reqUrl) => {
-        const parsedReqUrl = new URL(reqUrl);
-        const isHttps = parsedReqUrl.protocol === 'https:';
-        const module = isHttps ? https : http;
-        const agent = requireProxyAgent(isHttps ? 'https' : 'http');
-        const proxyName = `${proxySettings.type} ${proxySettings.host}:${proxySettings.port}`;
-        console.log(`📡 proxy-booru proxy ${parsedReqUrl.hostname}${parsedReqUrl.pathname}${parsedReqUrl.search || ''} [${proxyName}]`);
-        
-        const options = {
-          hostname: parsedReqUrl.hostname,
-          port: parsedReqUrl.port || (isHttps ? 443 : 80),
-          path: parsedReqUrl.pathname + parsedReqUrl.search,
-          method: 'GET',
-          headers: {
-            'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36'
-          }
-        };
-        // if we matched a source earlier, include its cookies or UA header
-        const sources = database.loadSetting('booru-sources') || [];
-        const matchingSource = sources.find(source => {
-          try {
-            const sourceUrlObj = new url.URL(source.baseUrl);
-            return targetUrl.includes(sourceUrlObj.hostname);
-          } catch (e) {
-            return false;
-          }
-        });
-        if (matchingSource?.cookies) {
-          options.headers['Cookie'] = matchingSource.cookies;
-        }
-        if (matchingSource?.userAgent) {
-          options.headers['User-Agent'] = matchingSource.userAgent;
-        }
-        
-        if (agent) {
-          options.agent = agent;
-          console.log('📡 proxy-booru API request through proxy:', parsedReqUrl.hostname);
-        }
-        
-        const proxyReq = module.request(options, (proxyRes) => {
-          // Handle redirects
-          if (proxyRes.statusCode >= 300 && proxyRes.statusCode < 400 && proxyRes.headers.location) {
-            console.log('Following redirect to:', proxyRes.headers.location);
-            const redirectUrl = new URL(proxyRes.headers.location, reqUrl).href;
-            proxyRes.resume(); // Drain response
-            makeRequest(redirectUrl);
-            return;
-          }
-          
-          let data = '';
-          proxyRes.on('data', chunk => data += chunk);
-          proxyRes.on('end', () => {
-            console.log('Proxy response received, length:', data.length);
-            res.writeHead(200, { 
-              'Content-Type': 'application/json',
-              'Access-Control-Allow-Origin': '*'
-            });
-            res.end(data);
-          });
-        });
-        
-        proxyReq.on('error', (error) => {
-          console.error('Proxy error:', error.message);
-          res.writeHead(502, { 'Content-Type': 'application/json' });
-          res.end(JSON.stringify({ error: 'Failed to fetch from booru', message: error.message }));
-        });
-        
-        proxyReq.end();
-      };
-      
-      makeRequest(targetUrl);
-    }
   } else if (req.method === 'GET' && req.url.startsWith('/video-thumbnail')) {
     res.setHeader('Access-Control-Allow-Origin', '*');
     const urlParams = new url.URL(req.url, `http://localhost:${PORT}`);
@@ -3787,14 +4415,26 @@ const server = isWorkerMode ? null : http.createServer((req, res) => {
             }
             
             // Get total file size from Content-Length header
-            const totalBytes = parseInt(response.headers['content-length']) || 0;
+            let totalBytes = parseInt(response.headers['content-length']) || 0;
             let bytesReceived = 0;
+            let maxBytesReceived = 0; // Track highest bytes for fallback estimate
             
+            console.log(`Starting download of ${filename} from ${downloadUrl} with total size: ${totalBytes} bytes`);
             // Track progress as data arrives
             response.on('data', (chunk) => {
               bytesReceived += chunk.length;
+              maxBytesReceived = Math.max(maxBytesReceived, bytesReceived);
+              
               if (taskId) {
-                setDownloadProgress(taskId, bytesReceived, totalBytes, 'Downloading');
+                // If Content-Length is missing (e.g., chunked encoding on video servers),
+                // estimate total size to show meaningful progress
+                let reportedTotal = totalBytes;
+                if (totalBytes === 0 && bytesReceived > 0) {
+                  // Estimate total as 1.3x what we've received so far
+                  // This allows progress bar to show meaningful updates for chunked downloads
+                  reportedTotal = Math.max(bytesReceived * 1.3, maxBytesReceived * 1.1);
+                }
+                setDownloadProgress(taskId, bytesReceived, reportedTotal, 'Downloading');
               }
             });
             
@@ -3813,7 +4453,8 @@ const server = isWorkerMode ? null : http.createServer((req, res) => {
             
             fileStream.on('finish', () => {
               trackDownload();
-              if (taskId) setDownloadProgress(taskId, totalBytes, totalBytes, 'Completed');
+              // When complete, report actual bytes received as both received and total
+              if (taskId) setDownloadProgress(taskId, bytesReceived, bytesReceived, 'Completed');
               res.writeHead(200, { 'Content-Type': 'application/json' });
               res.end(JSON.stringify({ success: true, filepath: filename, taskId }));
               // Clean up progress after a short delay
@@ -3856,12 +4497,6 @@ const server = isWorkerMode ? null : http.createServer((req, res) => {
     res.setHeader('Access-Control-Allow-Origin', '*');
     res.setHeader('Access-Control-Allow-Methods', 'POST, OPTIONS');
     res.setHeader('Access-Control-Allow-Headers', 'Content-Type, X-Filename, X-TaskId');
-    
-    if (req.method === 'OPTIONS') {
-      res.writeHead(200);
-      res.end();
-      return;
-    }
     
     try {
       const filename = req.headers['x-filename'];
@@ -4225,6 +4860,17 @@ const server = isWorkerMode ? null : http.createServer((req, res) => {
         res.end(JSON.stringify({ success: false, error: error.message }));
       }
     });
+  } else if (req.method === 'GET' && req.url === '/api/downloaded-artists') {
+    res.setHeader('Access-Control-Allow-Origin', '*');
+    try {
+      const artists = database.getAllDownloadedArtists();
+      
+      res.writeHead(200, { 'Content-Type': 'application/json' });
+      res.end(JSON.stringify(artists));
+    } catch (error) {
+      res.writeHead(500, { 'Content-Type': 'application/json' });
+      res.end(JSON.stringify({ success: false, error: error.message }));
+    }
   } else {
     res.writeHead(404);
     res.end();
@@ -4504,7 +5150,7 @@ if (!isWorkerMode) {
       const savedProxy = database.loadSetting('proxySettings');
       if (savedProxy) {
         proxySettings = typeof savedProxy === 'string' ? JSON.parse(savedProxy) : savedProxy;
-        console.log('🔒 Loaded proxy settings:', proxySettings.active ? `${proxySettings.type} ${proxySettings.host}:${proxySettings.port}` : 'disabled');
+        console.log('Loaded proxy settings:', proxySettings.active ? `${proxySettings.type} ${proxySettings.host}:${proxySettings.port}` : 'disabled');
       }
     } catch (e) {
       console.warn('Could not load proxy settings:', e.message);

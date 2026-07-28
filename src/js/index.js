@@ -845,18 +845,13 @@ function showCircuitSpinner() {
     let left = clientX;
     let top = clientY;
     
-    // Adjust horizontal position if menu goes off-screen to the right
-    if (clientX + menuWidth + padding > window.innerWidth) {
-      left = Math.max(padding, window.innerWidth - menuWidth - padding);
-    }
-    
     // Adjust vertical position if menu goes off-screen to the bottom
     if (clientY + menuHeight + padding > window.innerHeight) {
       top = Math.max(padding, window.innerHeight - menuHeight - padding);
     }
     
-    menu.style.left = left + 'px';
-    menu.style.top = top + 'px';
+    menu.style.left = left - menuWidth - 60 + 'px';
+    menu.style.top = top + 10 + 'px';
   }
 
   loadCurrentCircuit();
@@ -1990,24 +1985,11 @@ async function loadSession() {
       done(success, msg, imageUrl) {
         // update final state
         this.update(100, msg || (success ? 'Completed' : 'Failed'));
-        // show downloaded image inside the toast on success
-        if (success && imageUrl) {
-          let removeDelay = setTimeout(() => {
-            toast.classList.remove('show');
-            setTimeout(() => toast.remove(), 300);
-          }, 7000);
-
-          requestAnimationFrame(() => {
-            //plaxeholder 
-          });
-        } else {
-          // keep visible longer when image is shown
-          const delay = success && imageUrl ? 4000 : 3000;
-          setTimeout(() => {
-            toast.classList.remove('show');
-            setTimeout(() => toast.remove(), 300);
-          }, delay);       
-        }
+        // toast disappears quickly regardless of success
+        setTimeout(() => {
+          toast.classList.remove('show');
+          setTimeout(() => toast.remove(), 300);
+        }, 1500);
         updateAppLoadingDownloadCount();
         if (success === true && supportToastEnabled && supportToastEnabled.checked) {
           supportToastSuccessCount += 1;
@@ -2568,7 +2550,7 @@ function showLightboxImage(idx) {
 
     // Show loader icon only if HQ is not already loaded and not already displayed
     let hqLoaded = false;
-    if (galleryImg && galleryImg.getAttribute('data-high-quality-loaded') === 'true' && galleryImg.getAttribute('data-high-quality-url') === url) {
+    if (galleryImg && galleryImg.getAttribute('data-high-quality-loaded') === 'true') {
       hqLoaded = true;
     }
     // Also consider it loaded if the lightbox image src is already the HQ url

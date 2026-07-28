@@ -233,11 +233,6 @@ document.addEventListener('DOMContentLoaded', () => {
     setupBooruGalleryCounter();
   }
   fillBooruEndTags();
-  
-  // Fetch first batch of favorite posts on app startup
-  fetchFavoriteBatch().catch(error => {
-    console.warn('Failed to fetch favorite batch on startup:', error);
-  });
 });
 
 // Function to fetch the next batch of favorite posts from artists
@@ -600,6 +595,7 @@ const booruTotalCount = document.getElementById('booru-total-count');
 let booruPaginationToken = null;
 let isLoadingBooru = false;
 let aiFilterEnabled = false; // AI filter OFF by default
+let animateGifs = false; // GIF animation OFF by default (show first frame only)
 let maxRecommendedTags = 20;
 let activeDownloadsSidebarTab = 'analytics'; // or 'mosaic'
 
@@ -992,6 +988,28 @@ async function loadAndDownloadPost(task) {
     delete mediaElement.dataset.hqLoadProgress;
     delete mediaElement.dataset.hqLoadedBytes;
     delete mediaElement.dataset.hqTotalBytes;
+  }
+  
+  // Update existing_count in downloaded_artists table when post is downloaded
+  if (downloadResult && downloadResult.success && task.post && task.post.artists && task.post.artists.length > 0) {
+    const postArtist = Array.isArray(task.post.artists) ? task.post.artists[0] : task.post.artists;
+    const totalArtistPosts = window.totalResultCount || window.totalCount || 0;
+    
+    // Make API call to update existing_count for this artist
+    if (postArtist && totalArtistPosts > 0) {
+      try {
+        const response = await fetch('http://localhost:3001/api/db/artists/existing-count', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ artist: postArtist, existingCount: totalArtistPosts })
+        });
+        if (!response.ok) {
+          console.warn('[loadAndDownloadPost] Failed to update existing_count:', await response.text());
+        }
+      } catch (err) {
+        console.warn('[loadAndDownloadPost] Error updating existing_count:', err);
+      }
+    }
   }
   
   return downloadResult;
@@ -3063,6 +3081,40 @@ async function showHomepage(forceReload = false) {
   if (window.isViewingHomepage && !forceReload) return; // Already on homepage
 
   const booruGallery = document.getElementById('booru-gallery');
+
+  const existingSidebar = document.getElementById('downloads-sidebar');
+  if (existingSidebar)
+    existingSidebar.remove();
+
+  const downloadsShuffleBtn = document.getElementById('downloads-shuffle-btn');
+  if (downloadsShuffleBtn) {
+    downloadsShuffleBtn.remove();
+  }
+
+  const downloadsArtistSortBtn = document.getElementById('downloads-sort-artist-btn');
+  if (downloadsArtistSortBtn) {
+    downloadsArtistSortBtn.remove();
+  }
+
+  const downloadsDateSortBtn = document.querySelector('.control-section-artist');
+  if (downloadsDateSortBtn) {
+    downloadsDateSortBtn.remove();
+  }
+
+  const dateSortControl = document.querySelector('.control-section-sort');
+  if (dateSortControl) {
+    dateSortControl.remove();
+  }
+
+  const aiFilterBtn = document.getElementById('ai-filter-toggle');
+  if (aiFilterBtn) {
+    aiFilterBtn.remove();
+  }
+
+  const controlSectionLimit = document.querySelector('.control-section-limit');
+  if (controlSectionLimit) {
+    controlSectionLimit.remove();
+  }
   
   // Hide scroller if visible
   const scrollerContent = document.getElementById('scroller-content');
@@ -3079,6 +3131,7 @@ async function showHomepage(forceReload = false) {
   window.isViewingHomepage = true;
   window.isViewingDownloadsGallery = false;
   window.isViewingScroller = false;
+  window.hasMoreResults = true; // Enable load-more-icon for homepage pagination
   activeTabId = null;
   
   const showHomepageBtn = document.getElementById('show-homepage-btn');
@@ -3091,65 +3144,281 @@ async function showHomepage(forceReload = false) {
   if (showScrollerBtn) showScrollerBtn.classList.remove('active');
   document.querySelectorAll('.booru-tab-item.active').forEach(tab => tab.classList.remove('active'));
   
-  // Restore controls that scroller may have hidden
-  const sortControl = document.querySelector('.control-section-sort');
-  if (sortControl) sortControl.style.display = '';
-  const limitControl = document.querySelector('.control-section-limit');
-  if (limitControl) limitControl.style.display = '';
-  const sliderControl = document.querySelector('.control-section-slider');
-  if (sliderControl) sliderControl.style.display = '';
-  const galleryQualityToggleBtn = document.getElementById('gallery-quality-toggle');
-  if (galleryQualityToggleBtn) galleryQualityToggleBtn.style.display = '';
+  // Set up control bar for homepage mode
+  updateControlBar('homepage');
   
-  // Hide search and source controls
-  const searchControl = document.querySelector('.control-section-search');
-  if (searchControl) {
-    searchControl.style.display = 'none';
+  // Clear gallery and remove downloads-gallery class
+  booruGallery.classList.remove('downloads-gallery');
+  booruGallery.innerHTML = '';
+  
+  // Reset homepage state
+  window.booruPosts = [];
+  
+  // Load posts from homepage table (without fetching new posts)
+  await loadHomepagePosts();
+
+  // Show load-more-icon
+  const gallery = document.getElementById('gallery-wrapper');
+  if (gallery) {
+    if (document.getElementById('load-more-icon') == null) {
+      const loadMore = document.createElement('div');
+      loadMore.id = 'load-more-icon';
+      loadMore.innerHTML = '<i class="fa-solid fa-ellipsis" style="color: var(--text-secondary); font-size: 30px;"></i>';
+      loadMore.style.cssText = 'display: flex; opacity: 1; justify-content: center; align-items: center; padding: 20px;';
+      gallery.appendChild(loadMore);
+    }
   }
-  const booru_control_right = document.querySelector('.booru-control-right');
-  if (booru_control_right) {
-    booru_control_right.querySelectorAll('*').forEach(el => {
-      // Don't hide the counter - we need it visible for homepage
-      if (el.id === 'booru-total-count') {
-        el.style.display = 'block';
-      } else {
+  
+  // Save state
+  if (window.debouncedSave) window.debouncedSave();
+}
+
+/**
+ * Centralized control bar update function
+ * Manages the booru-control-bar visibility and content based on the current view mode
+ * 
+ * Modes:
+ * - 'normal_tab': Full booru browser controls (search, sort, limit, size, source)
+ * - 'downloads': Downloads gallery controls (search, sort, limit, artist, source, date, media-type)
+ * - 'homepage': Homepage view controls (minimal - primary buttons + counter)
+ * - 'scroller': Scroller view controls (minimal - primary buttons + reload/ai-filter)
+ */
+function updateControlBar(viewMode = 'normal_tab') {
+  const controlBar = document.querySelector('header.control-bar.booru-control-bar');
+  if (!controlBar) return;
+
+  // Always show the control bar for any view mode
+  controlBar.style.display = 'flex';
+
+  // Get all control sections for easy reference
+  const primarySection = controlBar.querySelector('.control-section-primary');
+  const searchControl = controlBar.querySelector('.control-section-search');
+  const sortControl = controlBar.querySelector('.control-section-sort');
+  const limitControl = controlBar.querySelector('.control-section-limit');
+  const sliderControl = controlBar.querySelector('.control-section-slider');
+  const artistControl = controlBar.querySelector('.control-section-artist');
+  const sourceControl = controlBar.querySelector('.control-section-source');
+  const booruTabDescriptor = document.getElementById('booru-tab-descriptor');
+  const downloadsDateSortControl = controlBar.querySelector('.control-section-downloads-date-order');
+  const downloadsMediaTypeControl = controlBar.querySelector('.control-section-downloads-media-type');
+  const resetAlgorithmSection = controlBar.querySelector('.control-section-reset-algorithm');
+
+  const booruControlLeft = controlBar.querySelector('.booru-control-left');
+  const booruControlRight = controlBar.querySelector('.booru-control-right');
+
+  // Step 1: Hide all controls by default
+  [primarySection, searchControl, sortControl, limitControl, sliderControl, artistControl, sourceControl, booruTabDescriptor, downloadsDateSortControl, downloadsMediaTypeControl, resetAlgorithmSection]
+    .forEach(control => {
+      if (control) control.style.display = 'none';
+    });
+
+  if (booruControlRight) {
+    // Only hide direct children, not all descendants (to avoid hiding icons inside buttons)
+    booruControlRight.querySelectorAll(':scope > *').forEach(el => {
+      // Never hide select-download-folder-btn, but handle visibility per mode
+      if (!el.id?.includes('select-download-folder')) {
         el.style.display = 'none';
       }
     });
   }
-  
-  // Hide downloads-specific controls if they exist
-  const artistSection = document.querySelector('.control-section-artist');
-  if (artistSection) artistSection.style.display = 'none';
-  const sourceSection = document.querySelector('.control-section-source');
-  if (sourceSection) sourceSection.style.display = 'none';
-  const downloadsDateSortSection = document.querySelector('.control-section-downloads-date-order');
-  if (downloadsDateSortSection) downloadsDateSortSection.style.display = 'none';
-  const downloadsMediaTypeSection = document.querySelector('.control-section-downloads-media-type');
-  if (downloadsMediaTypeSection) downloadsMediaTypeSection.style.display = 'none';
-  
-  // Show the control bar
-  const controlBar = document.querySelector('header.control-bar.booru-control-bar');
-  if (controlBar) {
-    controlBar.style.display = 'flex';
+
+  // Step 2: Apply mode-specific controls
+  switch (viewMode) {
+    case 'normal_tab':
+      // Full booru browser: primary buttons, search, sort, limit, size slider, source select
+      if (primarySection) primarySection.style.display = '';
+      if (searchControl) searchControl.style.display = '';
+      if (sortControl) sortControl.style.display = '';
+      if (limitControl) limitControl.style.display = '';
+      if (sliderControl) sliderControl.style.display = '';
+      if (booruControlRight) {
+        booruControlRight.style.display = '';
+        booruControlRight.querySelectorAll('*').forEach(el => el.style.display = '');
+      }
+      break;
+
+    case 'downloads':
+      // Downloads gallery: primary buttons, search, sort, limit, artist, source, date, media-type
+      if (primarySection) primarySection.style.display = '';
+      if (searchControl) searchControl.style.display = '';
+      if (limitControl) limitControl.style.display = '';
+      if (limitControl) limitControl.style.display = '';
+      if (sliderControl) sliderControl.style.display = '';
+      
+      // Create date sort section if it doesn't exist
+      if (!downloadsDateSortControl && booruControlLeft) {
+        const dateSection = document.createElement('div');
+        dateSection.className = 'control-section control-select control-section-downloads-date-order';
+        dateSection.innerHTML = `
+          <div class="section-label">Date</div>
+          <select id="downloads-date-sort-select" class="select-minimal">
+            <option value="desc">Newest</option>
+            <option value="asc">Oldest</option>
+          </select>
+        `;
+        const searchSection = booruControlLeft.querySelector('.control-section-search');
+        booruControlLeft.insertBefore(dateSection, searchSection?.nextSibling || null);
+      }
+      if (downloadsDateSortControl) downloadsDateSortControl.style.display = '';
+
+      // Create media type section if it doesn't exist
+      if (!downloadsMediaTypeControl && booruControlLeft) {
+        const mediaTypeSection = document.createElement('div');
+        mediaTypeSection.className = 'control-section control-section-downloads-media-type';
+        mediaTypeSection.innerHTML = `
+          <div class="section-label">MEDIA</div>
+          <button id="media-type-image" class="media-type-btn" data-media-type="image" title="Images"></button>
+          <button id="media-type-video" class="media-type-btn" data-media-type="video" title="Videos"></button>
+          <button id="media-type-gif" class="media-type-btn" data-media-type="animation" title="Animations"></button>
+        `;
+        const searchSection = booruControlLeft.querySelector('.control-section-search');
+        if (searchSection) {
+          booruControlLeft.insertBefore(mediaTypeSection, searchSection.nextSibling);
+        } else {
+          booruControlLeft.appendChild(mediaTypeSection);
+        }
+      }
+      if (downloadsMediaTypeControl) downloadsMediaTypeControl.style.display = '';
+
+      if (artistControl) artistControl.style.display = '';
+      if (sourceControl) sourceControl.style.display = '';
+
+      // Show only specific buttons in primary section
+      if (primarySection) {
+        const reloadBtn = primarySection.querySelector('#reload-booru-btn');
+        const aiFilterBtn = primarySection.querySelector('#ai-filter-toggle');
+        primarySection.querySelectorAll('button').forEach(btn => {
+          btn.style.display = 'none';
+        });
+        if (reloadBtn) reloadBtn.style.display = '';
+        if (aiFilterBtn) aiFilterBtn.style.display = '';
+      }
+
+      // Hide gallery quality toggle and sort section
+      const galleryQualityToggle = controlBar.querySelector('#gallery-quality-toggle');
+      if (galleryQualityToggle) galleryQualityToggle.style.display = 'none';
+      if (sortControl) sortControl.style.display = 'none';
+
+      // Show download folder button, hide source controls
+      if (booruControlRight) {
+        booruControlRight.querySelectorAll('*').forEach(el => {
+          if (el.id === 'select-download-folder-btn') {
+            el.style.display = '';
+          }
+        });
+      }
+      break;
+
+    case 'homepage':
+      // Homepage: only primary buttons (reload + ai-filter), hide search and other controls
+      if (primarySection) primarySection.style.display = '';
+      if (sliderControl) sliderControl.style.display = '';
+      if (booruTabDescriptor) {
+        // Check setting before displaying
+        const showDescriptor = getSettingForDescriptor();
+        if (showDescriptor)
+          booruTabDescriptor.style.display = '';
+        else 
+          booruTabDescriptor.style.display = 'none';
+        booruTabDescriptor.innerHTML = '<button id="close-booru-descriptor" title="Hide descriptor"><i class="fa-solid fa-x"></i></button><h1>My Feed</h1><p>Discover the latest posts from artists you enjoy.</p><p>Recommendations are influenced by your download ratio of said artists.</p><p>This way, you can quickly find new content you may have missed.</p>';
+        
+        // Add click handler to close button
+        const closeBtn = booruTabDescriptor.querySelector('#close-booru-descriptor');
+        if (closeBtn) {
+          closeBtn.addEventListener('click', (e) => {
+            e.stopPropagation();
+            // Save setting to not show descriptor again
+            saveDescriptorVisibilitySetting(false);
+            const checkbox = document.getElementById('show-descriptor-enabled');
+            if (checkbox) {
+              checkbox.checked = false;
+            }
+          });
+        }
+      }
+      
+      const galleryQualityBtn = controlBar.querySelector('#gallery-quality-toggle');
+      if (galleryQualityBtn) galleryQualityBtn.style.display = '';
+
+      // Add reset algorithm button if it doesn't exist
+      let resetAlgorithmBtn = controlBar.querySelector('#reset-algorithm-btn');
+      if (!resetAlgorithmBtn && booruControlLeft) {
+        const resetSection = document.createElement('div');
+        resetSection.className = 'control-section control-section-reset-algorithm';
+        resetSection.innerHTML = '<button id="reset-algorithm-btn" class="control-button" title="Reset Algorithm">Reset Algorithm</button>';
+        booruControlLeft.appendChild(resetSection);
+        resetAlgorithmBtn = resetSection.querySelector('#reset-algorithm-btn');
+        
+        // Add click handler
+        resetAlgorithmBtn.addEventListener('click', async () => {
+          try {
+            resetAlgorithmBtn.disabled = true;
+            resetAlgorithmBtn.textContent = 'Resetting...';
+            
+            const response = await fetch('http://localhost:3001/api/reset-algorithm', { method: 'POST' });
+            const result = await response.json();
+            
+            if (response.ok) {
+              showToast('Homepage algorithm reset successfully.', 'success');
+              await loadHomepagePosts(true);
+            } else {
+              showToast(`Error resetting algorithm: ${result.error}`, 'error');
+              console.error(`Error resetting algorithm: ${result.error}`);
+            }
+          } catch (error) {
+            console.error(`Failed to reset algorithm: ${error.message}`);
+            showToast(`Failed to reset algorithm: ${error.message}`, 'error');
+          } finally {
+            resetAlgorithmBtn.disabled = false;
+            resetAlgorithmBtn.textContent = 'Reset Algorithm';
+            showToast('Homepage algorithm reset completed.', 'success');
+          }
+        });
+      } else if (resetAlgorithmBtn) {
+        // Show existing button
+        resetAlgorithmBtn.style.display = '';
+      }
+
+      // Show only counter in booru-control-right (direct children only)
+      if (booruControlRight) {
+        booruControlRight.querySelectorAll(':scope > *').forEach(el => {
+          if (el.id === 'booru-total-count') {
+            el.style.display = 'block';
+          } else {
+            el.style.display = 'none';
+          }
+        });
+      }
+      break;
+
+    case 'scroller':
+      // Scroller: primary buttons only (reload + ai-filter)
+      if (primarySection) {
+        primarySection.style.display = '';
+        const reloadBtn = primarySection.querySelector('#reload-booru-btn');
+        const aiFilterBtn = primarySection.querySelector('#ai-filter-toggle');
+        primarySection.querySelectorAll('button').forEach(btn => {
+          btn.style.display = 'none';
+        });
+        if (reloadBtn) reloadBtn.style.display = '';
+        if (aiFilterBtn) aiFilterBtn.style.display = '';
+      }
+
+      // Hide all right controls (direct children only)
+      if (booruControlRight) {
+        booruControlRight.querySelectorAll(':scope > *').forEach(el => {
+          el.style.display = 'none';
+        });
+      }
+      break;
+
+    default:
+      console.warn(`Unknown control bar view mode: ${viewMode}`);
   }
-  
-  // Ensure counter is visible on homepage
-  const booruCounter = document.getElementById('booru-total-count');
-  if (booruCounter) {
-    booruCounter.style.display = 'block';
-  }
-  
-  // Clear gallery
-  booruGallery.innerHTML = '';
-  document.getElementById('load-more-icon')?.remove();
-  
-  // Save state
-  if (window.debouncedSave) window.debouncedSave();
-  
-  // Auto-load posts from API
-  await loadHomepagePosts();
 }
+
+// Expose globally for tab switching and other modules
+window.updateControlBar = updateControlBar;
 
 // Function to show downloads gallery
 async function showDownloadsGallery(forceReload = false) {
@@ -3161,6 +3430,7 @@ async function showDownloadsGallery(forceReload = false) {
   
   // Clear homepage mode
   window.isViewingHomepage = false;
+  window.hasMoreResults = false; // Disable pagination loading when leaving homepage
   const showHomepageBtn = document.getElementById('show-homepage-btn');
   if (showHomepageBtn) showHomepageBtn.classList.remove('active');
   
@@ -3222,51 +3492,16 @@ async function showDownloadsGallery(forceReload = false) {
     searchInput.value = window.downloadsSearchText || '';
   }
 
-  // 3. Filter header controls: keep only .control-section-primary, .control-section-search, .control-section-slider, .control-section-limit, .control-section-artist, .control-section-source, .control-section-downloads-date-order, .control-section-downloads-media-type, #select-download-folder-btn
+  // Set up control bar for downloads mode
+  updateControlBar('downloads');
+  
+  // Setup downloads-specific event listeners and elements
   const controlBar = document.querySelector('header.control-bar.booru-control-bar');
   if (controlBar) {
-    // Hide all children except allowed ones
-    controlBar.querySelectorAll('.booru-control-left > *:not(.control-section-primary):not(.control-section-search):not(.control-section-slider):not(.control-section-limit):not(.control-section-artist):not(.control-section-source):not(.control-section-downloads-date-order):not(.control-section-downloads-media-type)').forEach(el => el.style.display = 'none');
-    controlBar.querySelectorAll('.booru-control-right > *:not(#select-download-folder-btn)').forEach(el => el.style.display = 'none');
-    // Explicitly show the allowed left controls in case they were hidden previously
-    controlBar.querySelectorAll('.control-section-primary, .control-section-search, .control-section-slider, .control-section-limit, .control-section-artist, .control-section-source, .control-section-downloads-date-order, .control-section-downloads-media-type').forEach(el => el.style.display = '');
-    // Hide ai filter and sort section (keep reload button visible)
-    const aiFilter = controlBar.querySelector('#ai-filter-toggle');
-    if (aiFilter) aiFilter.style.display = 'none';
-    const sortSection = controlBar.querySelector('.control-section-sort');
-    if (sortSection) sortSection.style.display = 'none';
-
-    const galleryQualityToggleBtn = document.getElementById('gallery-quality-toggle');
-    if (galleryQualityToggleBtn) galleryQualityToggleBtn.style.display = 'none';
-
     const leftControls = controlBar.querySelector('.booru-control-left');
     const searchSection = controlBar.querySelector('.control-section-search');
-    let downloadsDateSortSection = controlBar.querySelector('.control-section-downloads-date-order');
-    if (!downloadsDateSortSection && leftControls) {
-      downloadsDateSortSection = document.createElement('div');
-      downloadsDateSortSection.className = 'control-section control-select control-section-downloads-date-order';
-      downloadsDateSortSection.innerHTML = `
-        <div class="section-label">Date</div>
-        <select id="downloads-date-sort-select" class="select-minimal">
-          <option value="desc">Newest</option>
-          <option value="asc">Oldest</option>
-        </select>
-      `;
-      leftControls.insertBefore(downloadsDateSortSection, searchSection?.nextSibling || null);
-    }
-    
-    // Add media type filter section
     let downloadsMediaTypeSection = controlBar.querySelector('.control-section-downloads-media-type');
-    if (!downloadsMediaTypeSection && leftControls) {
-      downloadsMediaTypeSection = document.createElement('div');
-      downloadsMediaTypeSection.className = 'control-section control-section-downloads-media-type';
-      downloadsMediaTypeSection.innerHTML = `
-        <div class="section-label">MEDIA</div>
-        <button id="media-type-image" class="media-type-btn" data-media-type="image" title="Images"></button>
-        <button id="media-type-gif" class="media-type-btn" data-media-type="gif" title="Animated GIFs"></button>
-        <button id="media-type-video" class="media-type-btn" data-media-type="video" title="Videos"></button>
-      `;
-      leftControls.insertBefore(downloadsMediaTypeSection, searchSection?.nextSibling || null);
+    if (downloadsMediaTypeSection && leftControls) {
       
       // Load saved media type filter state
       const savedState = getMediaTypeFilterState();
@@ -3390,10 +3625,6 @@ async function showDownloadsGallery(forceReload = false) {
       const sortArtistBtn = document.getElementById('downloads-sort-artist-btn');
       if (sortArtistBtn) sortArtistBtn.remove();
     }
-  }
-  // Show the control bar
-  if (controlBar) {
-    controlBar.style.display = 'flex';
   }
 
   let downloadedPosts = await dbStore.getAllDownloadedPosts();
@@ -3657,70 +3888,110 @@ async function showDownloadsGallery(forceReload = false) {
 window.showDownloadsGallery = showDownloadsGallery;
 window.showHomepage = showHomepage;
 
-// Function to load all homepage posts from API
-async function loadHomepagePosts() {
-  // Show loading spinner and ensure counter is visible
+// Function to load homepage posts
+async function loadHomepagePosts(fetchNew = false, append = false) {
   const booruGallery = document.getElementById('booru-gallery');
   const booruCounter = document.getElementById('booru-total-count');
   
-  // Always ensure counter is visible on homepage
+  // Ensure counter is visible on homepage
   if (booruCounter) {
     booruCounter.style.display = 'block';
-    booruCounter.textContent = 'Homepage';
-  }
-  
-  if (booruGallery) {
-    if (typeof $.fn.justifiedGallery !== 'undefined') {
-      $(booruGallery).find('img').off('load error');
-      $(booruGallery).justifiedGallery('destroy');
-    }
-    booruGallery.innerHTML = '<i class="fas fa-circle-notch fa-spin image-loader" style="position: relative; color: var(--accent); font-size: 60px; width: 100%; height: 200px; line-height: 200px; text-align: center;"></i>';
   }
   
   try {
-    // Load posts from the homepage table in the database
-    const response = await fetch('http://localhost:3001/api/db/settings/homepage-data');
+    // APPEND MODE: Fetch new batch and append to existing gallery
+    if (append && fetchNew) {
+      const batchResponse = await fetch('http://localhost:3001/api/get-favorite-batch');
+      const batchData = await batchResponse.json();
+      
+      if (!batchResponse.ok) {
+        const errMsg = batchData.error || 'Unknown error';
+        showToast(`Error fetching posts: ${errMsg}`, 'error');
+        if (booruGallery) {
+          booruGallery.innerHTML = '';
+        }
+        return;
+      }
+
+      const response = await fetch('http://localhost:3001/api/db/settings/homepage-data');
+      let newPosts = await response.json();
+      
+      // Validate posts
+      for (const post of newPosts) {
+        if (typeof post.tags === 'string') {
+          post.tags = post.tags.split(/\s+/).filter(t => t.length > 0);
+        } else if (!Array.isArray(post.tags)) {
+          post.tags = [];
+        }
+        if (!post.imageUrl) {
+          post.imageUrl = post.file_url || post.sample_url || post.preview_url;
+        }
+      }
+      
+      // Append to existing booruPosts array
+      window.booruPosts = window.booruPosts.concat(newPosts);
+      window.totalResultCount = window.booruPosts.length;
+      
+      // Set activeTabId to "homepage" so createBooruImageElement uses the homepage cache
+      const previousTabId = typeof activeTabId !== 'undefined' ? activeTabId : null;
+      activeTabId = 'homepage';
+      
+      // Render appended posts without clearing gallery
+      renderBooruGallery(newPosts, true, false);
+      
+      // Restore previous activeTabId
+      activeTabId = previousTabId;
+      
+      // Update counter
+      if (booruCounter) {
+        booruCounter.innerHTML = `HOMEPAGE <b>${window.booruPosts.length}</b>`;
+      }
+      
+      return;
+    }
     
-    const data = await response.json();
+    // FRESH LOAD MODE: Load all posts from homepage table
+    if (booruGallery) {
+      if (typeof $.fn.justifiedGallery !== 'undefined') {
+        $(booruGallery).find('img').off('load error');
+        $(booruGallery).justifiedGallery('destroy');
+      }
+      booruGallery.innerHTML = '<i class="fas fa-circle-notch fa-spin image-loader" style="position: relative; color: var(--accent); font-size: 60px; width: 100%; height: 200px; line-height: 200px; text-align: center;"></i>';
+    }
+    
+    // Fetch new posts from all artists and populate homepage table if requested
+    if (fetchNew) {
+      const batchResponse = await fetch('http://localhost:3001/api/get-favorite-batch');
+      const batchData = await batchResponse.json();
+      
+      if (!batchResponse.ok) {
+        const errMsg = batchData.error || 'Unknown error';
+        showToast(`Error fetching posts: ${errMsg}`, 'error');
+        if (booruGallery) {
+          booruGallery.innerHTML = '';
+        }
+        return;
+      }
+    }
+    
+    // Load all posts from the homepage table in the database
+    const response = await fetch('http://localhost:3001/api/db/settings/homepage-data');
+    const allPosts = await response.json();
     
     if (!response.ok) {
-      const errMsg = data.error || 'Unknown error';
+      const errMsg = (typeof allPosts === 'object' && allPosts.error) ? allPosts.error : 'Unknown error';
       showToast(`Error loading posts: ${errMsg}`, 'info');
-      // Clear gallery on error
       if (booruGallery) {
         booruGallery.innerHTML = '';
       }
       return;
     }
     
-    // Extract posts from homepage data
-    let allPosts = [];
-    if (data && data.posts && Array.isArray(data.posts)) {
-      allPosts = data.posts;
-    }
-    
-    if (allPosts.length === 0) {
-      showToast('No posts available. Fetching first batch...', 'info');
-      // Show loading spinner
-      if (booruGallery) {
-        booruGallery.innerHTML = '<i class="fas fa-circle-notch fa-spin image-loader" style="position: relative; color: var(--accent); font-size: 60px; width: 100%; height: 200px; line-height: 200px; text-align: center;"></i>';
-      }
-      // Fetch new batch and refresh the view
-      try {
-        await fetchFavoriteBatch();
-        // After fetch completes, reload the posts
-        await loadHomepagePosts();
-      } catch (error) {
-        showToast(`Error fetching batch: ${error.message}`, 'error');
-        if (booruGallery) {
-          booruGallery.innerHTML = '';
-        }
-      }
-      return;
-    }
+    // Handle both array and wrapped response
+    let posts = Array.isArray(allPosts) ? allPosts : [];
     
     // Validate posts
-    for (const post of allPosts) {
+    for (const post of posts) {
       if (typeof post.tags === 'string') {
         post.tags = post.tags.split(/\s+/).filter(t => t.length > 0);
       } else if (!Array.isArray(post.tags)) {
@@ -3733,32 +4004,60 @@ async function loadHomepagePosts() {
     
     // Clear gallery
     if (booruGallery) {
-      booruGallery.innerHTML = '';
+      booruGallery.innerHTML = '<i class="fas fa-circle-notch fa-spin image-loader" style="position: relative; color: var(--accent); font-size: 60px; width: 100%; height: 200px; line-height: 200px; text-align: center;"></i>';
     }
     
-    // Set window state
-    window.booruPosts = allPosts;
-    window.totalResultCount = allPosts.length;
+    // Set window state - no pagination needed
+    window.booruPosts = posts;
+    window.totalResultCount = posts.length;
     window.hasMoreResults = false;
     
-    // Render gallery
-    renderBooruGallery(allPosts, false, false);
+    // Restore homepage cache for thumbnail reuse
+    const HOMEPAGE_CACHE_ID = 'homepage';
+    await restoreThumbnailCacheForTab(HOMEPAGE_CACHE_ID);
     
-    // Update counter
-    const booruCounter = document.getElementById('booru-total-count');
+    // Set activeTabId to "homepage" so createBooruImageElement uses the homepage cache
+    const previousTabId = typeof activeTabId !== 'undefined' ? activeTabId : null;
+    activeTabId = HOMEPAGE_CACHE_ID;
+    
+    // Render all posts
+    renderBooruGallery(posts, false, false);
+    
+    // Restore previous activeTabId after render completes
+    activeTabId = previousTabId;
+    
+    // Update counter to show total posts in homepage table
     if (booruCounter) {
-      booruCounter.innerHTML = `HOMEPAGE <b>${allPosts.length}</b>`;
-      booruCounter.style.display = 'block'; // Ensure it's visible
+      booruCounter.innerHTML = `HOMEPAGE <b>${posts.length}</b>`;
+      booruCounter.style.display = 'block';
     }
-    
-    showToast(`Loaded ${allPosts.length} posts`, 'success');
     
   } catch (error) {
     showToast(`Error loading posts: ${error.message}`, 'error');
-    // Clear gallery on error
-    if (booruGallery) {
+    const booruGallery = document.getElementById('booru-gallery');
+    if (booruGallery && !append) {
       booruGallery.innerHTML = '';
     }
+  }
+}
+
+// Clean up posts up to and including the downloaded post from homepage table
+async function cleanupHomepageOlderPosts(downloadedPost) {
+  try {
+    const response = await fetch('http://localhost:3001/api/db/homepage/cleanup-until-post', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(downloadedPost)
+    });
+    
+    const result = await response.json();
+    
+    if (!response.ok) {
+      console.warn('[cleanupHomepageOlderPosts] Error:', result.error || 'Unknown error');
+      return;
+    }
+  } catch (error) {
+    console.error('[cleanupHomepageOlderPosts] Error:', error);
   }
 }
 
@@ -3829,6 +4128,8 @@ function getGalleryMargins() {
 function initBooruBrowser() {
   // Tag suggestions are queried on demand to avoid loading the full table on launch.
   window.isViewingDownloadsGallery = false;
+  window.isViewingHomepage = false;
+  window.hasMoreResults = false; // Disabled by default until a view is activated
   // Add handler for show-downloads-gallery-btn
   const showDownloadsBtn = document.getElementById('show-downloads-gallery-btn');
   if (showDownloadsBtn) {
@@ -3848,6 +4149,7 @@ function initBooruBrowser() {
       window.isViewingDownloadsGallery = false;
       window.isViewingHomepage = false;
       window.isViewingScroller = true;
+      window.hasMoreResults = false; // Disable pagination for scroller view
       activeTabId = null;
       
       // Reset downloads pagination state
@@ -3875,25 +4177,8 @@ function initBooruBrowser() {
 
       const contentParent = booruContent.parentElement;
       
-      // Filter header controls: keep only ai-filter-toggle, reload-booru-btn, source select, and select-download-folder-btn
-      const controlBar = document.querySelector('header.control-bar.booru-control-bar');
-      if (controlBar) {
-        // Hide all children of booru-control-left except ai-filter and reload button (which are in control-section-primary)
-        controlBar.querySelectorAll('.booru-control-left > *:not(.control-section-primary)').forEach(el => el.style.display = 'none');
-        // Show ai-filter-toggle and reload-booru-btn in control-section-primary
-        const primarySection = controlBar.querySelector('.control-section-primary');
-        if (primarySection) {
-          primarySection.querySelectorAll('button:not(#ai-filter-toggle):not(#reload-booru-btn)').forEach(btn => btn.style.display = 'none');
-          const aiFilter = primarySection.querySelector('#ai-filter-toggle');
-          const reloadBtn = primarySection.querySelector('#reload-booru-btn');
-          if (aiFilter) aiFilter.style.display = '';
-          if (reloadBtn) reloadBtn.style.display = '';
-        }
-        // Hide all children of booru-control-right except select-download-folder-btn
-        controlBar.querySelectorAll('.booru-control-right > *:not(#select-download-folder-btn)').forEach(el => el.style.display = 'none');
-        // Show the control bar
-        controlBar.style.display = 'flex';
-      }
+      // Set up control bar for scroller mode
+      updateControlBar('scroller');
 
       // Check if scroller already exists, if so just show it
       let scrollerContent = document.getElementById('scroller-content');
@@ -3996,9 +4281,9 @@ function initBooruBrowser() {
           isLoading = true;
 
           try {
-            const favoriteTags = ['femboy', 'girly', 'crossdressing', 'cute'];
+            const favoriteTags = []; // TODO: Fetch favorite tags from user settings or database
             const filterDownloaded = true;
-            const filterAI = !document.getElementById('ai-filter-toggle').classList.contains('active');
+            const filterAI = !document.getElementById('ai-filter-toggle')?.classList.contains('active');
             
             const url = `http://localhost:3001/api/recommended-posts?favoriteTags=${encodeURIComponent(favoriteTags.join(','))}&filterDownloaded=${filterDownloaded}&filterAI=${filterAI}`;
             
@@ -4304,6 +4589,10 @@ function initBooruBrowser() {
                 }
 
                 // Prepare task
+                // Check if this post is from the homepage gallery by examining the element
+                const gallery = postDiv.closest('.booru-gallery');
+                const isFromHomepage = window.isViewingHomepage;
+
                 const task = {
                   postId: post.id,
                   imageUrl: post.imageUrl,
@@ -4312,7 +4601,9 @@ function initBooruBrowser() {
                   downloadBtn,
                   progressBar,
                   progressContainer,
-                  toast
+                  toast,
+                  post: post, // Include full post object for later use
+                  fromHomepage: isFromHomepage // Mark if download initiated from homepage gallery
                 };
 
                 // Ensure UI shows queued/downloading state immediately
@@ -4346,6 +4637,14 @@ function initBooruBrowser() {
                   progressBar.style.width = '100%';
                   setTimeout(() => {
                     postDiv.dataset.downloaded = 'true';
+                    
+                    // If download was from homepage gallery, clean up older posts from homepage table
+                    if (task.fromHomepage && task.post) {
+                      cleanupHomepageOlderPosts(task.post).catch(err => {
+                        console.warn('Failed to cleanup older posts from homepage:', err);
+                      });
+                    }
+                    
                     // Store file size for coin animation
                     if (task.totalBytes) {
                       postDiv.dataset.fileSize = task.totalBytes;
@@ -4799,21 +5098,9 @@ function initBooruBrowser() {
     // Restore controls when exiting homepage mode
     if (window.isViewingHomepage) {
       window.isViewingHomepage = false;
+      window.hasMoreResults = false; // Disable pagination when exiting homepage
       // Save state change
       if (window.debouncedSave) window.debouncedSave();
-      const controlBar = document.querySelector('header.control-bar.booru-control-bar');
-      if (controlBar) {
-        // Restore search control
-        const searchControl = controlBar.querySelector('.control-section-search');
-        if (searchControl) {
-          searchControl.style.display = '';
-        }
-        // Restore booru-control-right
-        const booruControlRight = controlBar.querySelector('.booru-control-right');
-        if (booruControlRight) {
-          booruControlRight.querySelectorAll('*').forEach(el => el.style.display = '');
-        }
-      }
     }
     
     // Restore controls when exiting scroller mode
@@ -4821,53 +5108,10 @@ function initBooruBrowser() {
       window.isViewingScroller = false;
       // Save state change
       if (window.debouncedSave) window.debouncedSave();
-      const controlBar = document.querySelector('header.control-bar.booru-control-bar');
-      if (controlBar) {
-        // Restore all controls
-        controlBar.querySelectorAll('.booru-control-left > *').forEach(el => el.style.display = '');
-        controlBar.querySelectorAll('.booru-control-right > *').forEach(el => el.style.display = '');
-        // Restore buttons in control-section-primary
-        const primarySection = controlBar.querySelector('.control-section-primary');
-        if (primarySection) {
-          primarySection.querySelectorAll('button').forEach(btn => btn.style.display = '');
-        }
-        // Restore gallery quality toggle
-        const galleryQualityToggleBtn = document.getElementById('gallery-quality-toggle');
-        if (galleryQualityToggleBtn) galleryQualityToggleBtn.style.display = '';
-      }
     }
     
     if (window.isViewingDownloadsGallery) {
-      // Restore all booru tab items' active state (handled by switchToTab)
-      // Restore header controls and show reload/AI filter buttons
-      const controlBar = document.querySelector('header.control-bar.booru-control-bar');
-      if (controlBar) {
-        controlBar.querySelectorAll('.booru-control-left > *').forEach(el => el.style.display = '');
-        controlBar.querySelectorAll('.booru-control-right > *').forEach(el => el.style.display = '');
-        const aiFilter = controlBar.querySelector('#ai-filter-toggle');
-        if (aiFilter) aiFilter.style.display = '';
-        const reloadBtn = controlBar.querySelector('#reload-booru-btn');
-        if (reloadBtn) reloadBtn.style.display = '';
-      }
-      // Restore search input event
-      const searchInput = document.getElementById('search-filter-input');
-      if (searchInput) {
-        if (searchInput._downloadsSearchHandler) {
-          searchInput.removeEventListener('input', searchInput._downloadsSearchHandler);
-          delete searchInput._downloadsSearchHandler;
-        }
-      }
-      // Remove downloads gallery class
-      const booruGallery = document.getElementById('booru-gallery');
-      if (booruGallery) {
-        booruGallery.classList.remove('downloads-gallery');
-        const artistSection = document.querySelector('.control-section-artist');
-        if (artistSection) artistSection.style.display = 'none';
-        const sourceSection = document.querySelector('.control-section-source');
-        if (sourceSection) sourceSection.style.display = 'none';
-      }
-      
-      // Remove shuffle button if it exists
+      // Cleanup downloads-specific elements
       const shuffleBtn = document.getElementById('downloads-shuffle-btn');
       if (shuffleBtn) shuffleBtn.remove();
       const sortArtistBtn = document.getElementById('downloads-sort-artist-btn');
@@ -4878,22 +5122,29 @@ function initBooruBrowser() {
       if (downloadsMediaTypeSection) downloadsMediaTypeSection.remove();
       window.downloadsGalleryOriginalPosts = null;
       
-      window.isViewingDownloadsGallery = false;
-      
       // Reset downloads pagination state
       window.allDownloadedPosts = null;
       window.downloadsPaginationIndex = 0;
+      
+      // Remove downloads gallery class
+      const booruGallery = document.getElementById('booru-gallery');
+      if (booruGallery) {
+        booruGallery.classList.remove('downloads-gallery');
+      }
+      
+      // Restore search input event
+      const searchInput = document.getElementById('search-filter-input');
+      if (searchInput) {
+        if (searchInput._downloadsSearchHandler) {
+          searchInput.removeEventListener('input', searchInput._downloadsSearchHandler);
+          delete searchInput._downloadsSearchHandler;
+        }
+      }
       
       // Restore the selected booru tab's state
       // Debug: print all tab IDs in DOM
       const domTabIds = Array.from(document.querySelectorAll('.booru-tab-item')).map(el => el.dataset.tabId);
       if (tabId && typeof window.switchToTab === 'function') {
-        // Restore header controls first
-        const controlBar = document.querySelector('header.control-bar.booru-control-bar');
-        if (controlBar) {
-          controlBar.querySelectorAll('.booru-control-left > *').forEach(el => el.style.display = '');
-          controlBar.querySelectorAll('.booru-control-right > *').forEach(el => el.style.display = '');
-        }
         // Then switch to the tab after a short delay
         // Restore search input and source select to tab state before switching
         const tabsArr = (typeof booruTabs !== 'undefined' && booruTabs.length) ? booruTabs : (window.booruTabs || []);
@@ -4963,6 +5214,12 @@ function initBooruBrowser() {
   // Load AI filter setting
   loadAiFilterSetting();
   
+  // Load GIF animation setting
+  loadGifAnimationSetting();
+  
+  // Load descriptor visibility setting
+  loadDescriptorVisibilitySetting();
+  
   // Restore gallery quality toggle state from localStorage
   try {
     const savedQualityState = localStorage.getItem('showHighQualityGallery');
@@ -4991,150 +5248,21 @@ function initBooruBrowser() {
     updateGalleryQualityButton();
   }
   
-  // Function to load all homepage posts from API
-  async function loadHomepagePosts() {
-    const booruGallery = document.getElementById('booru-gallery');
-    
-    try {
-      const response = await fetch('http://localhost:3001/api/db/settings/homepage-data');
-      const data = await response.json();
-      
-      if (!response.ok) {
-        const errMsg = data.error || 'Unknown error';
-        console.error('❌ loadHomepagePosts: HTTP error', response.status, errMsg);
-        showToast(`Error loading posts: ${errMsg}`, 'error');
-        // Clear gallery on error
-        if (booruGallery) {
-          if (typeof $.fn.justifiedGallery !== 'undefined') {
-            $(booruGallery).find('img').off('load error');
-            $(booruGallery).justifiedGallery('destroy');
-          }
-          booruGallery.innerHTML = '';
-        }
-        return;
-      }
-      
-      // Extract posts from homepage data
-      let allPosts = [];
-      if (data && data.posts && Array.isArray(data.posts)) {
-        allPosts = data.posts;
-      } else {
-        console.warn('⚠️ loadHomepagePosts: data.posts is not an array or missing');
-      }
-      
-      // Clear gallery first (before checking if posts exist)
-      if (booruGallery) {
-        if (typeof $.fn.justifiedGallery !== 'undefined') {
-          $(booruGallery).find('img').off('load error');
-          $(booruGallery).justifiedGallery('destroy');
-        }
-        booruGallery.innerHTML = '';
-      }
-      
-      // STEP 1: Sort posts by createdAt (descending - newest first)
-      allPosts.sort((a, b) => {
-        const timeA = a.createdAt || 0;
-        const timeB = b.createdAt || 0;
-        return timeB - timeA;
-      });
-      
-      // STEP 2: Filter out posts with displayed_count >= 3
-      allPosts = allPosts.filter(post => (post.displayed_count || 0) < 3);
-      
-      // STEP 3: Filter out already downloaded posts
-      try {
-        const downloadedPosts = await dbStore.getAllDownloadedPosts();
-        const downloadedIds = new Set(downloadedPosts.map(p => String(p.id)));
-        allPosts = allPosts.filter(post => !downloadedIds.has(String(post.id)));
-      } catch (error) {
-        console.warn('⚠️ loadHomepagePosts: Could not filter downloaded posts:', error.message);
-      }
-      
-      if (allPosts.length === 0) {
-        showToast('No posts available. Fetching first batch...', 'info');
-        
-        // Save the filtered homepage data back to database
-        try {
-          await fetch('http://localhost:3001/api/db/settings/homepage-data', {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ posts: allPosts, currentBatchIndex: data.currentBatchIndex || 0 })
-          });
-        } catch (error) {
-          console.warn('⚠️ loadHomepagePosts: Could not save filtered posts:', error.message);
-        }
-        
-        return;
-      }
-      
-      // STEP 4: Increment displayed_count for posts that will be displayed
-      const originalPosts = data.posts || [];
-      const originalMap = new Map(originalPosts.map(p => [String(p.id), p]));
-      
-      for (const post of allPosts) {
-        const originalPost = originalMap.get(String(post.id));
-        if (originalPost) {
-          post.displayed_count = (originalPost.displayed_count || 0) + 1;
-        } else {
-          post.displayed_count = (post.displayed_count || 0) + 1;
-        }
-      }
-      
-      // STEP 5: Save updated posts back to database
-      const updatedData = { posts: allPosts, currentBatchIndex: data.currentBatchIndex || 0 };
-      try {
-        const saveResponse = await fetch('http://localhost:3001/api/db/settings/homepage-data', {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify(updatedData)
-        });
-        if (!saveResponse.ok) {
-          console.warn('⚠️ loadHomepagePosts: Failed to save updated posts:', saveResponse.status);
-        }
-      } catch (error) {
-        console.warn('⚠️ loadHomepagePosts: Could not save updated posts:', error.message);
-      }
-      
-      // Validate posts
-      for (const post of allPosts) {
-        if (typeof post.tags === 'string') {
-          post.tags = post.tags.split(/\s+/).filter(t => t.length > 0);
-        } else if (!Array.isArray(post.tags)) {
-          post.tags = [];
-        }
-        if (!post.imageUrl) {
-          post.imageUrl = post.file_url || post.sample_url || post.preview_url;
-        }
-      }
-      
-      // Set window state
-      window.booruPosts = allPosts;
-      window.totalResultCount = allPosts.length;
-      window.hasMoreResults = false;
-      
-      // Render gallery
-      renderBooruGallery(allPosts, false, false);
-      
-      // Update counter
-      const booruCounter = document.getElementById('booru-total-count');
-      if (booruCounter) {
-        booruCounter.innerHTML = `HOMEPAGE <b>${allPosts.length}</b>`;
-      }
-      
-      showToast(`Loaded ${allPosts.length} posts`, 'success');
-      
-    } catch (error) {
-      console.error('❌ loadHomepagePosts: Exception:', error);
-      showToast(`Error loading posts: ${error.message}`, 'error');
-      // Clear gallery on error
-      if (booruGallery) {
-        if (typeof $.fn.justifiedGallery !== 'undefined') {
-          $(booruGallery).find('img').off('load error');
-          $(booruGallery).justifiedGallery('destroy');
-        }
-        booruGallery.innerHTML = '';
-      }
-    }
+  // Wire up GIF animation setting checkbox
+  const animateGifsCheckbox = document.getElementById('animate-gifs-enabled');
+  if (animateGifsCheckbox) {
+    animateGifsCheckbox.addEventListener('change', () => {
+      animateGifs = animateGifsCheckbox.checked;
+      saveGifAnimationSetting();
+    });
+  }
+  
+  // Wire up descriptor visibility setting checkbox
+  const showDescriptorCheckbox = document.getElementById('show-descriptor-enabled');
+  if (showDescriptorCheckbox) {
+    showDescriptorCheckbox.addEventListener('change', () => {
+      saveDescriptorVisibilitySetting(showDescriptorCheckbox.checked);
+    });
   }
   
   if (reloadBooruBtn) {
@@ -5154,15 +5282,12 @@ function initBooruBrowser() {
         reloadBooruBtn.disabled = true;
         reloadBooruBtn.innerHTML = '<i class="fas fa-sync-alt fa-spin"></i>';
         
-        // Fetch new batch first, then load posts
+        // Load posts with fetchNew=true (this will fetch new posts and then load them)
         try {
-          await fetchFavoriteBatch();
+          await loadHomepagePosts(true);
         } catch (error) {
-          console.warn('⚠️ Error calling get-favorite-batch endpoint:', error.message);
+          console.warn('⚠️ Error reloading homepage:', error.message);
         }
-        
-        // Load posts (this will replace the spinner with actual posts)
-        await loadHomepagePosts();
         
         // Re-enable reload button
         reloadBooruBtn.disabled = false;
@@ -5611,6 +5736,64 @@ function updateGalleryQualityButton() {
     galleryQualityToggleBtn.classList.remove('btn-accent');
     galleryQualityToggleBtn.title = 'Show High Quality Images';
   }
+}
+
+// Load GIF animation setting from localStorage
+function loadGifAnimationSetting() {
+  try {
+    const saved = localStorage.getItem('animateGifs');
+    animateGifs = saved === 'true'; // OFF by default
+    const checkbox = document.getElementById('animate-gifs-enabled');
+    if (checkbox) {
+      checkbox.checked = animateGifs;
+    }
+  } catch (err) {
+    console.error('Error loading GIF animation setting:', err);
+    animateGifs = false;
+  }
+}
+
+// Save GIF animation setting to localStorage
+function saveGifAnimationSetting() {
+  try {
+    localStorage.setItem('animateGifs', animateGifs.toString());
+  } catch (err) {
+    console.error('Error saving GIF animation setting:', err);
+  }
+}
+
+// Load descriptor visibility setting from localStorage
+function loadDescriptorVisibilitySetting() {
+  try {
+    const saved = localStorage.getItem('showDescriptor');
+    window.showDescriptor = saved === null || saved === 'true'; // ON by default
+    const checkbox = document.getElementById('show-descriptor-enabled');
+    if (checkbox) {
+      checkbox.checked = window.showDescriptor;
+    }
+  } catch (err) {
+    console.error('Error loading descriptor visibility setting:', err);
+    window.showDescriptor = true;
+  }
+}
+
+// Save descriptor visibility setting to localStorage
+function saveDescriptorVisibilitySetting(isVisible) {
+  try {
+    window.showDescriptor = isVisible;
+    localStorage.setItem('showDescriptor', isVisible.toString());
+    if (!isVisible)
+      document.getElementById('booru-tab-descriptor').style.display = 'none';
+    else
+      document.getElementById('booru-tab-descriptor').style.display = 'block';
+  } catch (err) {
+    console.error('Error saving descriptor visibility setting:', err);
+  }
+}
+
+// Get descriptor visibility setting
+function getSettingForDescriptor() {
+  return window.showDescriptor !== false;
 }
 
 // Seamlessly update all gallery images to high/low quality
@@ -6101,6 +6284,7 @@ async function loadBooruImages(append = false) {
   
   isLoadingBooru = true;
   window.isViewingDownloadsGallery = false;
+  window.isViewingHomepage = false;
   
   // Remove downloads-specific controls
   const downloadsDateSortSection = document.querySelector('.control-section-downloads-date-order');
@@ -6481,7 +6665,7 @@ async function loadScraperBooru(sourceId, append) {
     console.error(`Scraper load error for ${sourceConfig.name}:`, err);
     if (!append) {
       document.getElementById('load-more-icon')?.remove();
-      booruGallery.innerHTML = `<div style="color: var(--text-secondary); text-align: center; margin-top: 100px; width: 100%; font-size: 30px;">Error loading images from ${sourceConfig.name}.</div>`;
+      booruGallery.innerHTML = `<div style="color: var(--text-secondary); min-height: 60px; text-align: center; margin-top: 100px; width: 100%; height: 60px; font-size: 20px;">${err}</div>`;
     }
     if (booruLoading) booruLoading.style.display = 'none';
     const _proxyHint = getProxyDownHint(null, err.message);
@@ -6626,6 +6810,7 @@ async function loadGenericBooru(sourceId, append) {
     const responseText = await response.text();
 
     if (isCaptchaPage(responseText)) {
+      console.log('CAPTCHA detected on count page for', responseText);
       showToast(`${sourceConfig.name} blocked by CAPTCHA — open the site in a browser to solve it`, 'error');
       window.hasMoreResults = false;
       if (booruLoading) booruLoading.style.display = 'none';
@@ -6764,7 +6949,7 @@ async function loadGenericBooru(sourceId, append) {
     console.error(`${sourceConfig.name} fetch error:`, err);
     if (!append) {
       document.getElementById('load-more-icon')?.remove();
-      booruGallery.innerHTML = `<div style="color: var(--text-secondary); text-align: center; margin-top: 100px; width: 100%; font-size: 30px;">Error loading images from ${sourceConfig.name}.</div>`;
+      booruGallery.innerHTML = `<div style="color: var(--text-secondary); min-height: 60px; text-align: center; margin-top: 100px; width: 100%; font-size: 30px;">${err}</div>`;
     }
     if (booruLoading) booruLoading.style.display = 'none';
     const _proxyHint = getProxyDownHint(null, err.message);
@@ -6962,8 +7147,8 @@ function parsePosts(responseText, sourceConfig) {
     
     return [];
   } catch (jsonErr) {
-    console.error('Failed to parse JSON:', jsonErr);
-    showToast('Error parsing response from server - Try updating cookies for the source', 'error');
+    console.error('Error parsing response from server - Maybe try updating cookies for the source or disable any active proxies', 'error')
+    showToast('Error parsing response from server - Maybe try updating cookies for the source or disable any active proxies', 'error');
     return [];
   }
 }
@@ -7222,6 +7407,29 @@ function renderBooruGallery(posts, append = true, addSeparators = true) {
     return;
   }
 
+  // CAPTURE CURRENT VIEW STATE AT START OF FUNCTION
+  // This prevents rendering if user switches tabs while rendering is in progress
+  const capturedState = {
+    isViewingHomepage: window.isViewingHomepage,
+    isViewingDownloadsGallery: window.isViewingDownloadsGallery,
+    isViewingScroller: window.isViewingScroller,
+    activeTabId: typeof activeTabId !== 'undefined' ? activeTabId : null
+  };
+  
+  // Helper function to check if state has changed
+  const hasStateChanged = () => {
+    return capturedState.isViewingHomepage !== window.isViewingHomepage ||
+           capturedState.isViewingDownloadsGallery !== window.isViewingDownloadsGallery ||
+           capturedState.isViewingScroller !== window.isViewingScroller ||
+           capturedState.activeTabId !== (typeof activeTabId !== 'undefined' ? activeTabId : null);
+  };
+  
+  // Early exit if state changed (user switched tabs before we even started)
+  if (hasStateChanged()) {
+    console.warn('[RENDER BOORU GALLERY] View state changed before rendering, aborting render');
+    return;
+  }
+
   // Update the active tab's name to reflect the current search when starting a fresh render
   if (!append && typeof updateTabName === 'function' && typeof activeTabId !== 'undefined' && activeTabId) {
     const searchVal = searchFilterInput ? searchFilterInput.value.trim() : '';
@@ -7272,6 +7480,11 @@ function renderBooruGallery(posts, append = true, addSeparators = true) {
     
     // Wait for all images in gallery to load their aspect ratios
     waitForGalleryImagesToLoad().then(() => {
+      // CHECK STATE BEFORE INITIALIZING GALLERY
+      if (hasStateChanged()) {
+        console.warn('[RENDER BOORU GALLERY] View state changed during async image load, aborting gallery init');
+        return;
+      }
       initializeGallery();
     });
   } else if (isScraperLoad && append) {
@@ -7279,10 +7492,21 @@ function renderBooruGallery(posts, append = true, addSeparators = true) {
     
     // Wait for newly appended images to load their aspect ratios
     waitForGalleryImagesToLoad().then(() => {
+      // CHECK STATE BEFORE REFRESHING GALLERY
+      if (hasStateChanged()) {
+        console.warn('[RENDER BOORU GALLERY] View state changed during async image load, aborting gallery refresh');
+        return;
+      }
       // Refresh gallery with new items
       $(booruGallery).justifiedGallery('norewindItems');
     });
   } else {
+    // CHECK STATE BEFORE RENDERING DOM
+    if (hasStateChanged()) {
+      console.warn('[RENDER BOORU GALLERY] View state changed before DOM render, aborting');
+      return;
+    }
+    
     renderGalleryDOM();
     initializeGallery();
   }
@@ -7301,117 +7525,170 @@ function renderBooruGallery(posts, append = true, addSeparators = true) {
     });
     restoreHighQualityGalleryImages();
     $(booruGallery).one('jg.complete', restoreHighQualityGalleryImages);
+    
+    // Start batch loading thumbnails (10 at a time)
+    startBatchThumbnailLoading();
+  }
+  
+  // Batch load thumbnails in groups of 10 to avoid overwhelming the browser
+  function startBatchThumbnailLoading(batchSize = 10, batchDelay = 100) {
+    const images = Array.from(booruGallery.querySelectorAll('.booru-image-item img'));
+    let currentBatchIndex = 0;
+    
+    function loadNextBatch() {
+      const batch = images.slice(currentBatchIndex, currentBatchIndex + batchSize);
+      
+      if (batch.length === 0) {
+        // All images loaded
+        return;
+      }
+      
+      // Set src for images in this batch
+      batch.forEach((img) => {
+        if (!img.src && img.dataset.thumbnailToLoad) {
+          img.src = img.dataset.thumbnailToLoad;
+        }
+      });
+      
+      currentBatchIndex += batchSize;
+      
+      // Schedule next batch
+      if (currentBatchIndex < images.length) {
+        setTimeout(loadNextBatch, batchDelay);
+      }
+    }
+    
+    // Start the first batch
+    loadNextBatch();
   }
   
   function renderGalleryDOM() {
-  // Create image elements with data-index for fast counter lookup
-  let startIndex = 0;
-  if (append && booruGallery.children.length > 0) {
-    const all = booruGallery.querySelectorAll('.booru-image-item img[data-index]');
-    startIndex = all.length;
-  }
-  let lastArtist = null;
-
-  if (!isDownloadsGallery) {
-    const artistSection = document.querySelector('.control-section-artist');
-    if (artistSection)
-      artistSection.style.display = 'none';
-  }
-  
-  let processedCount = 0;
-  posts.forEach((post, i) => {
-    if (post?.imageUrl === undefined) {
-      return; // Skip posts without imageUrl
+    // CHECK STATE BEFORE STARTING DOM OPERATIONS
+    if (hasStateChanged()) {
+      console.warn('[RENDER BOORU GALLERY] View state changed, skipping DOM render');
+      return;
     }
     
-    processedCount++;
-
-    if (lastArtist == null && window.downloadsPaginationIndex == parseInt(document.getElementById('booru-limit-input')?.value) && post.artist && addSeparators) {
-      const seperator = document.createElement('div');
-      seperator.className = 'artist-separator';
-      seperator.innerHTML = `<h2>${post.artist}</h2>`;
-      galleryWrapper.prepend(seperator);
+    // Create image elements with data-index for fast counter lookup
+    let startIndex = 0;
+    if (append && booruGallery.children.length > 0) {
+      const all = booruGallery.querySelectorAll('.booru-image-item img[data-index]');
+      startIndex = all.length;
     }
+    let lastArtist = null;
 
-    if (isDownloadsGallery && post.artist !== lastArtist && lastArtist !== null && addSeparators) {
-      $(booruGallery).justifiedGallery({
-        rowHeight: currentImageSize || 250,
-        maxRowHeight: false, // Allow natural height variation
-        margins: getGalleryMargins(),
-        lastRow: 'nojustify',
-        captions: false,
-        waitThumbnailsLoad: false,
-        border: 0
-      });
-      const galleryWrapper = document.getElementById('gallery-wrapper');
-      if (galleryWrapper) {
-        const newGallery = document.createElement('div');
-        newGallery.className = 'booru-gallery downloads-gallery justified-gallery';
+    if (!isDownloadsGallery) {
+      const artistSection = document.querySelector('.control-section-artist');
+      if (artistSection)
+        artistSection.style.display = 'none';
+    }
+    
+    let processedCount = 0;
+    posts.forEach((post, i) => {
+          if (post?.imageUrl === undefined) {
+        return; // Skip posts without imageUrl
+      }
+      
+      processedCount++;
+
+      if (lastArtist == null && window.downloadsPaginationIndex == parseInt(document.getElementById('booru-limit-input')?.value) && post.artist && addSeparators) {
         const seperator = document.createElement('div');
         seperator.className = 'artist-separator';
         seperator.innerHTML = `<h2>${post.artist}</h2>`;
-        galleryWrapper.appendChild(seperator);
-        galleryWrapper.appendChild(newGallery);
-        booruGallery.id = ''; // Clear old gallery ID to prevent conflicts
-        newGallery.id = 'booru-gallery'; // Assign ID to new gallery
-        booruGallery = newGallery;
+        galleryWrapper.prepend(seperator);
       }
-    } else {
-      //console.log(isDownloadsGallery, post.artist, lastArtist, addSeparators);
+
+      if (isDownloadsGallery && post.artist !== lastArtist && lastArtist !== null && addSeparators) {
+        $(booruGallery).justifiedGallery({
+          rowHeight: currentImageSize || 250,
+          maxRowHeight: false, // Allow natural height variation
+          margins: getGalleryMargins(),
+          lastRow: 'nojustify',
+          captions: false,
+          waitThumbnailsLoad: false,
+          border: 0
+        });
+        const galleryWrapper = document.getElementById('gallery-wrapper');
+        if (galleryWrapper) {
+          const newGallery = document.createElement('div');
+          newGallery.className = 'booru-gallery downloads-gallery justified-gallery';
+          const seperator = document.createElement('div');
+          seperator.className = 'artist-separator';
+          seperator.innerHTML = `<h2>${post.artist}</h2>`;
+          galleryWrapper.appendChild(seperator);
+          galleryWrapper.appendChild(newGallery);
+          booruGallery.id = ''; // Clear old gallery ID to prevent conflicts
+          newGallery.id = 'booru-gallery'; // Assign ID to new gallery
+          booruGallery = newGallery;
+        }
+      } else {
+        //console.log(isDownloadsGallery, post.artist, lastArtist, addSeparators);
+      }
+
+      const imageElement = createBooruImageElement({ ...post, dataIndex: startIndex + i + 1 });
+      booruGallery.appendChild(imageElement);
+      lastArtist = post.artist;
+      let visibilityDelay = 1000 * (1 - Math.exp(-0.05 * i));
+      setTimeout(() => {
+        if (imageElement) imageElement.classList.add('visible', 'jg-entry-visible');
+      }, visibilityDelay);
+      
+    });
+
+    // FINAL STATE CHECK BEFORE FINALIZING RENDER
+    if (hasStateChanged()) {
+      console.warn('[RENDER BOORU GALLERY] View state changed after post rendering, skipping finalization');
+      return;
     }
 
-    const imageElement = createBooruImageElement({ ...post, dataIndex: startIndex + i + 1 });
-    booruGallery.appendChild(imageElement);
-    lastArtist = post.artist;
-    let visibilityDelay = 1000 * (1 - Math.exp(-0.05 * i));
-    setTimeout(() => {
-      if (imageElement) imageElement.classList.add('visible', 'jg-entry-visible');
-    }, visibilityDelay);
+    // Only manage load-more-icon on fresh renders (not append operations)
+    // During pagination, the scroll/wheel handlers manage the icon lifecycle
+    if (!append) {
+      if (window.hasMoreResults) {
+        const gallery = document.getElementById('gallery-wrapper');
+        if (gallery) {
+          if (document.getElementById('load-more-icon') == null) {
+            const loadMore = document.createElement('div');
+            loadMore.id = 'load-more-icon';
+            loadMore.innerHTML = '<i class="fa-solid fa-ellipsis" style="color: var(--text-secondary); font-size: 30px;"></i>';
+            loadMore.style.cssText = 'display: flex; opacity: 0; justify-content: center; align-items: center; padding: 20px;';
+            gallery.appendChild(loadMore);
+          }
+        }
+      } else {
+        document.getElementById('load-more-icon')?.remove();
+      }
+      
+      setTimeout(() => {
+        const loadIcon = document.getElementById('load-more-icon');
+        if (loadIcon) loadIcon.style.opacity = '1';
+      }, 1000 * (1 - Math.exp(-0.05 * posts.length)));
+    }
     
-  });
-
-  if (window.hasMoreResults) {
-    const gallery = document.getElementById('gallery-wrapper');
-    if (gallery) {
-      if (document.getElementById('load-more-icon') == null) {
-        const loadMore = document.createElement('div');
-        loadMore.id = 'load-more-icon';
-        loadMore.innerHTML = '<i class="fa-solid fa-ellipsis" style="color: var(--text-secondary); font-size: 30px;"></i>';
-        loadMore.style.cssText = 'display: flex; opacity: 0; justify-content: center; align-items: center; padding: 20px;';
-        gallery.appendChild(loadMore);
-      }
+    // Gallery initialization is now handled by initializeGallery() function above
+    // This delay allows load events to extract aspect ratios before gallery renders
+    
+    // No post-layout separator logic needed; separators are now real gallery items.
+    
+    // Start background scraping of post details for all scraper posts
+    if (!isDownloadsGallery) {
+      // startBackgroundScraperDetailFetching(posts);
     }
-  } else {
-    document.getElementById('load-more-icon')?.remove();
-  }
-  
-  setTimeout(() => {
-    const loadIcon = document.getElementById('load-more-icon');
-    if (loadIcon) loadIcon.style.opacity = '1';
-  }, 1000 * (1 - Math.exp(-0.05 * posts.length)));
-  
-  // Gallery initialization is now handled by initializeGallery() function above
-  // This delay allows load events to extract aspect ratios before gallery renders
-  
-  // No post-layout separator logic needed; separators are now real gallery items.
-  
-  // Start background scraping of post details for all scraper posts
-  if (!isDownloadsGallery) {
-    // startBackgroundScraperDetailFetching(posts);
-  }
 
-  // Add end-of-results message if no more content available
-  if (!window.hasMoreResults && booruPosts.length > 0) {
-    const endMessage = document.createElement('div');
-    endMessage.className = 'booru-end-message';
-    endMessage.style.cssText = 'text-align: center; padding: 30px; color: var(--text-secondary); font-size: 14px; border-top: 1px solid var(--border); margin-top: 20px;';
-    endMessage.innerHTML = `<p>loaded <b>${totalResultCount ?? 0}</b></p> <p><i class="fa-solid fa-xmark"></i> No more results available</p><br><h1>Recommended Tags</h1> <div class="booru-end-tags" id="booru-end-tags"></div>`;
-    const existingEndMessage = booruContent.querySelector('.booru-end-message');
-    if (existingEndMessage) existingEndMessage.remove();
-    booruContent.appendChild(endMessage);
-    fillBooruEndTags();
-  }
+    // Add end-of-results message if no more content available
+    if (!window.hasMoreResults && booruPosts.length > 0) {
+      const endMessage = document.createElement('div');
+      endMessage.className = 'booru-end-message';
+      endMessage.style.cssText = 'text-align: center; padding: 30px; color: var(--text-secondary); font-size: 14px; border-top: 1px solid var(--border); margin-top: 20px;';
+      endMessage.innerHTML = `<p>loaded <b>${totalResultCount ?? 0}</b></p> <p><i class="fa-solid fa-xmark"></i> No more results available</p><br><h1>Recommended Tags</h1> <div class="booru-end-tags" id="booru-end-tags"></div>`;
+      const existingEndMessage = booruContent.querySelector('.booru-end-message');
+      if (existingEndMessage) existingEndMessage.remove();
+      booruContent.appendChild(endMessage);
+      fillBooruEndTags();
+    }
+
   } // End of renderGalleryDOM function
+
 }
 
 // function createBooruImageElement(post, maxHeight = null, imageWidth = null) {
@@ -8042,12 +8319,13 @@ function createBooruImageElement(post, maxHeight = null, imageWidth = null) {
     }
     
     // Cache thumbnail after successful load (avoid duplicate fetch before load)
-    const currentTabId = typeof activeTabId !== 'undefined' ? activeTabId : null;
+    // Use the cache tab ID captured at element creation time, not current activeTabId
+    const cacheTabId = mediaElement.dataset.cacheTabId || (typeof activeTabId !== 'undefined' ? activeTabId : null);
     const resolvedThumbnailUrl = mediaElement.dataset.resolvedThumbnailUrl;
     const isVideoSource = resolvedThumbnailUrl && (resolvedThumbnailUrl.endsWith('.mp4') || resolvedThumbnailUrl.endsWith('.webm') || resolvedThumbnailUrl.endsWith('.mov'));
     const cacheKey = isVideoSource ? `video-thumbnail:${resolvedThumbnailUrl}` : resolvedThumbnailUrl;
-    if (currentTabId && cacheKey && !getCachedThumbnailUrl(currentTabId, cacheKey)) {
-      cacheThumbnailBlobForTab(currentTabId, resolvedThumbnailUrl, cacheKey).catch(() => {});
+    if (cacheTabId && cacheKey && !getCachedThumbnailUrl(cacheTabId, cacheKey)) {
+      cacheThumbnailBlobForTab(cacheTabId, resolvedThumbnailUrl, cacheKey).catch(() => {});
     }
 
     // Check if mouse position is within image boundaries and show preview
@@ -8095,22 +8373,28 @@ function createBooruImageElement(post, maxHeight = null, imageWidth = null) {
   let initialDisplayUrl = useHighQuality ? getImageUrl(qualityUrl) : resolvedThumbnailUrl;
   
   const currentTabId = typeof activeTabId !== 'undefined' ? activeTabId : null;
+  // IMPORTANT: Store cache tab ID at creation time so load event uses correct cache even if activeTabId changes
+  mediaElement.dataset.cacheTabId = currentTabId || '';
   const isVideoSource = initialDisplayUrl.endsWith('.mp4') || initialDisplayUrl.endsWith('.webm') || initialDisplayUrl.endsWith('.mov');
   const cacheKey = isVideoSource ? `video-thumbnail:${initialDisplayUrl}` : initialDisplayUrl;
   const cachedThumbnailUrl = currentTabId && cacheKey ? getCachedThumbnailUrl(currentTabId, cacheKey) : null;
+  
+  // Store thumbnail load info in dataset for batch loading
   if (cachedThumbnailUrl) {
-    mediaElement.src = cachedThumbnailUrl;
+    mediaElement.dataset.thumbnailToLoad = cachedThumbnailUrl;
   } else if (isVideoSource) {
-    // Extract thumbnail from video using backend service
     const backendThumbnailUrl = `http://localhost:3001/video-thumbnail?url=${encodeURIComponent(initialDisplayUrl)}`;
-    mediaElement.src = backendThumbnailUrl;
+    mediaElement.dataset.thumbnailToLoad = backendThumbnailUrl;
   } else {
-    mediaElement.src = initialDisplayUrl;
+    mediaElement.dataset.thumbnailToLoad = initialDisplayUrl;
   }
+  
+  // DON'T set src here - it will be set by batch loader
+  // mediaElement.src will be set in startBatchThumbnailLoading
   
   if (useHighQuality) {
     mediaElement.dataset.highQualityLoaded = 'true';
-    mediaElement.dataset.highQualityUrl = mediaElement.src;
+    mediaElement.dataset.highQualityUrl = mediaElement.dataset.thumbnailToLoad;
   }
   
   container.appendChild(mediaElement);
@@ -8377,6 +8661,9 @@ function createBooruImageElement(post, maxHeight = null, imageWidth = null) {
         // Record download timestamp when initiated (before enqueue)
         const downloadInitiatedAt = Date.now();
         
+        // Detect if this is from the homepage gallery
+        const isFromHomepage = window.isViewingHomepage;
+
         // Create task - loadAndDownloadPost will handle both HQ loading and downloading
         const task = {
           postId: post.id,
@@ -8386,7 +8673,9 @@ function createBooruImageElement(post, maxHeight = null, imageWidth = null) {
           downloadBtn,
           progressBar,
           progressContainer,
-          toast
+          toast,
+          post: post, // Include full post object for later use
+          fromHomepage: isFromHomepage // Mark if download initiated from homepage gallery
         };
         
         // Mark download in progress to prevent interference
@@ -8421,6 +8710,14 @@ function createBooruImageElement(post, maxHeight = null, imageWidth = null) {
         progressBar.style.width = '100%';
         setTimeout(() => {
           container.dataset.downloaded = 'true';
+          
+          // If download was from homepage gallery, clean up older posts from homepage table
+          if (task.fromHomepage && task.post) {
+            cleanupHomepageOlderPosts(task.post).catch(err => {
+              console.warn('Failed to cleanup older posts from homepage:', err);
+            });
+          }
+          
           // Store file size for coin animation
           if (task.totalBytes) {
             container.dataset.fileSize = task.totalBytes;
@@ -9442,12 +9739,21 @@ function showPreviewForElement(mediaElement, forceVideoLoad = false, hidden = fa
       }
     };
 
-    if (previewAlreadyLoading && cachedPreview?.element) {
-      break format_test;
-    }
-
+    // If we already have a fully loaded cached preview for this post, use it
     if (cachedPreview?.isLoaded && cachedPreview.element) {
       renderCachedPreview();
+      return;
+    }
+
+    // If this post's preview is already loading, check if we should use cached element
+    // But ALWAYS show the thumbnail first while loading, don't skip rendering
+    if (previewAlreadyLoading && cachedPreview?.element) {
+      // Preview is loading - show cached element (which may be an img or video element)
+      // and continue to display HQ video once ready
+      if (cachedPreview.element.parentNode !== booruPreviewMediaContainer) {
+        booruPreviewMediaContainer.innerHTML = '';
+        booruPreviewMediaContainer.appendChild(cachedPreview.element);
+      }
       return;
     }
 
@@ -9476,6 +9782,8 @@ function showPreviewForElement(mediaElement, forceVideoLoad = false, hidden = fa
     // Show thumbnail image first, then load video
     const img = document.createElement('img');
     img.alt = 'Loading video...';
+    img.dataset.postId = targetPostId;
+    img.dataset.postSource = targetPostSource;
     
     // Use cached gallery image instead of forcing new fetch (except for GIFs - preserve animation)
     const gallerySrc = mediaElement.currentSrc || mediaElement.src || mediaElement.dataset.resolvedThumbnailUrl || getImageUrl(mediaElement.dataset.thumbnailUrl || mediaElement.dataset.imageUrl);
@@ -10060,7 +10368,38 @@ function showPreviewForElement(mediaElement, forceVideoLoad = false, hidden = fa
                 }, { once: true });
                 
                 // Set the blob URL as source for gallery display
-                mediaElement.src = blobUrl;
+                // For GIFs, extract first frame if animation is disabled
+                const isGif = mediaElement.dataset.isGif === 'true';
+                if (isGif && !animateGifs) {
+                  // Extract first frame of GIF from blob URL and use as static image
+                  const img = new Image();
+                  img.onload = () => {
+                    try {
+                      const canvas = document.createElement('canvas');
+                      canvas.width = img.width;
+                      canvas.height = img.height;
+                      const ctx = canvas.getContext('2d');
+                      ctx.drawImage(img, 0, 0);
+                      canvas.toBlob((staticBlob) => {
+                        const staticBlobUrl = URL.createObjectURL(staticBlob);
+                        mediaElement.src = staticBlobUrl;
+                        if (!mediaElement.dataset.staticFrameUrl) {
+                          mediaElement.dataset.staticFrameUrl = staticBlobUrl;
+                        }
+                      }, 'image/png');
+                    } catch (err) {
+                      console.error('Failed to extract GIF first frame:', err);
+                      mediaElement.src = blobUrl;
+                    }
+                  };
+                  img.onerror = () => {
+                    console.error('Failed to load GIF for first frame extraction');
+                    mediaElement.src = blobUrl;
+                  };
+                  img.src = blobUrl;
+                } else {
+                  mediaElement.src = blobUrl;
+                }
                 
                 // Mark HQ loading as complete
                 mediaElement.dataset.highQualityLoaded = 'true';
@@ -10345,12 +10684,17 @@ if (galleryWrapper) {
       let y = e.clientY + offset;
       
       // Prevent horizontal overflow
-      if (x + previewRect.width > window.innerWidth) {
+      if (x + previewRect.width > window.innerWidth - 100) {
         x = e.clientX - previewRect.width - offset;
       }
       // If still overflows on left, clamp to screen
       if (x < 0) {
         x = 10;
+      }
+
+      // set it to the left side of the cursor if it would overflow the right edge just a tiny bit
+      if (x + previewRect.width > window.innerWidth) {
+        x = window.innerWidth - previewRect.width - 10;
       }
       
       // Prevent vertical overflow
@@ -10488,7 +10832,70 @@ if (booruContent) {
 
     clearTimeout(scrollLoadTimeout);
     scrollLoadTimeout = setTimeout(() => {
-      if (!window.isViewingDownloadsGallery)
+      // Handle homepage gallery pagination
+      if (window.isViewingHomepage) {
+        if (isLoadingBooru) return; // Prevent multiple loads while rendering
+        
+        const scrollTop = booruContent.scrollTop;
+        const scrollHeight = booruContent.scrollHeight;
+        const clientHeight = booruContent.clientHeight;
+
+        if (scrollTop + clientHeight >= scrollHeight - 300) {
+          // Set loading state to prevent multiple loads
+          isLoadingBooru = true;
+          
+          // Show booru-loading spinner
+          if (booruLoading) booruLoading.style.display = 'flex';
+
+          // drop all posts from the homepage database table
+          try {
+            fetch('http://localhost:3001/api/db/homepage', {
+              method: 'DELETE',
+              headers: { 'Content-Type': 'application/json' }
+            }).catch(err => console.warn('Failed to clear homepage posts:', err));
+          } catch (err) {
+            console.warn('Error clearing homepage posts:', err);
+          }
+          
+          // Show load-more-icon
+          const gallery = document.getElementById('gallery-wrapper');
+          if (gallery) {
+            if (document.getElementById('load-more-icon') == null) {
+              const loadMore = document.createElement('div');
+              loadMore.id = 'load-more-icon';
+              loadMore.innerHTML = '<i class="fa-solid fa-ellipsis" style="color: var(--text-secondary); font-size: 30px;"></i>';
+              loadMore.style.cssText = 'display: flex; opacity: 0; justify-content: center; align-items: center; padding: 20px;';
+              gallery.appendChild(loadMore);
+            }
+          }
+          
+          // Hide the load-more-icon during append operation
+          const loadMoreIconBeforeRender = document.getElementById('load-more-icon');
+          if (loadMoreIconBeforeRender) {
+            loadMoreIconBeforeRender.style.opacity = '0';
+          }
+          
+          // Append more posts and wait for gallery to complete before allowing next load
+          loadHomepagePosts(true, true);
+
+          
+          // Listen for gallery completion to reset loading state and show icon again
+          $(booruGallery).one('jg.complete', function() {
+            isLoadingBooru = false;
+            // Hide booru-loading spinner after posts are appended
+            if (booruLoading) booruLoading.style.display = 'none';
+            const loadMoreIcon = document.getElementById('load-more-icon');
+            if (loadMoreIcon) {
+              // Show the icon again after posts are appended
+              loadMoreIcon.style.opacity = '1';
+            }
+          });
+
+        }
+        return;
+      }
+      
+      if (!window.isViewingDownloadsGallery && !window.isViewingHomepage)
         if (isLoadingBooru) return;
       if (!window.hasMoreResults) {
         const booruLoadingIcon = document.getElementById('booru-loading');
@@ -10580,6 +10987,71 @@ if (booruContent) {
   
   booruContent.addEventListener('wheel', (e) => {
     if (isLoadingBooru) return;
+
+    // Handle homepage gallery pagination
+    if (window.isViewingHomepage) {
+      if (e.deltaY > 0) {
+        const scrollTop = booruContent.scrollTop;
+        const scrollHeight = booruContent.scrollHeight;
+        const clientHeight = booruContent.clientHeight;
+
+        const isAtBottom = scrollTop + clientHeight >= scrollHeight - 10;
+        const isNotScrollable = scrollHeight <= clientHeight;
+
+        if (isAtBottom || isNotScrollable) {
+          // Set loading state to prevent multiple loads
+          isLoadingBooru = true;
+
+          // Show booru-loading spinner
+          if (booruLoading) booruLoading.style.display = 'flex';
+
+          // drop all posts from the homepage database table
+          try {
+            fetch('http://localhost:3001/api/db/homepage', {
+              method: 'DELETE',
+              headers: { 'Content-Type': 'application/json' }
+            }).catch(err => console.warn('Failed to clear homepage posts:', err));
+          } catch (err) {
+            console.warn('Error clearing homepage posts:', err);
+          }
+          
+          // Show load-more-icon
+          const gallery = document.getElementById('gallery-wrapper');
+          if (gallery) {
+            if (document.getElementById('load-more-icon') == null) {
+              const loadMore = document.createElement('div');
+              loadMore.id = 'load-more-icon';
+              loadMore.innerHTML = '<i class="fa-solid fa-ellipsis" style="color: var(--text-secondary); font-size: 30px;"></i>';
+              loadMore.style.cssText = 'display: flex; opacity: 0; justify-content: center; align-items: center; padding: 20px;';
+              gallery.appendChild(loadMore);
+            }
+          }
+
+          // Hide the load-more-icon during append operation
+          const loadMoreIconBeforeRender = document.getElementById('load-more-icon');
+          if (loadMoreIconBeforeRender) {
+            loadMoreIconBeforeRender.style.opacity = '0';
+          }
+          
+          // Append more posts and wait for gallery to complete before allowing next load
+          loadHomepagePosts(true, true);
+          
+          // Listen for gallery completion to reset loading state and show icon again
+          $(booruGallery).one('jg.complete', function() {
+            isLoadingBooru = false;
+            // Hide booru-loading spinner after posts are appended
+            if (booruLoading) booruLoading.style.display = 'none';
+            const loadMoreIcon = document.getElementById('load-more-icon');
+            if (loadMoreIcon) {
+              // Show the icon again after posts are appended
+              loadMoreIcon.style.opacity = '1';
+            }
+          });
+        }
+      }
+      return;
+    }
+
     if (!window.hasMoreResults) return; // Don't try to load if no more results
 
     // Handle downloads gallery pagination
