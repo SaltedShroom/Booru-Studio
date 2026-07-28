@@ -11,19 +11,19 @@
 
 # Booru Studio
 
+### Booru Studio is an Electron-based desktop and web application<br> developed and maintained by SaltedShroom.
 <br>
-
-Booru Studio is an Electron-based desktop and web application developed and maintained by SaltedShroom.
-
-<em>browsing, downloading, viewing, organizing, customizing</em><br>
-<em>clean, intuitive, automized, easy-to-use UI</em><br>
-<em>create, change, customize and share booru sources &amp; designs</em><br>
-<em>automized tag recognition</em><br>
-<em>artist tagging better than anywhere else</em><br>
-<em>prebuilt tor and proxy support</em><br>
-<em>single window and fullscreen usable design</em>
+<b><em>browsing, downloading, viewing, organizing, customizing</em></b><br>
+<b><em>clean, intuitive, automized, easy-to-use UI</em></b><br>
+<b><em>create, change, customize and share booru sources &amp; designs</em></b><br>
+<b><em>automized tag recognition</em></b><br>
+<b><em>artist tagging better than anywhere else</em></b><br>
+<b><em>prebuilt tor and proxy support</em></b><br>
+<b><em>single window and fullscreen usable design</b></em><br>
+<b><em>can also be used in a browser of choice</b></em>
 <br>
 <br>
+   
 ### <a href="https://github.com/SaltedShroom/Booru-Studio/releases">⬇️ Downloads</a>
 to install, download the latest *Setup.exe*
 
@@ -70,8 +70,8 @@ to install, download the latest *Setup.exe*
 ### Installation
 
 1. Download the latest installer from the GitHub releases page:
-   - `https://github.com/SaltedShroom/Booru-Studio/releases`
-2. Run `Booru-Studio-Setup-x.x.x.exe` and follow the install prompts
+   -  <a href="https://github.com/SaltedShroom/Booru-Studio/releases">`https://github.com/SaltedShroom/Booru-Studio/releases`</a>
+3. Run `Booru-Studio-Setup-x.x.x.exe` and follow the install prompts
 
 ## Updates / Releases
 
