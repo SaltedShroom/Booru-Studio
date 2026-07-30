@@ -48,6 +48,235 @@ let tabIdCounter = 0;
 let saveDebounceTimer = null;
 const tagSuggestionCache = {};
 
+// Favorite tags functions
+async function addFavoriteTag(query, source) {
+  try {
+    const response = await fetch('http://localhost:3001/api/db/favorite-tags', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ query, source })
+    });
+    if (response.ok) {
+      const data = await response.json();
+      // Add the item to the DOM
+      if (data.id) {
+        addQueryFavoriteItemToDOM(data.id, query, source);
+      }
+      updateFavoriteIcon();
+      return true;
+    }
+  } catch (err) {
+    console.error('Error adding favorite tag:', err);
+  }
+  return false;
+}
+
+async function removeFavoriteTag(query, source) {
+  try {
+    const response = await fetch('http://localhost:3001/api/db/favorite-tags', {
+      method: 'DELETE',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ query, source })
+    });
+    if (response.ok) {
+      updateFavoriteIcon();
+      return true;
+    }
+  } catch (err) {
+    console.error('Error removing favorite tag:', err);
+  }
+  return false;
+}
+
+async function isFavoriteTag(query, source) {
+  try {
+    const response = await fetch(`http://localhost:3001/api/db/favorite-tags?query=${encodeURIComponent(query)}&source=${encodeURIComponent(source)}`);
+    if (response.ok) {
+      const data = await response.json();
+      return data.exists || false;
+    }
+  } catch (err) {
+    console.error('Error checking favorite tag:', err);
+  }
+  return false;
+}
+
+// Create a query favorite item element
+function createQueryFavoriteItem(id, query, source) {
+  const item = document.createElement('div');
+  item.className = 'query-item';
+  item.dataset.queryId = id;
+  item.dataset.queryValue = query;
+  item.dataset.querySource = source;
+  
+  const icon = document.createElement('i');
+  icon.className = 'fas fa-star query-item-icon';
+  
+  const text = document.createElement('span');
+  text.className = 'query-item-text';
+  text.textContent = query;
+  
+  item.appendChild(icon);
+  item.appendChild(text);
+  
+  return item;
+}
+
+// Add query favorite item to DOM and set up event listeners
+function addQueryFavoriteItemToDOM(id, query, source) {
+  const queryFavoritesList = document.getElementById('query-favorites');
+  if (!queryFavoritesList) return;
+  
+  // Remove if already exists (for replace scenario)
+  const existing = queryFavoritesList.querySelector(`[data-query-id="${id}"]`);
+  if (existing) existing.remove();
+  
+  const item = createQueryFavoriteItem(id, query, source);
+  
+  // Click anywhere on item (except icon) to open new tab
+  item.addEventListener('click', (e) => {
+    if (e.target !== item.querySelector('i')) {
+      openNewQueryTab(query, source);
+    }
+  });
+  
+  // Click star icon to remove from favorites
+  const starIcon = item.querySelector('i');
+  starIcon.addEventListener('click', async (e) => {
+    e.stopPropagation();
+    await removeFavoriteTag(query, source);
+    removeQueryFavoriteItemFromDOM(id);
+  });
+  
+  queryFavoritesList.appendChild(item);
+}
+
+// Remove query favorite item from DOM by ID
+function removeQueryFavoriteItemFromDOM(id) {
+  const queryFavoritesList = document.getElementById('query-favorites');
+  if (!queryFavoritesList) return;
+  
+  const item = queryFavoritesList.querySelector(`[data-query-id="${id}"]`);
+  if (item) {
+    item.remove();
+  }
+}
+
+// Load all favorite tags and populate the list
+async function loadAllFavoriteTags() {
+  try {
+    const response = await fetch('http://localhost:3001/api/db/favorite-tags-all');
+    if (response.ok) {
+      const data = await response.json();
+      const queryFavoritesList = document.getElementById('query-favorites');
+      
+      if (queryFavoritesList && data.favorites && Array.isArray(data.favorites)) {
+        // Clear existing placeholder items
+        queryFavoritesList.innerHTML = '';
+        
+        // Add all favorites to the list
+        data.favorites.forEach(fav => {
+          addQueryFavoriteItemToDOM(fav.id, fav.query, fav.source);
+        });
+      }
+    }
+  } catch (err) {
+    console.error('Error loading favorite tags:', err);
+  }
+}
+
+// Add query history item to DOM and set up event listeners
+function addQueryHistoryItemToDOM(query, source) {
+  const queryHistoryList = document.getElementById('query-history');
+  if (!queryHistoryList) return;
+  
+  // Check if this exact query+source combination already exists
+  const existing = queryHistoryList.querySelector(`[data-query-value="${query}"][data-query-source="${source}"]`);
+  if (existing) {
+    // Move it to the top by removing and re-adding
+    existing.remove();
+  }
+  
+  const item = document.createElement('div');
+  item.className = 'query-item';
+  item.dataset.queryValue = query;
+  item.dataset.querySource = source;
+  
+  const icon = document.createElement('i');
+  icon.className = 'fas fa-times query-item-icon';
+  
+  const text = document.createElement('span');
+  text.className = 'query-item-text';
+  text.textContent = query;
+  
+  item.appendChild(icon);
+  item.appendChild(text);
+  
+  // Click anywhere on item (except icon) to open new tab
+  item.addEventListener('click', (e) => {
+    if (e.target !== item.querySelector('i')) {
+      openNewQueryTab(query, source);
+    }
+  });
+  
+  // Click X icon to remove from history
+  const xIcon = item.querySelector('i');
+  xIcon.addEventListener('click', (e) => {
+    e.stopPropagation();
+    removeQueryHistoryItemFromDOM(query, source);
+  });
+  
+  // Add to the beginning of the list (most recent first)
+  queryHistoryList.insertBefore(item, queryHistoryList.firstChild);
+}
+
+// Remove query history item from DOM by query+source
+function removeQueryHistoryItemFromDOM(query, source) {
+  const queryHistoryList = document.getElementById('query-history');
+  if (!queryHistoryList) return;
+  
+  const item = queryHistoryList.querySelector(`[data-query-value="${query}"][data-query-source="${source}"]`);
+  if (item) {
+    item.remove();
+  }
+}
+
+function updateFavoriteIcon() {
+  if (window.isViewingDownloadsGallery)
+    return; // Don't show favorite icon in downloads gallery
+  
+  const searchFavoriteBtn = document.getElementById('search-favorite');
+  const searchInput = document.getElementById('search-filter-input');
+  const sourceSelect = document.getElementById('booru-source-select');
+  
+  if (!searchFavoriteBtn || !searchInput || !sourceSelect) return;
+  
+  const query = searchInput.value.trim();
+  const source = sourceSelect.value;
+  
+  // Hide/show the search-favorite element based on input
+  if (!query) {
+    searchFavoriteBtn.style.display = 'none';
+    return;
+  }
+  searchFavoriteBtn.style.display = '';
+  
+  // Check if current query is favorite and update icons
+  isFavoriteTag(query, source).then(isFavorite => {
+    const icons = searchFavoriteBtn.querySelectorAll('i');
+    
+    if (isFavorite) {
+      // Show solid star (remove), hide regular star (add)
+      icons[0].classList.add('hidden'); // fa-regular fa-star
+      icons[1].classList.remove('hidden'); // fa-solid fa-star
+    } else {
+      // Show regular star (add), hide solid star (remove)
+      icons[0].classList.remove('hidden'); // fa-regular fa-star
+      icons[1].classList.add('hidden'); // fa-solid fa-star
+    }
+  });
+}
+
 // Debounce utility for performance
 function debounce(func, wait) {
   return function executedFunction(...args) {
@@ -212,7 +441,6 @@ function updateBooruTabsOrder() {
 async function initBooruTabs() {
   // Enable horizontal scroll with mouse wheel
   const tabsContainer = document.querySelector('.booru-tabs-container');
-  const leftFade = document.getElementById('booru-tabs-left-fade');
   if (tabsContainer) {
     tabsContainer.addEventListener('wheel', function(e) {
       if (e.deltaY !== 0) {
@@ -227,19 +455,6 @@ async function initBooruTabs() {
     tabsContainer.addEventListener('dragover', handleDragOver);
     tabsContainer.addEventListener('drop', handleDrop);
     tabsContainer.addEventListener('dragend', handleDragEnd);
-
-    // Toggle left fade based on scroll position
-    const updateLeftFade = () => {
-      if (!leftFade) return;
-      if (tabsContainer.scrollLeft > 8) {
-        leftFade.classList.add('active');
-      } else {
-        leftFade.classList.remove('active');
-      }
-    };
-    tabsContainer.addEventListener('scroll', updateLeftFade);
-    // Initial state
-    updateLeftFade();
   }
   const addBtn = document.getElementById('add-booru-tab-btn');
   if (addBtn) {
@@ -346,10 +561,12 @@ async function initBooruTabs() {
         }
       }
       updateSuggestion();
+      updateFavoriteIcon();
     });
 
     searchInput.addEventListener('focus', () => {
       updateSuggestion();
+      updateFavoriteIcon();
     });
 
     searchInput.addEventListener('blur', () => {
@@ -366,12 +583,38 @@ async function initBooruTabs() {
           const newName = searchInput.value || 'Search';
           updateTabName(activeTabId, newName);
         }
+        updateFavoriteIcon();
       }
     });
 
     // Sync the scroll position of the suggestion field with the input field
     searchInput.addEventListener('scroll', () => {
       suggestionField.scrollLeft = searchInput.scrollLeft;
+    });
+  }
+  
+  // Setup favorite button click handler
+  const searchFavoriteBtn = document.getElementById('search-favorite');
+  if (searchFavoriteBtn) {
+    searchFavoriteBtn.addEventListener('click', async () => {
+      const searchInput = document.getElementById('search-filter-input');
+      const sourceSelect = document.getElementById('booru-source-select');
+      
+      if (!searchInput || !sourceSelect) return;
+      
+      const query = searchInput.value.trim();
+      const source = sourceSelect.value;
+      
+      if (!query) return;
+      
+      // Check if currently a favorite and toggle
+      const isFavorite = await isFavoriteTag(query, source);
+      
+      if (isFavorite) {
+        await removeFavoriteTag(query, source);
+      } else {
+        await addFavoriteTag(query, source);
+      }
     });
   }
   
@@ -382,6 +625,15 @@ async function initBooruTabs() {
   const hadTabs = await loadBooruTabsFromSession();
   if (!hadTabs) {
     createNewBooruTab('Search', true, '');
+  }
+  
+  // Load all favorite tags into the sidebar
+  await loadAllFavoriteTags();
+  
+  // Clear placeholder history items
+  const queryHistoryList = document.getElementById('query-history');
+  if (queryHistoryList) {
+    queryHistoryList.innerHTML = '';
   }
 }
 
@@ -397,10 +649,33 @@ function addControlChangeListeners() {
   controls.forEach(id => {
     const el = document.getElementById(id);
     if (el) {
-      el.addEventListener('change', () => saveCurrentTabState());
-      el.addEventListener('input', () => saveCurrentTabState());
+      el.addEventListener('change', () => {
+        saveCurrentTabState();
+        // Update favorite icon if source changed
+        if (id === 'booru-source-select') {
+          updateFavoriteIcon();
+        }
+      });
+      el.addEventListener('input', () => {
+        saveCurrentTabState();
+        // Update favorite icon if source changed
+        if (id === 'booru-source-select') {
+          updateFavoriteIcon();
+        }
+      });
     }
   });
+}
+
+function openNewQueryTab(query, source) {
+  if (!query || !source) {
+    console.error('openNewQueryTab: query and source are required');
+    showToast('Error: query and source are required to open a new tab', 'error');
+    return;
+  }
+
+  document.getElementById('booru-source-select').value = source;
+  createNewBooruTab(query, true, query, true);
 }
 
 // Create a new booru tab
@@ -878,6 +1153,9 @@ function switchToTab(tabId) {
         
         // Apply state to controls
         applyState(tab.state);
+        
+        // Update favorite icon based on current search query
+        updateFavoriteIcon();
         
         // If this tab needs initial load, trigger it
         if (tab.needsInitialLoad) {

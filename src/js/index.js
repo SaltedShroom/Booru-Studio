@@ -1775,7 +1775,8 @@ async function saveSession() {
       imageLoadConcurrency: (document.getElementById('image-load-concurrency-input') && parseInt(document.getElementById('image-load-concurrency-input').value, 10)) || 3,
       hqHoverDelay: (document.getElementById('hq-hover-delay-input') && parseInt(document.getElementById('hq-hover-delay-input').value, 10)) ?? 150,
       tallImageScrollSpeedMultiplier: (document.getElementById('tall-image-scroll-speed-multiplier-input') && parseFloat(document.getElementById('tall-image-scroll-speed-multiplier-input').value)) || 1.1,
-      downloadsSortByArtist: window.sessionSortByArtist || false
+      downloadsSortByArtist: window.sessionSortByArtist || false,
+      sidebarOpen: window.sidebarOpen !== undefined ? window.sidebarOpen : true
     };
     const response = await fetch('http://localhost:3001/save-session', {
       method: 'POST',
@@ -1914,6 +1915,15 @@ async function loadSession() {
       window.globalBlacklistTags = window.globalBlacklistTags || [];
     }
     
+    // Restore sidebar open/closed state
+    if (session.sidebarOpen !== undefined) {
+      window.sidebarOpen = session.sidebarOpen;
+    } else {
+      window.sidebarOpen = true; // Default to open
+    }
+    setupSidebarCollapseDrag();
+
+    
     if (window._setLoadingStatus) await window._setLoadingStatus('Restoring session…', 'Restoring generator overrides and settings…');
     // Restore override settings
     if (session.overrideCheckpoint !== undefined) {
@@ -1924,7 +1934,7 @@ async function loadSession() {
 
   // --- download toast helpers ---
   function createDownloadToast(key, title) {
-    const container = document.getElementById('download-toast-container');
+    const container = document.getElementById('download-toast-list');
     const toast = document.createElement('div');
     toast.className = 'download-toast';
     toast.dataset.key = key;

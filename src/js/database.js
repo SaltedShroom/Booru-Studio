@@ -109,6 +109,14 @@ async function initDatabase() {
       createdAt INTEGER,
       displayed_count INTEGER DEFAULT 0
     );
+    
+    CREATE TABLE IF NOT EXISTS favorite_tags (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      query TEXT NOT NULL,
+      source TEXT NOT NULL,
+      created_at INTEGER,
+      UNIQUE(query, source)
+    );
   `);
 
   migrateDownloadedPostsSchema();
@@ -1671,6 +1679,45 @@ function resetAlgorithm() {
   return true;
 }
 
+// Favorite tags functions
+function addFavoriteTag(query, source) {
+  if (!db) throw new Error('Database not initialized');
+  
+  const stmt = db.prepare(`
+    INSERT OR REPLACE INTO favorite_tags (query, source, created_at)
+    VALUES (?, ?, ?)
+  `);
+  stmt.run(query, source, Date.now());
+  
+  // Get the ID of the inserted/replaced row
+  const getStmt = db.prepare('SELECT id FROM favorite_tags WHERE query = ? AND source = ?');
+  const row = getStmt.get(query, source);
+  return row ? row.id : null;
+}
+
+function removeFavoriteTag(query, source) {
+  if (!db) throw new Error('Database not initialized');
+  
+  const stmt = db.prepare('DELETE FROM favorite_tags WHERE query = ? AND source = ?');
+  stmt.run(query, source);
+  return true;
+}
+
+function isFavoriteTag(query, source) {
+  if (!db) throw new Error('Database not initialized');
+  
+  const stmt = db.prepare('SELECT id FROM favorite_tags WHERE query = ? AND source = ? LIMIT 1');
+  const result = stmt.get(query, source);
+  return !!result;
+}
+
+function getAllFavoriteTags() {
+  if (!db) throw new Error('Database not initialized');
+  
+  const stmt = db.prepare('SELECT * FROM favorite_tags ORDER BY created_at DESC');
+  return stmt.all();
+}
+
 module.exports = {
   initDatabase,
   closeDatabase,
@@ -1714,5 +1761,9 @@ module.exports = {
   initializeHomepageSetup,
   removeHomepagePostsUntilDownloaded,
   updateArtistLastCheckedOut,
-  resetAlgorithm
+  resetAlgorithm,
+  addFavoriteTag,
+  removeFavoriteTag,
+  isFavoriteTag,
+  getAllFavoriteTags
 };

@@ -267,7 +267,6 @@
       <div class="booru-tabs-bar">
         <button id="show-homepage-btn" class="booru-tab-btn" title="Keep track of your favorite artists">
           My Feed<i class="fas fa-home"></i>
-          <div class="booru-tabs-left-fade" id="booru-tabs-left-fade"></div>
         </button>
         
         <div id="booru-tabs-container" class="booru-tabs-container">
@@ -305,6 +304,10 @@
                 <input id="search-filter-input" spellcheck="false" type="text" class="input-minimal input-search" placeholder="Search" autocomplete="off" />
                 <input id="search-suggestion" spellcheck="false" class="input-minimal input-search suggestion-field" autocomplete="off" disabled tabindex="-1" />
               </div>
+            </div>
+            <div class="search-favorite-container" id="search-favorite">
+              <i class="fa-regular fa-star"></i>
+              <i class="fa-solid fa-star hidden"></i>
             </div>
             <div class="search-right-fade"></div>
           </div>
@@ -349,71 +352,99 @@
       
       <div id="app-content" class="app-content">
         <div class="booru-content-wrapper">
-          <div class="booru-content-wrapper-inner">
-            <div id="booru-content" class="booru-content">
-              <div id="booru-tab-descriptor" class="booru-tab-descriptor" style="display: none;"></div>
-              <h1 id="booru-total-count"></h1>
-              <div class="gallery-wrapper" id="gallery-wrapper">
-                <div id="booru-gallery" class="booru-gallery"></div>
+          <div class="booru-sidebar">
+            <div class="sidebar-content">
+              <h1>My Queries</h1>
+              <div class="sidebar-queries sidebar-container">
+                <div class="query-container">
+                  <h2>Favorites</h2>
+                  <div class="query-list-container">
+                    <div id="query-favorites" class="query-list"></div>
+                  </div>
+                </div>
+                <hr>
+                <div class="query-container">
+                  <h2>History</h2>
+                  <div class="query-list-container">
+                    <div id="query-history" class="query-list"></div>
+                  </div>
+                </div>
               </div>
-              <div id="booru-loading" class="booru-loading" style="display: none;">
-                <i class="fas fa-circle-notch fa-spin" style="font-size: 48px; color: var(--accent);"></i>
-                <span style="margin-top: 16px;">Loading...</span>
-              </div>
-            </div>
-            <!-- Toast Notification Container -->
-            <div id="toast-container"></div>
-            <!-- Download toasts (bottom-left) -->
-            <div id="download-toast-container">
-              <p id="loading-toast-counter" class="loading-toast-counter hidden"></p>
-              <div id="hq-loading-progress-bar" class="hq-loading-progress-bar hidden">
-                <div id="hq-loading-progress-fill" class="hq-loading-progress-fill"></div>
-              </div>
-            </div>
-            <div class="app-loading-download-container" id="app-loading-download-container">
-              <div id="app-loading-download-count" class="app-loading-download-count"></div>
-              <div class="app-download-size" id="app-download-size">
-                <span class="app-download-size-icon"><i class="fa-solid fa-database"></i> </span>
-                <div id="download-digit-1" class="download-digit odometer" style="display: none;">0</div>
-                <div id="download-digit-2" class="download-digit odometer" style="display: none;">0</div>
-                <div id="download-digit-3" class="download-digit odometer" style="display: none;">0</div>
-                <span id="download-digit-separator-1" class="download-digit-separator" style="display: none;">.</span>
-                <div id="download-digit-4" class="download-digit odometer">0</div>
-                <div id="download-digit-5" class="download-digit odometer">0</div>
-                <div id="download-digit-6" class="download-digit odometer">0</div>
-                <span class="download-digit-separator">.</span>
-                <div id="download-digit-7" class="download-digit odometer">0</div>
-                <div id="download-digit-8" class="download-digit odometer">0</div>
-                <div id="download-digit-9" class="download-digit odometer">0</div>
-                <span id="app-download-size-mb"> MB</span>
+              <h1>Progress Monitor</h1>
+              <div id="download-toast-container" class="sidebar-container">
+                <p id="loading-toast-counter" class="loading-toast-counter hidden">
+                  Loading: <b>0</b> posts <b class="hq-loading-mb">- MB</b>
+                </p>
+                <div id="hq-loading-progress-bar" class="hq-loading-progress-bar hidden">
+                  <div id="hq-loading-progress-fill" class="hq-loading-progress-fill"></div>
+                </div>
+                <div id="download-toast-list" class="download-toast-list"></div>
               </div>
             </div>
-            <div id="booru-gallery-counter" class="booru-gallery-counter"><span id="booru-counter-current">0</span><br><b>/ <span id="booru-counter-total">0</span></b></div>
-          </div>
-          <div id="booru-panel" class="booru-panel">
-            <button id="booru-panel-toggle" class="booru-panel-toggle" title="Pull up panel">
-              Download History
-            </button>
-            <div class="booru-panel-downloads-wrapper">
-              <hr>
-              <table id="booru-panel-downloads" class="booru-panel-downloads">
-                <tr class="booru-header-row">
-                  <th>Preview</th>
-                  <th>ID</th>
-                  <th>URL</th>
-                  <th>Artists</th>
-                  <th>Source</th>
-                  <th>Upload Date</th>
-                  <th>Download Date</th>
-                </tr>
-                <tr class="booru-empty-row"><td></td><td></td><td></td><td></td><td></td><td></td><td></td></tr>
-                <tr class="booru-empty-row"><td></td><td></td><td></td><td></td><td></td><td></td><td></td></tr>
-                <tr class="booru-empty-row"><td></td><td></td><td></td><td></td><td></td><td></td><td></td></tr>
-                <tr class="booru-empty-row"><td></td><td></td><td></td><td></td><td></td><td></td><td></td></tr>
-                <tr class="booru-empty-row"><td></td><td></td><td></td><td></td><td></td><td></td><td></td></tr>
-              </table>
+            <div class="sidebar-collapse-drag" id="sidebar-collapse-drag">
+              <div class="drag-line"></div>
             </div>
           </div>
+          <div class="booru-content-wrapper-outer">
+            <div class="booru-content-wrapper-inner">
+              <div id="booru-content" class="booru-content">
+                <div id="booru-tab-descriptor" class="booru-tab-descriptor" style="display: none;"></div>
+                <h1 id="booru-total-count"></h1>
+                <div class="gallery-wrapper" id="gallery-wrapper">
+                  <div id="booru-gallery" class="booru-gallery"></div>
+                </div>
+                <div id="booru-loading" class="booru-loading" style="display: none;">
+                  <i class="fas fa-circle-notch fa-spin" style="font-size: 48px; color: var(--accent);"></i>
+                  <span style="margin-top: 16px;">Loading...</span>
+                </div>
+              </div>
+              <div id="booru-gallery-counter" class="booru-gallery-counter"><span id="booru-counter-current">0</span><br><b>/ <span id="booru-counter-total">0</span></b></div>
+            </div>
+            <div id="booru-panel" class="booru-panel">
+              <button id="booru-panel-toggle" class="booru-panel-toggle" title="Pull up panel">
+                Download History
+              </button>
+              <div class="booru-panel-downloads-wrapper">
+                <hr>
+                <table id="booru-panel-downloads" class="booru-panel-downloads">
+                  <tr class="booru-header-row">
+                    <th>Preview</th>
+                    <th>ID</th>
+                    <th>URL</th>
+                    <th>Artists</th>
+                    <th>Source</th>
+                    <th>Upload Date</th>
+                    <th>Download Date</th>
+                  </tr>
+                  <tr class="booru-empty-row"><td></td><td></td><td></td><td></td><td></td><td></td><td></td></tr>
+                  <tr class="booru-empty-row"><td></td><td></td><td></td><td></td><td></td><td></td><td></td></tr>
+                  <tr class="booru-empty-row"><td></td><td></td><td></td><td></td><td></td><td></td><td></td></tr>
+                  <tr class="booru-empty-row"><td></td><td></td><td></td><td></td><td></td><td></td><td></td></tr>
+                  <tr class="booru-empty-row"><td></td><td></td><td></td><td></td><td></td><td></td><td></td></tr>
+                </table>
+              </div>
+            </div>
+          </div>
+          <div class="app-loading-download-container" id="app-loading-download-container">
+            <div id="app-loading-download-count" class="app-loading-download-count"></div>
+            <div class="app-download-size" id="app-download-size">
+              <span class="app-download-size-icon"><i class="fa-solid fa-database"></i> </span>
+              <div id="download-digit-1" class="download-digit odometer" style="display: none;">0</div>
+              <div id="download-digit-2" class="download-digit odometer" style="display: none;">0</div>
+              <div id="download-digit-3" class="download-digit odometer" style="display: none;">0</div>
+              <span id="download-digit-separator-1" class="download-digit-separator" style="display: none;">.</span>
+              <div id="download-digit-4" class="download-digit odometer">0</div>
+              <div id="download-digit-5" class="download-digit odometer">0</div>
+              <div id="download-digit-6" class="download-digit odometer">0</div>
+              <span class="download-digit-separator">.</span>
+              <div id="download-digit-7" class="download-digit odometer">0</div>
+              <div id="download-digit-8" class="download-digit odometer">0</div>
+              <div id="download-digit-9" class="download-digit odometer">0</div>
+              <span id="app-download-size-mb"> MB</span>
+            </div>
+          </div>
+          <!-- Toast Notification Container -->
+          <div id="toast-container"></div>
         </div>
       </div>
       
@@ -599,9 +630,9 @@
               <small>When disabled, GIFs display only their first frame in the gallery for better performance</small>
             </div>
             <div class="settings-group">
-              <label class="checkbox-label" for="show-descriptor-enabled">Show homepage descriptor</label>
+              <label class="checkbox-label" for="show-descriptor-enabled">Show MyFeed descriptor</label>
               <input type="checkbox" id="show-descriptor-enabled" class="settings-checkbox" checked>
-              <small>Display the "My Feed" descriptor on the homepage</small>
+              <small>Display the descriptor on the MyFeed Tab</small>
             </div>
             <div class="settings-group">
               <label for="blacklist-tags-input">Global blacklisted tags</label>

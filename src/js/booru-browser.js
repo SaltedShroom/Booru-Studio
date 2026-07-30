@@ -352,6 +352,128 @@ function setupBooruPanelDrag() {
   });
 }
 
+// Setup sidebar drag functionality with snap-to-state
+function setupSidebarCollapseDrag() {
+  const sidebarCollapseDrag = document.getElementById('sidebar-collapse-drag');
+  const sidebarContent = document.querySelector('.booru-sidebar .sidebar-content');
+  const booru_sidebar = document.querySelector('.booru-sidebar');
+  const MIN_WIDTH = 0; // px - minimum width when collapsed
+  const MAX_WIDTH = 200; // px - maximum width when expanded
+  const VELOCITY_THRESHOLD = 0.5; // px/ms - threshold for snap direction based on velocity
+  
+  // Validate DOM elements exist
+  if (!sidebarCollapseDrag || !sidebarContent || !booru_sidebar) {
+    console.warn('Sidebar elements not found, cannot initialize drag');
+    return;
+  }
+  
+  let isDragging = false;
+  let startX = 0;
+  let lastX = 0;
+  let lastTime = 0;
+  let animationFrameId = null;
+  let currentMouseX = 0;
+  let isOpen = window.sidebarOpen !== undefined ? window.sidebarOpen : true;
+  let initialSidebarWidth = 0; // Track starting width for proper drag from any state
+  
+  // Apply initial state when function loads
+  const initialWidth = isOpen ? MAX_WIDTH : MIN_WIDTH;
+  sidebarContent.style.width = initialWidth + 'px';
+  booru_sidebar.style.width = (initialWidth + 10) + 'px';
+  booru_sidebar.style.minWidth = (initialWidth + 10) + 'px';
+  booru_sidebar.style.maxWidth = (initialWidth + 10) + 'px';
+
+  sidebarCollapseDrag.addEventListener('mousedown', (e) => {
+    isDragging = true;
+    startX = e.clientX;
+    lastX = e.clientX;
+    currentMouseX = e.clientX;
+    lastTime = Date.now();
+    
+    // Get current sidebar width in pixels
+    const currentWidth = sidebarContent.style.width;
+    initialSidebarWidth = currentWidth ? parseFloat(currentWidth) : MAX_WIDTH;
+    
+    sidebarCollapseDrag.classList.add('dragging');
+    booru_sidebar.classList.add('dragging');
+    // Start animation loop
+    if (animationFrameId) cancelAnimationFrame(animationFrameId);
+    animationFrameId = requestAnimationFrame(updateSidebarWidth);
+  });
+  
+  document.addEventListener('mousemove', (e) => {
+    if (!isDragging) return;
+    currentMouseX = e.clientX;
+    lastX = e.clientX;
+    lastTime = Date.now();
+  });
+  
+  // Use requestAnimationFrame for smooth 60fps updates
+  function updateSidebarWidth() {
+    if (!isDragging) return;
+    
+    // Calculate drag distance (positive = rightward, expanding)
+    const dragDistance = currentMouseX - startX;
+    
+    // Add to initial width to allow proper dragging from any state
+    const newWidth = Math.max(MIN_WIDTH, Math.min(MAX_WIDTH, initialSidebarWidth + dragDistance));
+    
+    // Update sidebar width immediately during drag
+    sidebarContent.style.width = newWidth + 'px';
+    booru_sidebar.style.width = (newWidth + 10) + 'px'; // Add 10px for the drag handle
+    booru_sidebar.style.minWidth = (newWidth + 10) + 'px';
+    booru_sidebar.style.maxWidth = (newWidth + 10) + 'px';
+    
+    // Continue animation loop
+    animationFrameId = requestAnimationFrame(updateSidebarWidth);
+  }
+  
+  document.addEventListener('mouseup', () => {
+    if (!isDragging) return;
+    isDragging = false;
+    sidebarCollapseDrag.classList.remove('dragging');
+    booru_sidebar.classList.remove('dragging');
+    if (animationFrameId) cancelAnimationFrame(animationFrameId);
+    
+    // Calculate velocity (pixels per millisecond)
+    const dragDistance = currentMouseX - startX;
+    const timeDiff = Date.now() - lastTime + 1; // Avoid division by 0
+    const velocity = dragDistance / timeDiff; // Positive = rightward (expanding)
+    
+    const newWidth = Math.max(MIN_WIDTH, Math.min(MAX_WIDTH, initialSidebarWidth + dragDistance));
+    const normalizedWidth = (newWidth - MIN_WIDTH) / (MAX_WIDTH - MIN_WIDTH); // 0 to 1
+    
+    // Determine target state:
+    // - If > 50% open, snap to open
+    // - If < 50% open, snap to closed
+    // - Velocity can override position if significant
+    let shouldOpen = false;
+    
+    if (Math.abs(velocity) > VELOCITY_THRESHOLD) {
+      // Velocity-based decision (rightward = positive = opening)
+      shouldOpen = velocity > 0;
+    } else {
+      // Position-based decision
+      shouldOpen = normalizedWidth > 0.5;
+    }
+    
+    // Snap to target state
+    isOpen = shouldOpen;
+    window.sidebarOpen = isOpen; // Save state to window for persistence
+    booru_sidebar.classList.remove('dragging');
+    const targetWidth = shouldOpen ? MAX_WIDTH : MIN_WIDTH;
+    sidebarContent.style.width = targetWidth + 'px';
+    booru_sidebar.style.width = (targetWidth + 10) + 'px';
+    booru_sidebar.style.minWidth = (targetWidth + 10) + 'px';
+    booru_sidebar.style.maxWidth = (targetWidth + 10) + 'px';
+    
+    // Save session with new sidebar state
+    if (typeof saveSession === 'function') {
+      saveSession();
+    }
+  });
+}
+
 // Initialize downloads panel (no-op, empty rows already in HTML)
 function initDownloadsPanelEmptyState() {
   // Empty rows are pre-populated in HTML, nothing to do
@@ -531,6 +653,9 @@ setTimeout(() => {
     setupBooruPanelDrag();
     initDownloadsPanelEmptyState();
   }
+  if (document.getElementById('sidebar-collapse-drag')) {
+    setupSidebarCollapseDrag();
+  }
 }, 100);
 
 // Log when the user leaves the app window
@@ -701,7 +826,7 @@ function updateHqLoadingCounter(delta, taskId = null, bytesProgress = null, init
   }
   
   if (_hqLoadingCount === 0) {
-    el.innerHTML = 'Loading: <b>0</b> posts <b class="hq-loading-mb">0.0 MB</b>';
+    el.innerHTML = 'Loading: <b>0</b> posts <b class="hq-loading-mb">- MB</b>';
     LoadingCounterTimeout = setTimeout(() => {
       el.classList.add('hidden');
       if (progressBar) progressBar.classList.add('hidden');
@@ -712,7 +837,7 @@ function updateHqLoadingCounter(delta, taskId = null, bytesProgress = null, init
   }
   
   const countLabel = `<b>${_hqLoadingCount}</b> post${_hqLoadingCount !== 1 ? 's' : ''}`;
-  const mbLabel = _hqTotalBytes > 0 ? ` <b class="hq-loading-mb">${(_hqTotalBytes / (1024 * 1024)).toFixed(1)} MB</b>` : ' <b class="hq-loading-mb">0.0 MB</b>';
+  const mbLabel = _hqTotalBytes > 0 ? ` <b class="hq-loading-mb">${(_hqTotalBytes / (1024 * 1024)).toFixed(1)} MB</b>` : ' <b class="hq-loading-mb">- MB</b>';
   el.innerHTML = `Loading: ${countLabel}${mbLabel}`;
   el.classList.remove('hidden');
   
@@ -1727,6 +1852,98 @@ async function loadDownloadFolder() {
   }
 }
 
+// Optimized single-pass aggregation with caching for analytics charts
+function aggregateChartDataFast(posts) {
+  if (!Array.isArray(posts)) posts = [];
+  
+  // Cache by post count to avoid redundant aggregation
+  if (!window._analyticsCache) {
+    window._analyticsCache = { data: null, postCount: 0 };
+  }
+  
+  const cache = window._analyticsCache;
+  if (cache.data && cache.postCount === posts.length) {
+    return cache.data;
+  }
+
+  const activityCounts = {};
+  const sourceArtistCounts = {};
+  const fileTypeCounts = {};
+  const artistTotals = {};
+  const sourceTotals = {};
+  const sourceSet = new Set();
+  const artistSet = new Set();
+
+  // Single pass through all posts
+  for (const post of posts) {
+    // Activity aggregation (by date)
+    if (post.downloadedAt) {
+      const dateObj = new Date(post.downloadedAt);
+      const dateStr = dateObj.toLocaleDateString('en-US', { year: 'numeric', month: '2-digit', day: '2-digit' });
+      activityCounts[dateStr] = (activityCounts[dateStr] || 0) + 1;
+    }
+
+    // Source & Artist aggregation
+    const source = (post.source || 'Unknown').toString();
+    const artist = Array.isArray(post.artist) ? post.artist.join(' ') : (post.artist || post.author || 'Unknown');
+    
+    sourceSet.add(source);
+    artistSet.add(artist);
+    
+    if (!sourceArtistCounts[source]) sourceArtistCounts[source] = {};
+    sourceArtistCounts[source][artist] = (sourceArtistCounts[source][artist] || 0) + 1;
+    
+    artistTotals[artist] = (artistTotals[artist] || 0) + 1;
+    sourceTotals[source] = (sourceTotals[source] || 0) + 1;
+
+    // File type aggregation (extract from URL without expensive new URL() constructor)
+    if (post.imageUrl || post.originalImageUrl) {
+      const url = (post.imageUrl || post.originalImageUrl).toLowerCase();
+      const match = url.match(/\.([a-z0-9]{1,6})(?:[?#]|$)/i);
+      const ext = match ? match[1].toLowerCase() : 'unknown';
+      fileTypeCounts[ext] = (fileTypeCounts[ext] || 0) + 1;
+    }
+  }
+
+  // Sort activity dates chronologically
+  const sortedDates = Object.keys(activityCounts).sort((a, b) => {
+    const [aM, aD, aY] = a.split('/').map(Number);
+    const [bM, bD, bY] = b.split('/').map(Number);
+    return new Date(aY, aM - 1, aD) - new Date(bY, bM - 1, bD);
+  });
+
+  // Sort sources and artists by frequency
+  const sources = Array.from(sourceSet).sort((a, b) => (sourceTotals[b] || 0) - (sourceTotals[a] || 0));
+  const artists = Array.from(artistSet).sort((a, b) => (artistTotals[b] || 0) - (artistTotals[a] || 0));
+
+  // Sort file types by frequency
+  const fileTypes = Object.keys(fileTypeCounts).sort((a, b) => fileTypeCounts[b] - fileTypeCounts[a]);
+
+  const result = {
+    activityData: {
+      dates: sortedDates,
+      counts: sortedDates.map(date => activityCounts[date])
+    },
+    statsData: {
+      sources,
+      artists,
+      sourceArtistCounts,
+      artistTotals,
+      sourceTotals
+    },
+    fileTypeData: {
+      types: fileTypes,
+      counts: fileTypeCounts
+    }
+  };
+
+  // Cache the result
+  cache.data = result;
+  cache.postCount = posts.length;
+
+  return result;
+}
+
 function selectDownloadsSidebarTab(tab) {
   activeDownloadsSidebarTab = tab;
   localStorage.setItem('downloadsSidebarSelectedTab', tab);
@@ -1780,7 +1997,7 @@ function renderDownloadsSidebar() {
 
 function renderDownloadsAnalytics(sidebar) {
   const downloadTitle = document.createElement('h3');
-  downloadTitle.textContent = 'SEARCH ANALYTICS';
+  downloadTitle.textContent = 'DOWNLOAD ANALYTICS';
   sidebar.appendChild(downloadTitle);
 
   const activityBlock = document.createElement('div');
@@ -2515,53 +2732,51 @@ function renderDownloadsStatsChart() {
   const canvas = document.getElementById('downloads-source-artist-chart');
   if (!canvas) return;
 
+  // Always use ALL downloaded posts, not filtered by search
+  const posts = Array.isArray(window.allDownloadedPosts) ? window.allDownloadedPosts : [];
+  
+  // Initialize cache if needed
+  if (!window._chartsRenderCache) {
+    window._chartsRenderCache = {};
+  }
+  
+  // Skip re-render only if:
+  // 1. Post count hasn't changed
+  // 2. Chart exists AND is connected to the current canvas element
+  if (window._chartsRenderCache.statsChartPostCount === posts.length && 
+      window.downloadsSourceArtistChart && 
+      window.downloadsSourceArtistChart.canvas === canvas) {
+    return;
+  }
+  
+  // Destroy old chart if it exists
   if (window.downloadsSourceArtistChart) {
     window.downloadsSourceArtistChart.destroy();
     window.downloadsSourceArtistChart = null;
   }
 
-  const posts = Array.isArray(window.allDownloadedPosts) ? window.allDownloadedPosts : [];
   if (!posts.length) {
     const ctx = canvas.getContext('2d');
     if (ctx) {
       ctx.clearRect(0, 0, canvas.width, canvas.height);
     }
+    window._chartsRenderCache.statsChartPostCount = 0;
     return;
   }
+  
+  // Update cache with current post count
+  window._chartsRenderCache.statsChartPostCount = posts.length;
 
-  const sourceArtistCounts = {};
-  posts.forEach(post => {
-    const source = (post.source || 'Unknown Source').toString();
-    const artist = ((post.artist || post.author || 'Unknown Artist') || 'Unknown Artist').toString();
-    sourceArtistCounts[source] = sourceArtistCounts[source] || {};
-    sourceArtistCounts[source][artist] = (sourceArtistCounts[source][artist] || 0) + 1;
-  });
-
-  const sourceEntries = Object.entries(sourceArtistCounts)
-    .map(([source, artists]) => ({
-      source,
-      total: Object.values(artists).reduce((sum, count) => sum + count, 0),
-      artists
-    }))
-    .sort((a, b) => b.total - a.total);
-
-  const sources = sourceEntries.map(entry => entry.source);
-  const artistTotals = {};
-  sourceEntries.forEach(entry => {
-    Object.entries(entry.artists).forEach(([artist, count]) => {
-      artistTotals[artist] = (artistTotals[artist] || 0) + count;
-    });
-  });
-
-  const sortedArtists = Object.keys(artistTotals)
-    .sort((a, b) => artistTotals[b] - artistTotals[a]);
+  // Use optimized aggregation with caching - only aggregates once
+  const aggregated = aggregateChartDataFast(posts);
+  const { sources, artists, sourceArtistCounts, artistTotals } = aggregated.statsData;
 
   const palette = [
     '#ff5a5f', '#ffb400', '#00a699', '#7b0051', '#3b8ea5', '#ff6f61', '#7fc8a9', '#f5a623', '#6f4a8e', '#ef476f',
     '#06d6a0', '#118ab2', '#ffd166', '#073b4c', '#ff9f1c', '#2ec4b6', '#e71d36', '#3a86ff', '#ffbe0b', '#8ac926'
   ];
 
-  const datasets = sortedArtists.map((artist, index) => ({
+  const datasets = artists.map((artist, index) => ({
     label: artist,
     data: sources.map(source => sourceArtistCounts[source][artist] || 0),
     backgroundColor: palette[index % palette.length],
@@ -2619,40 +2834,50 @@ function renderDownloadsActivityChart() {
   const canvas = document.getElementById('downloads-activity-chart');
   if (!canvas) return;
 
+  // Always use ALL downloaded posts, not filtered by search
+  const posts = Array.isArray(window.allDownloadedPosts) ? window.allDownloadedPosts : [];
+  
+  // Initialize cache if needed
+  if (!window._chartsRenderCache) {
+    window._chartsRenderCache = {};
+  }
+  
+  // Skip re-render only if:
+  // 1. Post count hasn't changed
+  // 2. Chart exists AND is connected to the current canvas element
+  if (window._chartsRenderCache.activityChartPostCount === posts.length && 
+      window.downloadsActivityChart && 
+      window.downloadsActivityChart.canvas === canvas) {
+    return;
+  }
+  
+  // Destroy old chart if it exists
   if (window.downloadsActivityChart) {
     window.downloadsActivityChart.destroy();
     window.downloadsActivityChart = null;
   }
 
-  const posts = Array.isArray(window.allDownloadedPosts) ? window.allDownloadedPosts : [];
   if (!posts.length) {
     const ctx = canvas.getContext('2d');
     if (ctx) {
       ctx.clearRect(0, 0, canvas.width, canvas.height);
     }
+    window._chartsRenderCache.activityChartPostCount = 0;
     return;
   }
+  
+  // Update cache with current post count
+  window._chartsRenderCache.activityChartPostCount = posts.length;
 
-  // Group downloads by date (YYYY-MM-DD)
-  const dateCounts = {};
-  posts.forEach(post => {
-    if (post.downloadedAt) {
-      const date = new Date(post.downloadedAt);
-      const dateStr = date.toISOString().split('T')[0]; // Format: YYYY-MM-DD
-      dateCounts[dateStr] = (dateCounts[dateStr] || 0) + 1;
-    }
-  });
-
-  // Sort dates from newest to oldest
-  const sortedDates = Object.keys(dateCounts).sort((a, b) => {
-    return new Date(b) - new Date(a);
-  });
+  // Use optimized aggregation with caching - only aggregates once
+  const aggregated = aggregateChartDataFast(posts);
+  const { dates: sortedDates, counts: activityCounts } = aggregated.activityData;
 
   const chartData = {
     labels: sortedDates,
     datasets: [{
       label: 'Downloads',
-      data: sortedDates.map(date => dateCounts[date]),
+      data: activityCounts,
       backgroundColor: '#3b8ea5',
       borderWidth: 0
     }]
@@ -2700,38 +2925,41 @@ function renderDownloadsFileTypeChart() {
   const canvas = document.getElementById('downloads-filetype-chart');
   if (!canvas) return;
 
+  const posts = Array.isArray(window.allDownloadedPosts) ? window.allDownloadedPosts : [];
+  
+  // Initialize cache if needed
+  if (!window._chartsRenderCache) {
+    window._chartsRenderCache = {};
+  }
+  
+  // Skip re-render only if:
+  // 1. Post count hasn't changed
+  // 2. Chart exists AND is connected to the current canvas element
+  if (window._chartsRenderCache.fileTypeChartPostCount === posts.length && 
+      window.downloadsFileTypeChart && 
+      window.downloadsFileTypeChart.canvas === canvas) {
+    return;
+  }
+  
+  // Destroy old chart if it exists
   if (window.downloadsFileTypeChart) {
     window.downloadsFileTypeChart.destroy();
     window.downloadsFileTypeChart = null;
   }
 
-  const posts = Array.isArray(window.allDownloadedPosts) ? window.allDownloadedPosts : [];
   if (!posts.length) {
     const ctx = canvas.getContext('2d');
     if (ctx) ctx.clearRect(0, 0, canvas.width, canvas.height);
+    window._chartsRenderCache.fileTypeChartPostCount = 0;
     return;
   }
+  
+  // Update cache with current post count
+  window._chartsRenderCache.fileTypeChartPostCount = posts.length;
 
-  const typeCounts = {};
-  posts.forEach(post => {
-    const url = post.originalImageUrl || post.imageUrl || '';
-    let ext = '';
-    try {
-      const pathname = new URL(url).pathname;
-      ext = pathname.split('/').pop().split('.').pop().toLowerCase();
-    } catch (e) {
-      ext = url.split('/').pop().split('.').pop().toLowerCase();
-    }
-    if (!ext || ext.length > 6 || ext.includes('/') || ext.includes('?')) {
-      ext = 'unknown';
-    }
-    if (ext === url) {
-      ext = 'unknown';
-    }
-    typeCounts[ext] = (typeCounts[ext] || 0) + 1;
-  });
-
-  const labels = Object.keys(typeCounts).sort((a, b) => typeCounts[b] - typeCounts[a]);
+  // Use optimized aggregation with caching - only aggregates once
+  const aggregated = aggregateChartDataFast(posts);
+  const { types: labels, counts: typeCounts } = aggregated.fileTypeData;
   const data = labels.map(label => typeCounts[label]);
   const total = data.reduce((sum, value) => sum + value, 0);
   const palette = [
@@ -3108,7 +3336,7 @@ async function showHomepage(forceReload = false) {
 
   const aiFilterBtn = document.getElementById('ai-filter-toggle');
   if (aiFilterBtn) {
-    aiFilterBtn.remove();
+    aiFilterBtn.style.display = 'none';
   }
 
   const controlSectionLimit = document.querySelector('.control-section-limit');
@@ -3202,12 +3430,13 @@ function updateControlBar(viewMode = 'normal_tab') {
   const downloadsDateSortControl = controlBar.querySelector('.control-section-downloads-date-order');
   const downloadsMediaTypeControl = controlBar.querySelector('.control-section-downloads-media-type');
   const resetAlgorithmSection = controlBar.querySelector('.control-section-reset-algorithm');
+  const searchFavorite = document.getElementById('search-favorite');
 
   const booruControlLeft = controlBar.querySelector('.booru-control-left');
   const booruControlRight = controlBar.querySelector('.booru-control-right');
 
   // Step 1: Hide all controls by default
-  [primarySection, searchControl, sortControl, limitControl, sliderControl, artistControl, sourceControl, booruTabDescriptor, downloadsDateSortControl, downloadsMediaTypeControl, resetAlgorithmSection]
+  [primarySection, searchControl, searchFavorite, sortControl, limitControl, sliderControl, artistControl, sourceControl, booruTabDescriptor, downloadsDateSortControl, downloadsMediaTypeControl, resetAlgorithmSection]
     .forEach(control => {
       if (control) control.style.display = 'none';
     });
@@ -3235,6 +3464,7 @@ function updateControlBar(viewMode = 'normal_tab') {
         booruControlRight.style.display = '';
         booruControlRight.querySelectorAll('*').forEach(el => el.style.display = '');
       }
+      if (searchFavorite) searchFavorite.style.display = '';
       break;
 
     case 'downloads':
@@ -3320,7 +3550,7 @@ function updateControlBar(viewMode = 'normal_tab') {
           booruTabDescriptor.style.display = '';
         else 
           booruTabDescriptor.style.display = 'none';
-        booruTabDescriptor.innerHTML = '<button id="close-booru-descriptor" title="Hide descriptor"><i class="fa-solid fa-x"></i></button><h1>My Feed</h1><p>Discover the latest posts from artists you enjoy.</p><p>Recommendations are influenced by your download ratio of said artists.</p><p>This way, you can quickly find new content you may have missed.</p>';
+        booruTabDescriptor.innerHTML = '<button id="close-booru-descriptor" title="Hide descriptor"><i class="fa-solid fa-x"></i></button><h1>My Feed</h1><p>Discover the new posts, you may have missed, from artists you enjoy.</p><p>Recommendations are influenced by your download ratio of said artists.</p><p>Press the "Reset Algorithm" button if your feed is empty or not personalized enough.</p>';
         
         // Add click handler to close button
         const closeBtn = booruTabDescriptor.querySelector('#close-booru-descriptor');
@@ -3395,13 +3625,14 @@ function updateControlBar(viewMode = 'normal_tab') {
       // Scroller: primary buttons only (reload + ai-filter)
       if (primarySection) {
         primarySection.style.display = '';
-        const reloadBtn = primarySection.querySelector('#reload-booru-btn');
-        const aiFilterBtn = primarySection.querySelector('#ai-filter-toggle');
+        const reloadBtn = document.getElementById('reload-booru-btn');
+        const aiFilterBtn = document.getElementById('ai-filter-toggle');
         primarySection.querySelectorAll('button').forEach(btn => {
           btn.style.display = 'none';
         });
         if (reloadBtn) reloadBtn.style.display = '';
         if (aiFilterBtn) aiFilterBtn.style.display = '';
+        console.log(aiFilterBtn);
       }
 
       // Hide all right controls (direct children only)
@@ -3928,6 +4159,17 @@ async function loadHomepagePosts(fetchNew = false, append = false) {
         }
       }
       
+      // Check if no posts are available
+      if (newPosts.length === 0) {
+        showToast('No posts available', 'info');
+        if (booruGallery) {
+          if (!booruGallery.innerHTML || booruGallery.innerHTML.trim() === '') {
+            booruGallery.innerHTML = `<div style="display: flex; align-items: center; justify-content: center; height: 300px; flex-direction: column; color: var(--text-secondary); font-size: 18px; text-align: center;"><i class="fas fa-inbox" style="font-size: 48px; margin-bottom: 10px;"></i><div>No posts available</div></div>`;
+          }
+        }
+        return;
+      }
+      
       // Append to existing booruPosts array
       window.booruPosts = window.booruPosts.concat(newPosts);
       window.totalResultCount = window.booruPosts.length;
@@ -3980,9 +4222,9 @@ async function loadHomepagePosts(fetchNew = false, append = false) {
     
     if (!response.ok) {
       const errMsg = (typeof allPosts === 'object' && allPosts.error) ? allPosts.error : 'Unknown error';
-      showToast(`Error loading posts: ${errMsg}`, 'info');
+      showToast(`Error loading posts: ${errMsg}`, 'error');
       if (booruGallery) {
-        booruGallery.innerHTML = '';
+        booruGallery.innerHTML = `<div style="display: flex; align-items: center; justify-content: center; height: 300px; flex-direction: column; color: var(--text-secondary); font-size: 18px; text-align: center;"><i class="fas fa-exclamation-circle" style="font-size: 48px; margin-bottom: 10px;"></i><div>Error loading posts</div><div style="font-size: 14px; margin-top: 5px;">${errMsg}</div></div>`;
       }
       return;
     }
@@ -4000,6 +4242,21 @@ async function loadHomepagePosts(fetchNew = false, append = false) {
       if (!post.imageUrl) {
         post.imageUrl = post.file_url || post.sample_url || post.preview_url;
       }
+    }
+    
+    // Check if no posts are available
+    if (posts.length === 0) {
+      if (booruGallery) {
+        booruGallery.innerHTML = `<div style="display: flex; align-items: center; justify-content: center; height: 300px; flex-direction: column; color: var(--text-secondary); font-size: 18px; text-align: center;"><div>No posts available</div></div>`;
+      }
+      window.booruPosts = [];
+      window.totalResultCount = 0;
+      window.hasMoreResults = false;
+      if (booruCounter) {
+        booruCounter.innerHTML = `HOMEPAGE <b>0</b>`;
+        booruCounter.style.display = 'block';
+      }
+      return;
     }
     
     // Clear gallery
@@ -4036,7 +4293,16 @@ async function loadHomepagePosts(fetchNew = false, append = false) {
     showToast(`Error loading posts: ${error.message}`, 'error');
     const booruGallery = document.getElementById('booru-gallery');
     if (booruGallery && !append) {
-      booruGallery.innerHTML = '';
+      if (booruGallery) {
+        booruGallery.innerHTML = `<div style="display: flex; align-items: center; justify-content: center; height: 300px; flex-direction: column; color: var(--text-secondary); font-size: 18px; text-align: center;"><div>No posts available</div></div>`;
+      }
+      window.booruPosts = [];
+      window.totalResultCount = 0;
+      window.hasMoreResults = false;
+      if (booruCounter) {
+        booruCounter.innerHTML = `HOMEPAGE <b>0</b>`;
+        booruCounter.style.display = 'block';
+      }
     }
   }
 }
@@ -4194,6 +4460,7 @@ function initBooruBrowser() {
 
         scrollerContent = document.createElement('div');
         scrollerContent.id = 'scroller-content';
+        scrollerContent.style.cssText = 'z-index: 800; position: absolute; top: 0; left: 0; width: 100%; height: 100%;';
         scrollerContent.className = 'shorts-scroller';
 
         // Create main container
@@ -6286,6 +6553,19 @@ async function loadBooruImages(append = false) {
   window.isViewingDownloadsGallery = false;
   window.isViewingHomepage = false;
   
+  // Add current query to history (if not appending and query is not empty)
+  if (!append) {
+    const searchInput = document.getElementById('search-filter-input');
+    const sourceSelect = document.getElementById('booru-source-select');
+    if (searchInput && sourceSelect) {
+      const query = searchInput.value.trim();
+      const source = sourceSelect.value;
+      if (query && source && typeof addQueryHistoryItemToDOM === 'function') {
+        addQueryHistoryItemToDOM(query, source);
+      }
+    }
+  }
+  
   // Remove downloads-specific controls
   const downloadsDateSortSection = document.querySelector('.control-section-downloads-date-order');
   if (downloadsDateSortSection) downloadsDateSortSection.remove();
@@ -7458,7 +7738,11 @@ function renderBooruGallery(posts, append = true, addSeparators = true) {
     }
 
     if (isDownloadsGallery) {
-      renderDownloadsSidebar();
+      // Only render sidebar on initial gallery load, not on every search
+      // The sidebar persists and doesn't need to be recreated during searches
+      if (!document.getElementById('downloads-sidebar')) {
+        renderDownloadsSidebar();
+      }
       updateArtistFilter();
       updateSourceFilter();
     }

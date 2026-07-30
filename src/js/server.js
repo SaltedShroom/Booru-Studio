@@ -2592,6 +2592,92 @@ const server = isWorkerMode ? null : http.createServer((req, res) => {
     return;
   }
 
+  // Favorite tags - Get all favorites (must check this FIRST since it starts with /api/db/favorite-tags)
+  if (req.method === 'GET' && req.url.startsWith('/api/db/favorite-tags-all')) {
+    try {
+      const favorites = database.getAllFavoriteTags();
+      res.writeHead(200, { 'Content-Type': 'application/json' });
+      res.end(JSON.stringify({ favorites }));
+    } catch (error) {
+      res.writeHead(500, { 'Content-Type': 'application/json' });
+      res.end(JSON.stringify({ error: error.message }));
+    }
+    return;
+  }
+
+  // Favorite tags - Check if a tag is favorite
+  if (req.method === 'GET' && req.url.startsWith('/api/db/favorite-tags')) {
+    try {
+      const url = new URL(req.url, 'http://localhost:3001');
+      const query = url.searchParams.get('query');
+      const source = url.searchParams.get('source');
+      
+      if (!query || !source) {
+        res.writeHead(400, { 'Content-Type': 'application/json' });
+        res.end(JSON.stringify({ error: 'query and source parameters required' }));
+        return;
+      }
+      
+      const exists = database.isFavoriteTag(query, source);
+      res.writeHead(200, { 'Content-Type': 'application/json' });
+      res.end(JSON.stringify({ exists }));
+    } catch (error) {
+      res.writeHead(500, { 'Content-Type': 'application/json' });
+      res.end(JSON.stringify({ error: error.message }));
+    }
+    return;
+  }
+
+  // Favorite tags - Add a new favorite tag
+  if (req.method === 'POST' && req.url === '/api/db/favorite-tags') {
+    let body = '';
+    req.on('data', chunk => body += chunk.toString());
+    req.on('end', () => {
+      try {
+        const { query, source } = JSON.parse(body);
+        if (!query || !source) {
+          res.writeHead(400, { 'Content-Type': 'application/json' });
+          res.end(JSON.stringify({ error: 'query and source are required' }));
+          return;
+        }
+        
+        const id = database.addFavoriteTag(query, source);
+        res.writeHead(200, { 'Content-Type': 'application/json' });
+        res.end(JSON.stringify({ success: true, id }));
+      } catch (error) {
+        console.error('❌ POST /api/db/favorite-tags error:', error.message);
+        res.writeHead(500, { 'Content-Type': 'application/json' });
+        res.end(JSON.stringify({ error: error.message }));
+      }
+    });
+    return;
+  }
+
+  // Favorite tags - Remove a favorite tag
+  if (req.method === 'DELETE' && req.url === '/api/db/favorite-tags') {
+    let body = '';
+    req.on('data', chunk => body += chunk.toString());
+    req.on('end', () => {
+      try {
+        const { query, source } = JSON.parse(body);
+        if (!query || !source) {
+          res.writeHead(400, { 'Content-Type': 'application/json' });
+          res.end(JSON.stringify({ error: 'query and source are required' }));
+          return;
+        }
+        
+        database.removeFavoriteTag(query, source);
+        res.writeHead(200, { 'Content-Type': 'application/json' });
+        res.end(JSON.stringify({ success: true }));
+      } catch (error) {
+        console.error('❌ DELETE /api/db/favorite-tags error:', error.message);
+        res.writeHead(500, { 'Content-Type': 'application/json' });
+        res.end(JSON.stringify({ error: error.message }));
+      }
+    });
+    return;
+  }
+
   // Save setting
   if (req.method === 'POST' && req.url === '/api/db/settings') {
     let body = '';
