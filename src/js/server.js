@@ -1564,7 +1564,9 @@ const server = isWorkerMode ? null : http.createServer((req, res) => {
           req.on('error', reject);
         });
 
-        const artists = Array.isArray(artistResponse) ? artistResponse : [];
+        let allArtists = Array.isArray(artistResponse) ? artistResponse : [];
+        const artists = allArtists.filter(a => a.artist !== 'Unknown');
+        const filteredOutCount = allArtists.length - artists.length;
         console.log(`✓ Fetched ${artists.length} artists (${Date.now() - artistFetchStart}ms)`);
         
         if (!artists || artists.length === 0) {

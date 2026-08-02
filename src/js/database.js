@@ -135,6 +135,9 @@ async function initDatabase() {
     CREATE INDEX IF NOT EXISTS idx_downloaded_artists_last_download ON downloaded_artists(last_download_date);
   `);
   
+  // Initialize downloaded_artists from posts if it's empty but posts exist
+  initializeDownloadedArtistsFromPosts();
+  
   // Clean up artists with 0 downloaded posts
   cleanupZeroCountArtists();
   
@@ -190,6 +193,64 @@ function migrateDownloadedPostsSchema() {
     DROP TABLE downloaded_posts;
     ALTER TABLE downloaded_posts_temp RENAME TO downloaded_posts;
   `);
+}
+
+// Initialize downloaded_artists from downloaded_posts if it's empty but posts exist
+function initializeDownloadedArtistsFromPosts() {
+  if (!db) throw new Error('Database not initialized');
+  
+  try {
+    // Check if downloaded_artists table is empty
+    const artistCount = db.prepare('SELECT COUNT(*) as count FROM downloaded_artists').get();
+    
+    if (artistCount.count > 0) {
+      // Table already has data, no need to initialize
+      return;
+    }
+    
+    // Check if downloaded_posts has any data
+    const postCount = db.prepare('SELECT COUNT(*) as count FROM downloaded_posts').get();
+    
+    if (postCount.count === 0) {
+      // No posts to initialize from
+      return;
+    }
+    
+    // Initialize downloaded_artists from downloaded_posts
+    console.log('⏳ Initializing downloaded_artists from downloaded_posts...');
+    
+    const result = db.prepare(`
+      INSERT OR REPLACE INTO downloaded_artists (artist, post_count, last_download_date, last_download_source, existing_count, score, last_checked_out)
+      WITH ranked_posts AS (
+        SELECT 
+          artist,
+          source,
+          created_at,
+          downloaded_at,
+          ROW_NUMBER() OVER (PARTITION BY artist ORDER BY COALESCE(created_at, downloaded_at) DESC, downloaded_at DESC) as rn,
+          COUNT(*) OVER (PARTITION BY artist) as post_count
+        FROM downloaded_posts
+        WHERE artist IS NOT NULL AND artist != ''
+      )
+      SELECT 
+        artist,
+        post_count,
+        COALESCE(created_at, downloaded_at) as last_download_date,
+        source as last_download_source,
+        NULL,
+        NULL,
+        NULL
+      FROM ranked_posts
+      WHERE rn = 1
+    `).run();
+    
+    const insertedCount = db.prepare('SELECT COUNT(*) as count FROM downloaded_artists').get();
+    console.log(`✓ Downloaded artists initialized: ${insertedCount.count} artists`);
+    
+  } catch (error) {
+    console.error('❌ initializeDownloadedArtistsFromPosts FAILED:', error.message);
+    throw error;
+  }
 }
 
 // Close database connection

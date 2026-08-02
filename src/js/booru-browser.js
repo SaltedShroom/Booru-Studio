@@ -791,6 +791,8 @@ if (localStorage.getItem('downloadsSidebarSelectedTab')) {
   activeDownloadsSidebarTab = localStorage.getItem('downloadsSidebarSelectedTab');
 }
 
+let progressFillResetTimeout = null;
+
 function updateHqLoadingCounter(delta, taskId = null, bytesProgress = null, initialBytes = null) {
   if (LoadingCounterTimeout) {
     clearTimeout(LoadingCounterTimeout);
@@ -832,6 +834,9 @@ function updateHqLoadingCounter(delta, taskId = null, bytesProgress = null, init
       if (progressBar) progressBar.classList.add('hidden');
       _hqBytesRemaining.clear();
       _hqTotalBytesInitial = 0;
+      progressFillResetTimeout = setTimeout(() => {
+        progressFill.style.width = '0%';
+      }, 2000);
     }, 500);
     return;
   }
@@ -844,11 +849,14 @@ function updateHqLoadingCounter(delta, taskId = null, bytesProgress = null, init
   // Update progress bar
   if (progressBar && progressFill) {
     progressBar.classList.remove('hidden');
-    progressFill.style.width = '0%';
+    clearTimeout(progressFillResetTimeout);
+    progressFillResetTimeout = null;
     if (_hqTotalBytesInitial > 0) {
       const bytesLoaded = _hqTotalBytesInitial - _hqTotalBytes;
       const progressPercent = Math.max(0, Math.min(100, (bytesLoaded / _hqTotalBytesInitial) * 100));
       progressFill.style.width = progressPercent + '%';
+    } else {
+      progressFill.style.width = '0%';
     }
   } else {
     console.warn('[updateHqLoadingCounter] Progress bar elements missing - progressBar:', !!progressBar, 'progressFill:', !!progressFill);
@@ -3310,10 +3318,6 @@ async function showHomepage(forceReload = false) {
 
   const booruGallery = document.getElementById('booru-gallery');
 
-  const existingSidebar = document.getElementById('downloads-sidebar');
-  if (existingSidebar)
-    existingSidebar.remove();
-
   const downloadsShuffleBtn = document.getElementById('downloads-shuffle-btn');
   if (downloadsShuffleBtn) {
     downloadsShuffleBtn.remove();
@@ -3321,27 +3325,12 @@ async function showHomepage(forceReload = false) {
 
   const downloadsArtistSortBtn = document.getElementById('downloads-sort-artist-btn');
   if (downloadsArtistSortBtn) {
-    downloadsArtistSortBtn.remove();
-  }
-
-  const downloadsDateSortBtn = document.querySelector('.control-section-artist');
-  if (downloadsDateSortBtn) {
-    downloadsDateSortBtn.remove();
-  }
-
-  const dateSortControl = document.querySelector('.control-section-sort');
-  if (dateSortControl) {
-    dateSortControl.remove();
+    downloadsArtistSortBtn.style.display = 'none';
   }
 
   const aiFilterBtn = document.getElementById('ai-filter-toggle');
   if (aiFilterBtn) {
     aiFilterBtn.style.display = 'none';
-  }
-
-  const controlSectionLimit = document.querySelector('.control-section-limit');
-  if (controlSectionLimit) {
-    controlSectionLimit.remove();
   }
   
   // Hide scroller if visible
@@ -3431,12 +3420,14 @@ function updateControlBar(viewMode = 'normal_tab') {
   const downloadsMediaTypeControl = controlBar.querySelector('.control-section-downloads-media-type');
   const resetAlgorithmSection = controlBar.querySelector('.control-section-reset-algorithm');
   const searchFavorite = document.getElementById('search-favorite');
+  const aiFilterBtn = primarySection.querySelector('#ai-filter-toggle');
+  const galleryQualityToggle = controlBar.querySelector('#gallery-quality-toggle');
 
   const booruControlLeft = controlBar.querySelector('.booru-control-left');
   const booruControlRight = controlBar.querySelector('.booru-control-right');
 
   // Step 1: Hide all controls by default
-  [primarySection, searchControl, searchFavorite, sortControl, limitControl, sliderControl, artistControl, sourceControl, booruTabDescriptor, downloadsDateSortControl, downloadsMediaTypeControl, resetAlgorithmSection]
+  [primarySection, aiFilterBtn, galleryQualityToggle, searchControl, searchFavorite, sortControl, limitControl, sliderControl, artistControl, sourceControl, booruTabDescriptor, downloadsDateSortControl, downloadsMediaTypeControl, resetAlgorithmSection]
     .forEach(control => {
       if (control) control.style.display = 'none';
     });
@@ -3460,6 +3451,8 @@ function updateControlBar(viewMode = 'normal_tab') {
       if (sortControl) sortControl.style.display = '';
       if (limitControl) limitControl.style.display = '';
       if (sliderControl) sliderControl.style.display = '';
+      if (aiFilterBtn) aiFilterBtn.style.display = '';
+      if (galleryQualityToggle) galleryQualityToggle.style.display = '';
       if (booruControlRight) {
         booruControlRight.style.display = '';
         booruControlRight.querySelectorAll('*').forEach(el => el.style.display = '');
@@ -3516,16 +3509,13 @@ function updateControlBar(viewMode = 'normal_tab') {
       // Show only specific buttons in primary section
       if (primarySection) {
         const reloadBtn = primarySection.querySelector('#reload-booru-btn');
-        const aiFilterBtn = primarySection.querySelector('#ai-filter-toggle');
         primarySection.querySelectorAll('button').forEach(btn => {
           btn.style.display = 'none';
         });
         if (reloadBtn) reloadBtn.style.display = '';
-        if (aiFilterBtn) aiFilterBtn.style.display = '';
       }
 
       // Hide gallery quality toggle and sort section
-      const galleryQualityToggle = controlBar.querySelector('#gallery-quality-toggle');
       if (galleryQualityToggle) galleryQualityToggle.style.display = 'none';
       if (sortControl) sortControl.style.display = 'none';
 
@@ -3543,6 +3533,7 @@ function updateControlBar(viewMode = 'normal_tab') {
       // Homepage: only primary buttons (reload + ai-filter), hide search and other controls
       if (primarySection) primarySection.style.display = '';
       if (sliderControl) sliderControl.style.display = '';
+      if (resetAlgorithmSection) resetAlgorithmSection.style.display = '';
       if (booruTabDescriptor) {
         // Check setting before displaying
         const showDescriptor = getSettingForDescriptor();
@@ -3567,23 +3558,22 @@ function updateControlBar(viewMode = 'normal_tab') {
         }
       }
       
-      const galleryQualityBtn = controlBar.querySelector('#gallery-quality-toggle');
-      if (galleryQualityBtn) galleryQualityBtn.style.display = '';
+      if (galleryQualityToggle) galleryQualityToggle.style.display = '';
 
       // Add reset algorithm button if it doesn't exist
-      let resetAlgorithmBtn = controlBar.querySelector('#reset-algorithm-btn');
+      const resetAlgorithmBtn = document.getElementById('reset-algorithm-btn');
       if (!resetAlgorithmBtn && booruControlLeft) {
         const resetSection = document.createElement('div');
         resetSection.className = 'control-section control-section-reset-algorithm';
         resetSection.innerHTML = '<button id="reset-algorithm-btn" class="control-button" title="Reset Algorithm">Reset Algorithm</button>';
         booruControlLeft.appendChild(resetSection);
-        resetAlgorithmBtn = resetSection.querySelector('#reset-algorithm-btn');
         
         // Add click handler
-        resetAlgorithmBtn.addEventListener('click', async () => {
+        const newResetAlgorithmBtn = resetSection.querySelector('#reset-algorithm-btn');
+        newResetAlgorithmBtn.addEventListener('click', async () => {
           try {
-            resetAlgorithmBtn.disabled = true;
-            resetAlgorithmBtn.textContent = 'Resetting...';
+            newResetAlgorithmBtn.disabled = true;
+            newResetAlgorithmBtn.textContent = 'Resetting...';
             
             const response = await fetch('http://localhost:3001/api/reset-algorithm', { method: 'POST' });
             const result = await response.json();
@@ -3599,8 +3589,8 @@ function updateControlBar(viewMode = 'normal_tab') {
             console.error(`Failed to reset algorithm: ${error.message}`);
             showToast(`Failed to reset algorithm: ${error.message}`, 'error');
           } finally {
-            resetAlgorithmBtn.disabled = false;
-            resetAlgorithmBtn.textContent = 'Reset Algorithm';
+            newResetAlgorithmBtn.disabled = false;
+            newResetAlgorithmBtn.textContent = 'Reset Algorithm';
             showToast('Homepage algorithm reset completed.', 'success');
           }
         });
@@ -3626,13 +3616,11 @@ function updateControlBar(viewMode = 'normal_tab') {
       if (primarySection) {
         primarySection.style.display = '';
         const reloadBtn = document.getElementById('reload-booru-btn');
-        const aiFilterBtn = document.getElementById('ai-filter-toggle');
         primarySection.querySelectorAll('button').forEach(btn => {
           btn.style.display = 'none';
         });
         if (reloadBtn) reloadBtn.style.display = '';
         if (aiFilterBtn) aiFilterBtn.style.display = '';
-        console.log(aiFilterBtn);
       }
 
       // Hide all right controls (direct children only)
@@ -4123,6 +4111,11 @@ window.showHomepage = showHomepage;
 async function loadHomepagePosts(fetchNew = false, append = false) {
   const booruGallery = document.getElementById('booru-gallery');
   const booruCounter = document.getElementById('booru-total-count');
+  const noPostsAvailable = document.getElementById('no-posts-available');
+
+  if (noPostsAvailable) {
+    noPostsAvailable.remove();
+  }
   
   // Ensure counter is visible on homepage
   if (booruCounter) {
@@ -4164,9 +4157,11 @@ async function loadHomepagePosts(fetchNew = false, append = false) {
         showToast('No posts available', 'info');
         if (booruGallery) {
           if (!booruGallery.innerHTML || booruGallery.innerHTML.trim() === '') {
-            booruGallery.innerHTML = `<div style="display: flex; align-items: center; justify-content: center; height: 300px; flex-direction: column; color: var(--text-secondary); font-size: 18px; text-align: center;"><i class="fas fa-inbox" style="font-size: 48px; margin-bottom: 10px;"></i><div>No posts available</div></div>`;
+            booruGallery.innerHTML = `<div id='no-posts-available'><div>No posts available</div></div>`;
           }
         }
+        const booruLoading = document.getElementById('booru-loading');
+        if (booruLoading) booruLoading.style.display = 'none';
         return;
       }
       
@@ -4247,7 +4242,7 @@ async function loadHomepagePosts(fetchNew = false, append = false) {
     // Check if no posts are available
     if (posts.length === 0) {
       if (booruGallery) {
-        booruGallery.innerHTML = `<div style="display: flex; align-items: center; justify-content: center; height: 300px; flex-direction: column; color: var(--text-secondary); font-size: 18px; text-align: center;"><div>No posts available</div></div>`;
+        booruGallery.innerHTML = `<div id='no-posts-available'><div>No posts available</div></div>`;
       }
       window.booruPosts = [];
       window.totalResultCount = 0;
@@ -4294,7 +4289,7 @@ async function loadHomepagePosts(fetchNew = false, append = false) {
     const booruGallery = document.getElementById('booru-gallery');
     if (booruGallery && !append) {
       if (booruGallery) {
-        booruGallery.innerHTML = `<div style="display: flex; align-items: center; justify-content: center; height: 300px; flex-direction: column; color: var(--text-secondary); font-size: 18px; text-align: center;"><div>No posts available</div></div>`;
+        booruGallery.innerHTML = `<div id='no-posts-available'><div>No posts available</div></div>`;
       }
       window.booruPosts = [];
       window.totalResultCount = 0;

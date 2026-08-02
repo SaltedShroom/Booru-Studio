@@ -276,6 +276,10 @@ body, html {
   justify-content: center;
 }
 
+.proxy-status-btn {
+  opacity: 0.5;
+}
+
 #anon-tor-rotate-now {
   color: white;
   background-color: var(--accent-hover);
@@ -290,10 +294,17 @@ body, html {
 
 .proxy-status-btn.active {
   color: var(--success);
+  opacity: 1;
+}
+
+.proxy-status-btn.inactive {
+  color: var(--failure);
+  opacity: 1;
 }
 
 .proxy-status-btn:hover {
   background: var(--surface-hover);
+  opacity: 0.8;
 }
 
 /* Proxy button right-click context menu */
@@ -2091,7 +2102,7 @@ body, html {
   position: fixed;
   top: 0;
   left: 0;
-  width: 100vw;
+  width: 100%;
   height: 100vh;
   max-height: 100%;
   z-index: 9999;
@@ -2355,7 +2366,7 @@ body, html {
   pointer-events: auto;
   overflow: hidden;
   user-select: none;
-  height: 40%;
+  height: 50%;
   min-height: 200px;
   opacity: 1;
   transition: opacity 0.2s ease;
@@ -2366,7 +2377,9 @@ body, html {
   position: relative;
   display: flex;
   flex-direction: column;
-  overflow-y: auto;
+  overflow-y: scroll;
+  height: 100%;
+  max-height: 100%;
   z-index: 1;
 }
 
@@ -2376,6 +2389,7 @@ body, html {
   padding: 6px 10px;
   font-size: 11px;
   color: var(--text-secondary);
+  border-bottom: 1px solid var(--border);
   overflow: hidden;
   user-select: none;
   text-wrap: nowrap;
@@ -2383,7 +2397,7 @@ body, html {
   pointer-events: none;
   user-select: none;
   margin: 0;
-  margin-bottom: 4.4px;
+  margin-top: 6.4px;
   transition: transform 0.5s ease, opacity 0.2s ease;
 }
 .loading-toast-counter b {
@@ -2403,9 +2417,9 @@ body, html {
 .hq-loading-progress-bar {
   position: absolute;
   width: 100%;
-  height: 4px;
+  height: 6px;
   z-index: 10;
-  top: 26px;
+  top: 0;
   background: var(--bg-dark);
   border-bottom: 1px solid var(--border);
   overflow: hidden;
@@ -6412,4 +6426,15 @@ textarea.settings-input {
 .search-favorite-container i.hidden {
   opacity: 0;
   pointer-events: none;
+}
+
+#no-posts-available {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  height: 300px;
+  width: 100%;
+  color: var(--text-secondary);
+  font-size: 18px;
+  text-align: center;
 }

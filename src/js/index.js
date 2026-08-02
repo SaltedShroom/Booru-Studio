@@ -697,14 +697,12 @@ function initServerConsole() {
 async function checkProxyConnectivity() {
   const proxySettings = localStorage.getItem('proxySettings');
   if (!proxySettings) {
-    proxyStatusBtn.style.display = 'none';
     return;
   }
 
   try {
     const settings = JSON.parse(proxySettings);
     if (!settings.host || !settings.port) {
-      proxyStatusBtn.style.display = 'none';
       return;
     }
 
@@ -717,7 +715,6 @@ async function checkProxyConnectivity() {
     });
 
     if (!response.ok) {
-      proxyStatusBtn.style.display = 'none';
       return;
     }
 
@@ -727,29 +724,23 @@ async function checkProxyConnectivity() {
     updateProxyStatusButton(isConnected, proxyActive.checked);
   } catch (error) {
     localServerUnavailableUntil = Date.now() + LOCAL_SERVER_ERROR_COOLDOWN_MS;
-    proxyStatusBtn.style.display = 'none';
   }
 }
 
 function updateProxyStatusButton(isConnected, isActive) {
   if (isConnected) {
     // Proxy is working
-    proxyStatusBtn.style.display = 'flex';
     if (isActive) {
       proxyStatusBtn.classList.add('active');
-      proxyStatusBtn.style.color = 'var(--success)';
+      proxyStatusBtn.classList.remove('inactive');
     } else {
       proxyStatusBtn.classList.remove('active');
-      proxyStatusBtn.style.color = 'var(--text-secondary)';
+      proxyStatusBtn.classList.remove('inactive');
     }
   } else if (isActive) {
     // Proxy is NOT working but enabled - show in red
-    proxyStatusBtn.style.display = 'flex';
     proxyStatusBtn.classList.remove('active');
-    proxyStatusBtn.style.color = '#ff6b6b';
-  } else {
-    // Proxy is not working and not enabled - hide
-    proxyStatusBtn.style.display = 'none';
+    proxyStatusBtn.classList.add('inactive');
   }
 }
 
@@ -862,11 +853,12 @@ function showCircuitSpinner() {
     positionMenuWithinViewport(e.clientX, e.clientY);
   });
 
+  // Left-click toggles proxy on/off
   proxyStatusBtn.addEventListener('click', (e) => {
     e.preventDefault();
-    const rect = proxyStatusBtn.getBoundingClientRect();
-    loadCurrentCircuit();
-    positionMenuWithinViewport(rect.left, rect.bottom);
+    showCircuitSpinner();
+    proxyActive.checked = !proxyActive.checked;
+    proxyActive.dispatchEvent(new Event('change', { bubbles: true }));
   });
 
   document.getElementById('ctx-rotate-circuit').addEventListener('click', async () => {

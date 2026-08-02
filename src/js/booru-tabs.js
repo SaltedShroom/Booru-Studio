@@ -79,6 +79,14 @@ async function removeFavoriteTag(query, source) {
       body: JSON.stringify({ query, source })
     });
     if (response.ok) {
+      // Remove the item from the DOM by finding it using query and source
+      const queryFavoritesList = document.getElementById('query-favorites');
+      if (queryFavoritesList) {
+        const item = queryFavoritesList.querySelector(`[data-query-value="${query}"][data-query-source="${source}"]`);
+        if (item) {
+          item.remove();
+        }
+      }
       updateFavoriteIcon();
       return true;
     }
