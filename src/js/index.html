@@ -11,7 +11,25 @@
 <link rel="apple-touch-icon" sizes="180x180" href="/src/assets/favicon/apple-touch-icon.png">
 <link rel="icon" type="image/png" sizes="192x192" href="/src/assets/favicon/android-chrome-192x192.png">
 <link rel="icon" type="image/png" sizes="512x512" href="/src/assets/favicon/android-chrome-512x512.png">
-<link rel="stylesheet" href="/src/js/style.css">
+<script>
+  // Add cache-busting parameter with today's date to all local app files
+  const today = new Date().toISOString().split('T')[0];
+  document.write(`<link rel="stylesheet" href="/src/js/style.css?v=${today}">`);
+  const localJsFiles = [
+    '/src/js/cleanup-manager.js',
+    '/src/js/db-store.js',
+    '/src/js/coin-collector.js',
+    '/src/js/virtual-gallery.js',
+    '/src/js/booru-sources-manager.js',
+    '/src/js/index.js',
+    '/src/js/booru-browser.js',
+    '/src/js/booru-tabs.js',
+    '/src/js/css-presets-manager.js'
+  ];
+  localJsFiles.forEach(file => {
+    document.write(`<script src="${file}?v=${today}" defer><\/script>`);
+  });
+</script>
 <link rel="stylesheet" href="/node_modules/justifiedGallery/dist/css/justifiedGallery.min.css">
 <link rel="stylesheet" href="/node_modules/odometer/themes/odometer-theme-minimal.css">
 <script src="/node_modules/odometer/odometer.js"></script>
@@ -1375,14 +1393,5 @@
 <link rel="stylesheet" href="/node_modules/codemirror/theme/material-darker.css">
 <script src="/node_modules/codemirror/lib/codemirror.js"></script>
 <script src="/node_modules/codemirror/mode/css/css.js"></script>
-<script src="/src/js/cleanup-manager.js" defer></script>
-<script src="/src/js/db-store.js" defer></script>
-<script src="/src/js/coin-collector.js" defer></script>
-<script src="/src/js/virtual-gallery.js" defer></script>
-<script src="/src/js/booru-sources-manager.js" defer></script>
-<script src="/src/js/index.js" defer></script>
-<script src="/src/js/booru-browser.js" defer></script>
-<script src="/src/js/booru-tabs.js" defer></script>
-<script src="/src/js/css-presets-manager.js" defer></script>
 </body>
 </html>

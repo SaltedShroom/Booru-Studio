@@ -107,7 +107,9 @@ async function initDatabase() {
       height INTEGER,
       aspectRatio REAL,
       createdAt INTEGER,
-      displayed_count INTEGER DEFAULT 0
+      displayed_count INTEGER DEFAULT 0,
+      url TEXT,
+      mediaType TEXT DEFAULT 'image'
     );
     
     CREATE TABLE IF NOT EXISTS favorite_tags (
@@ -821,8 +823,8 @@ function saveHomepageData(posts = []) {
   
   // Insert new posts
   const stmt = db.prepare(`
-    INSERT INTO homepage (id, imageUrl, thumbnailUrl, sampleUrl, tags, artists, score, rating, source, width, height, aspectRatio, createdAt, displayed_count)
-    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+    INSERT INTO homepage (id, imageUrl, thumbnailUrl, sampleUrl, tags, artists, score, rating, source, width, height, aspectRatio, createdAt, displayed_count, url, mediaType)
+    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
   `);
   
   for (const post of posts) {
@@ -840,7 +842,9 @@ function saveHomepageData(posts = []) {
       post.height || 0,
       post.aspectRatio || 1,
       post.createdAt || Date.now(),
-      post.displayed_count || 0
+      post.displayed_count || 0,
+      post.url || '',
+      post.mediaType || 'image'
     );
   }
   
@@ -851,7 +855,7 @@ function loadHomepageData() {
   if (!db) throw new Error('Database not initialized');
   
   const stmt = db.prepare(`
-    SELECT id, imageUrl, thumbnailUrl, sampleUrl, tags, artists, score, rating, source, width, height, aspectRatio, createdAt, displayed_count
+    SELECT id, imageUrl, thumbnailUrl, sampleUrl, tags, artists, score, rating, source, width, height, aspectRatio, createdAt, displayed_count, url, mediaType
     FROM homepage
     ORDER BY createdAt ASC
   `);
@@ -872,7 +876,9 @@ function loadHomepageData() {
     height: row.height,
     aspectRatio: row.aspectRatio,
     createdAt: row.createdAt,
-    displayed_count: row.displayed_count
+    displayed_count: row.displayed_count,
+    url: row.url,
+    mediaType: row.mediaType || 'image'
   }));
 }
 
@@ -1497,15 +1503,17 @@ function migrateHomepageSchema() {
             height INTEGER,
             aspectRatio REAL,
             createdAt INTEGER,
-            displayed_count INTEGER DEFAULT 0
+            displayed_count INTEGER DEFAULT 0,
+            url TEXT,
+            mediaType TEXT DEFAULT 'image'
           )
         `).run();
         
         // Insert migrated posts
         if (postsToMigrate.length > 0) {
           const insertStmt = db.prepare(`
-            INSERT INTO homepage (id, imageUrl, thumbnailUrl, sampleUrl, tags, artists, score, rating, source, width, height, aspectRatio, createdAt, displayed_count)
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            INSERT INTO homepage (id, imageUrl, thumbnailUrl, sampleUrl, tags, artists, score, rating, source, width, height, aspectRatio, createdAt, displayed_count, url, mediaType)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
           `);
           
           for (const post of postsToMigrate) {
@@ -1523,7 +1531,9 @@ function migrateHomepageSchema() {
               post.height || 0,
               post.aspectRatio || 1,
               post.createdAt || Date.now(),
-              post.displayed_count || 0
+              post.displayed_count || 0,
+              post.url || '',
+              post.mediaType || 'image'
             );
           }
         }

@@ -3422,6 +3422,7 @@ function updateControlBar(viewMode = 'normal_tab') {
   const searchFavorite = document.getElementById('search-favorite');
   const aiFilterBtn = primarySection.querySelector('#ai-filter-toggle');
   const galleryQualityToggle = controlBar.querySelector('#gallery-quality-toggle');
+  const selectDownloadFolderBtn = document.getElementById('select-download-folder-btn');
 
   const booruControlLeft = controlBar.querySelector('.booru-control-left');
   const booruControlRight = controlBar.querySelector('.booru-control-right');
@@ -3435,10 +3436,7 @@ function updateControlBar(viewMode = 'normal_tab') {
   if (booruControlRight) {
     // Only hide direct children, not all descendants (to avoid hiding icons inside buttons)
     booruControlRight.querySelectorAll(':scope > *').forEach(el => {
-      // Never hide select-download-folder-btn, but handle visibility per mode
-      if (!el.id?.includes('select-download-folder')) {
-        el.style.display = 'none';
-      }
+      el.style.display = 'none';
     });
   }
 
@@ -3519,13 +3517,9 @@ function updateControlBar(viewMode = 'normal_tab') {
       if (galleryQualityToggle) galleryQualityToggle.style.display = 'none';
       if (sortControl) sortControl.style.display = 'none';
 
-      // Show download folder button, hide source controls
-      if (booruControlRight) {
-        booruControlRight.querySelectorAll('*').forEach(el => {
-          if (el.id === 'select-download-folder-btn') {
-            el.style.display = '';
-          }
-        });
+      // Show download folder button
+      if (selectDownloadFolderBtn) {
+        selectDownloadFolderBtn.style.display = '';
       }
       break;
 
@@ -3555,6 +3549,13 @@ function updateControlBar(viewMode = 'normal_tab') {
               checkbox.checked = false;
             }
           });
+        }
+
+        // Show download folder button
+        if (selectDownloadFolderBtn) {
+          setTimeout(() => {
+            selectDownloadFolderBtn.style.display = '';
+          }, 200);
         }
       }
       
@@ -4219,7 +4220,7 @@ async function loadHomepagePosts(fetchNew = false, append = false) {
       const errMsg = (typeof allPosts === 'object' && allPosts.error) ? allPosts.error : 'Unknown error';
       showToast(`Error loading posts: ${errMsg}`, 'error');
       if (booruGallery) {
-        booruGallery.innerHTML = `<div style="display: flex; align-items: center; justify-content: center; height: 300px; flex-direction: column; color: var(--text-secondary); font-size: 18px; text-align: center;"><i class="fas fa-exclamation-circle" style="font-size: 48px; margin-bottom: 10px;"></i><div>Error loading posts</div><div style="font-size: 14px; margin-top: 5px;">${errMsg}</div></div>`;
+        booruGallery.innerHTML = `<div style="display: flex; align-items: center; justify-content: center; width: 100%; height: 300px; flex-direction: column; color: var(--text-secondary); font-size: 18px; text-align: center;"><i class="fas fa-exclamation-circle" style="font-size: 48px; margin-bottom: 10px;"></i><div>Error loading posts</div><div style="font-size: 14px; margin-top: 5px;">${errMsg}</div></div>`;
       }
       return;
     }
@@ -5530,6 +5531,18 @@ function initBooruBrowser() {
   if (reloadBooruBtn) {
     reloadBooruBtn.addEventListener('click', async () => {
       if (window.isViewingHomepage) {
+
+        // Clear homepage table before reloading
+        try {
+          await fetch('http://localhost:3001/api/db/settings/homepage-data', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify([])
+          });
+        } catch (error) {
+          console.warn('⚠️ Error clearing homepage data:', error.message);
+        }
+
         // Show loading spinner immediately in gallery
         const booruGallery = document.getElementById('booru-gallery');
         if (booruGallery) {
@@ -9837,7 +9850,7 @@ function showPreviewForElement(mediaElement, forceVideoLoad = false, hidden = fa
             
             if (isStillHovering) {
               // User hovering: display preview and trigger HQ load via showPreviewForElement
-              showPreviewForElement(mediaElement, false);
+              showPreviewForElement(mediaElement, false, hidden);
             } else {
               // User moved away: update gallery data, but still trigger HQ load via showPreviewForElement
               // (showPreviewForElement has guards to prevent displaying preview if not hovering)
@@ -9917,7 +9930,9 @@ function showPreviewForElement(mediaElement, forceVideoLoad = false, hidden = fa
   // Check if this is a video thumbnail
   const isVideo = mediaElement.dataset.isVideo === 'true';  
 
-  booruPreviewMediaContainer.parentNode.classList.add('active');
+  if (!hidden) {
+    booruPreviewMediaContainer.parentNode.classList.add('active');
+  }
 
   // Set post id in metadata
   const galleryItem = mediaElement.closest('.booru-image-item');
@@ -9948,13 +9963,11 @@ function showPreviewForElement(mediaElement, forceVideoLoad = false, hidden = fa
     if (currentVideo) {
       // Handle the promise returned by play() — ignore AbortError (element removed) so it doesn't pollute the console
       const previewContainer = document.querySelector('.booru-hover-preview');
-      if (previewContainer?.classList.contains('active')) {
+      if (!hidden && previewContainer?.classList.contains('active')) {
         const _p = currentVideo.play();
         if (_p && typeof _p.catch === 'function') {
           _p.catch(err => {
             if (err && err.name === 'AbortError') return; // expected when element is removed mid-play
-            // keep non-fatal logging for other cases (debug-only)
-            console.debug('booru preview video play rejected:', err);
           });
         }
       }
@@ -10010,7 +10023,7 @@ function showPreviewForElement(mediaElement, forceVideoLoad = false, hidden = fa
       if (galleryLoader) galleryLoader.style.display = cachedPreview.isLoading ? 'block' : 'none';
       if (cachedPreview.element.tagName === 'VIDEO') {
         const previewContainer = document.querySelector('.booru-hover-preview');
-        if (previewContainer?.classList.contains('active')) {
+        if (!hidden && previewContainer?.classList.contains('active')) {
           cachedPreview.element.play().catch(err => {
             if (err && err.name !== 'AbortError') console.debug('booru preview video play rejected:', err);
           });
@@ -10046,7 +10059,7 @@ function showPreviewForElement(mediaElement, forceVideoLoad = false, hidden = fa
         if (!currentHover) return;
 
         // Resume video load after delay
-        showPreviewForElement(mediaElement, true);
+        showPreviewForElement(mediaElement, true, hidden);
       }, previewDelay);
       return;
     }
@@ -10175,7 +10188,7 @@ function showPreviewForElement(mediaElement, forceVideoLoad = false, hidden = fa
         booruPreviewMediaContainer.appendChild(video);
         // get width and height in pixels of video
         const previewContainer = document.querySelector('.booru-hover-preview');
-        if (previewContainer?.classList.contains('active')) {
+        if (!hidden && previewContainer?.classList.contains('active')) {
           video.play().catch(err => {
             if (err && err.name !== 'AbortError') console.debug('booru preview video play rejected:', err);
           });
@@ -10192,7 +10205,7 @@ function showPreviewForElement(mediaElement, forceVideoLoad = false, hidden = fa
         // User hovered away and came back while loading — video was already inserted as the
         // in-progress element, so just start playing it and mark it as ready
         const previewContainer = document.querySelector('.booru-hover-preview');
-        if (previewContainer?.classList.contains('active')) {
+        if (!hidden && previewContainer?.classList.contains('active')) {
           video.play().catch(err => {
             if (err && err.name !== 'AbortError') console.debug('booru preview video play rejected:', err);
           });
@@ -10339,12 +10352,14 @@ function showPreviewForElement(mediaElement, forceVideoLoad = false, hidden = fa
           mediaElement._hqDelayTimer = null;
           // Guard: another call may have already started the load
           if (mediaElement.dataset.highQualityLoading === 'true' || mediaElement.dataset.highQualityLoaded === 'true') return;
-          // Check if still hovering over the same element
-          const elementsUnderCursor = document.elementsFromPoint(lastMouseX, lastMouseY);
-          const currentHover = elementsUnderCursor.find(el => el === mediaElement);
-          if (!currentHover) {
-            // User moved away, cancel high quality load
-            return;
+          // Check if still hovering over the same element (unless hidden mode, which means load anyway)
+          if (!hidden) {
+            const elementsUnderCursor = document.elementsFromPoint(lastMouseX, lastMouseY);
+            const currentHover = elementsUnderCursor.find(el => el === mediaElement);
+            if (!currentHover) {
+              // User moved away, cancel high quality load
+              return;
+            }
           }
           
           mediaElement.dataset.highQualityLoading = 'true';
@@ -10871,7 +10886,9 @@ function showPreviewForElement(mediaElement, forceVideoLoad = false, hidden = fa
     }
   }
   
-  booruHoverPreview.classList.add('active');
+  if (!hidden) {
+    booruHoverPreview.classList.add('active');
+  }
   const previewPostId = mediaElement.closest('.booru-image-item')?.dataset.postId;
   const previewPostSource = mediaElement.closest('.booru-image-item')?.dataset.postSource;
   autoClickUnknownPreviewAuthor(previewPostId, previewPostSource);

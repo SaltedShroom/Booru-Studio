@@ -13,6 +13,7 @@
   --surface: #252a3a;
   --surface-hover: #2d3548;
   --surface-dark: #212635;
+  --surface-darkest-hover: #1a1f2e;
   --surface-darkest: #171b26;
   --text-primary: #e8e8e8;
   --text-secondary: #a0a0a0;
@@ -2166,6 +2167,11 @@ body, html {
 #lightbox-image.tall.tall-scroll {
   animation: tallImageScroll var(--tall-scroll-duration, 12s) linear infinite;
   animation-delay: 4s;
+}
+
+#lightbox-image[data-is-gif="true"] {
+  height: calc(100% - 100px) !important;
+  width: calc(100% - 100px) !important;
 }
 
 @keyframes tallImageScroll {
@@ -6255,7 +6261,7 @@ textarea.settings-input {
   border-right: 1px solid var(--border);
   border-left: 1px solid var(--border);
   cursor: grab;
-  transition: none;
+  transition: background 0.1s ease;
 }
 .booru-sidebar .sidebar-collapse-drag .drag-line {
   position: absolute;
@@ -6264,6 +6270,9 @@ textarea.settings-input {
   height: 80px;
   border-radius: 1px;
   transition: background 0.1s ease;
+}
+.booru-sidebar .sidebar-collapse-drag:hover {
+  background: var(--surface-darkest-hover);
 }
 .booru-sidebar .sidebar-collapse-drag:hover .drag-line {
   background: var(--surface-hover);
@@ -6433,7 +6442,7 @@ textarea.settings-input {
   align-items: center;
   justify-content: center;
   height: 300px;
-  width: 100%;
+  width: 100% !important;
   color: var(--text-secondary);
   font-size: 18px;
   text-align: center;

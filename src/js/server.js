@@ -1565,9 +1565,10 @@ const server = isWorkerMode ? null : http.createServer((req, res) => {
         });
 
         let allArtists = Array.isArray(artistResponse) ? artistResponse : [];
-        const artists = allArtists.filter(a => a.artist !== 'Unknown');
+        const artists = allArtists
+          .filter(a => a.artist !== 'Unknown')
         const filteredOutCount = allArtists.length - artists.length;
-        console.log(`✓ Fetched ${artists.length} artists (${Date.now() - artistFetchStart}ms)`);
+        console.log(`✓ Fetched ${artists.length} artists (${Date.now() - artistFetchStart}ms) [DEBUG]`);
         
         if (!artists || artists.length === 0) {
           console.log(`⚠️ No artists to fetch`);
@@ -1624,8 +1625,10 @@ const server = isWorkerMode ? null : http.createServer((req, res) => {
                   return { artist: artist.artist, posts: [], postsFoundCount: 0, source: null, error: 'Source not found', duration: Date.now() - artistStartTime };
                 }
 
+                let posts = [];
                 let userId = '', apiKey = '';
-                if (source.auth.required && sessionData.booruApiCredentials) {
+                
+                if (source.auth && source.auth.required && sessionData.booruApiCredentials) {
                   const sourceCreds = sessionData.booruApiCredentials[source.id];
                   if (sourceCreds) { userId = sourceCreds.userId || ''; apiKey = sourceCreds.apiKey || ''; }
                 }
@@ -1634,7 +1637,17 @@ const server = isWorkerMode ? null : http.createServer((req, res) => {
                   console.log(`  ⚠️ Artist ${artist.artist} has no last_download_date`);
                 }
 
-                const posts = await fetchArtistPostsFromSource(artist, source, userId, apiKey);
+                // Check if API-based or scraper-based source
+                if (source.api && source.api.basePath) {
+                  // API-based source
+                  posts = await fetchArtistPostsFromSource(artist, source, userId, apiKey);
+                } else if (source.type === 'scraper' && source.scraper) {
+                  // Scraper-based source
+                  posts = await fetchArtistPostsFromScraperSource(artist, source);
+                } else {
+                  return { artist: artist.artist, posts: [], postsFoundCount: 0, source: null, error: 'Unknown source type', duration: Date.now() - artistStartTime };
+                }
+
                 return { artist: artist.artist, posts, postsFoundCount: posts.length, source, error: null, duration: Date.now() - artistStartTime };
               } catch (error) {
                 console.error(`  ❌ Error fetching ${artist.artist}: ${error.message}`);
@@ -1646,12 +1659,21 @@ const server = isWorkerMode ? null : http.createServer((req, res) => {
             for (const result of batchResults) {
               if (result.posts.length > 0) {
                 for (const post of result.posts) {
-                  // Map post fields using source configuration
-                  const mappedPost = {
-                    ...mapPostFromSource(post, result.source),
-                    source: result.source.id,
-                    displayed_count: 0
-                  };
+                  // Scraper posts are already mapped; API posts need mapping
+                  let mappedPost;
+                  if (result.source && result.source.type === 'scraper') {
+                    mappedPost = {
+                      ...post,
+                      source: result.source.id,
+                      displayed_count: 0
+                    };
+                  } else {
+                    mappedPost = {
+                      ...mapPostFromSource(post, result.source),
+                      source: result.source.id,
+                      displayed_count: 0
+                    };
+                  }
                   newPosts.push(mappedPost);
                 }
               }
@@ -1713,7 +1735,12 @@ const server = isWorkerMode ? null : http.createServer((req, res) => {
         
         let actuallyAdded = 0;
         for (const post of newPosts) {
-          if (!existingIds.has(post.id)) {
+          // If post has no id, skip duplicate check; if it has id, check against existing
+          if (!post.id || !existingIds.has(post.id)) {
+            // Generate an ID for posts without one
+            if (!post.id) {
+              post.id = `${Date.now()}_${Math.random().toString(36).substr(2, 9)}`;
+            }
             existingPosts.push(post);
             existingIds.add(post.id);
             actuallyAdded++;
@@ -1916,6 +1943,191 @@ const server = isWorkerMode ? null : http.createServer((req, res) => {
       aspectRatio: widthVal && heightVal ? heightVal / widthVal : 1,
       createdAt: createdAt
     };
+  }
+
+  // Helper function to fetch posts for a specific artist from a scraper-based source
+  async function fetchArtistPostsFromScraperSource(artist, source) {
+    return new Promise(async (resolve, reject) => {
+      try {
+        const scraper = source.scraper;
+        if (!scraper || !scraper.listPageUrl) {
+          return resolve([]);
+        }
+
+        // Build list page URL with artist tags
+        let listUrl = scraper.listPageUrl;
+        const tagString = artist.artist; // Use artist name as search tag
+        const separator = listUrl.includes('?') ? '&' : '?';
+        const tagParam = scraper.searchTagParam || 'tags';
+        listUrl = `${listUrl}${separator}${tagParam}=${encodeURIComponent(tagString)}`;
+
+        // Fetch the list page HTML via http/https
+        const parsedUrl = new URL(listUrl);
+        const protocol = parsedUrl.protocol === 'http:' ? http : https;
+        
+        let agent = null;
+        try {
+          agent = requireProxyAgent(parsedUrl.protocol);
+        } catch (e) {
+          // No proxy available, proceed without it
+        }
+
+        const options = {
+          hostname: parsedUrl.hostname,
+          port: parsedUrl.port,
+          path: parsedUrl.pathname + parsedUrl.search,
+          method: 'GET',
+          timeout: 15000,
+          headers: {
+            'User-Agent': source.userAgent || 'Mozilla/5.0'
+          }
+        };
+
+        if (agent) {
+          options.agent = agent;
+        }
+
+        let listPageHtml = '';
+        const req = protocol.request(options, (res) => {
+          res.on('data', chunk => {
+            listPageHtml += chunk.toString();
+          });
+
+          res.on('end', async () => {
+            try {
+              // Send HTML to scraper endpoint for parsing
+              const scrapeResponse = await new Promise((scrapeResolve, scrapeReject) => {
+                const scrapePostReq = http.request({
+                  hostname: 'localhost',
+                  port: 3001,
+                  path: '/api/scraper/fetch-page',
+                  method: 'POST',
+                  headers: { 'Content-Type': 'application/json' }
+                }, (scrapeRes) => {
+                  let scrapeBody = '';
+                  scrapeRes.on('data', chunk => { scrapeBody += chunk.toString(); });
+                  scrapeRes.on('end', () => {
+                    try {
+                      scrapeResolve(JSON.parse(scrapeBody));
+                    } catch (e) {
+                      scrapeReject(e);
+                    }
+                  });
+                });
+
+                scrapePostReq.on('error', scrapeReject);
+                scrapePostReq.write(JSON.stringify({
+                  html: listPageHtml,
+                  selectors: {
+                    listPageSelector: scraper.listPageSelector,
+                    postLinkSelector: scraper.postLinkSelector,
+                    imageUrlSelector: scraper.imageUrlSelector,
+                    imageUrlAttribute: scraper.imageUrlAttribute || 'src',
+                    thumbnailWidthAttribute: scraper.thumbnailWidthAttribute || 'width',
+                    thumbnailHeightAttribute: scraper.thumbnailHeightAttribute || 'height',
+                    paginationLastPageSelector: scraper.paginationLastPageSelector,
+                    postsPerPage: scraper.postsPerPage || 42,
+                    initialTagsAttribute: scraper.initialTagsAttribute,
+                    initialFileTypeAttribute: scraper.initialFileTypeAttribute,
+                    initialFileTypeAttributeValue: scraper.initialFileTypeAttributeValue,
+                    initialFileTypeGifTag: scraper.initialFileTypeGifTag
+                  }
+                }));
+                scrapePostReq.end();
+              });
+
+              if (scrapeResponse.success && scrapeResponse.data) {
+                // Map scraper posts to normalized format
+                const mappedPosts = (scrapeResponse.data.posts || []).map((post, idx) => {
+                  // Generate ID if post doesn't have one or has undefined/null
+                  let postId = post.id;
+                  if (!postId || postId === 'undefined' || postId === 'null') {
+                    postId = `${Date.now()}_${idx}`;
+                  }
+                  
+                  // Build absolute URL for scraper posts
+                  let postUrl = post.postUrl || post.url;
+                  if (postUrl && !postUrl.startsWith('http')) {
+                    // Relative URL - combine with base URL from scraper config
+                    const baseUrl = scraper.baseUrl || scraper.listPageUrl;
+                    const parsedBase = new URL(baseUrl);
+                    const baseWithoutPath = `${parsedBase.protocol}//${parsedBase.hostname}`;
+                    postUrl = `${baseWithoutPath}${postUrl.startsWith('/') ? '' : '/'}${postUrl}`;
+                  }
+                  
+                  // Build absolute URLs for image URLs
+                  let thumbnailUrl = post.thumbnailUrl;
+                  let imageUrl = post.imageUrl || post.thumbnailUrl;
+                  const baseUrl = scraper.baseUrl || scraper.listPageUrl;
+                  const parsedBase = new URL(baseUrl);
+                  const baseWithoutPath = `${parsedBase.protocol}//${parsedBase.hostname}`;
+                  
+                  if (thumbnailUrl && !thumbnailUrl.startsWith('http')) {
+                    thumbnailUrl = `${baseWithoutPath}${thumbnailUrl.startsWith('/') ? '' : '/'}${thumbnailUrl}`;
+                  }
+                  if (imageUrl && !imageUrl.startsWith('http')) {
+                    imageUrl = `${baseWithoutPath}${imageUrl.startsWith('/') ? '' : '/'}${imageUrl}`;
+                  }
+                  
+                  // Determine media type from initialFileType or image URL extension
+                  let mediaType = post.initialFileType || 'image';
+                  if (mediaType === 'image') {
+                    // Fallback to detect from file extension if not already determined
+                    const checkUrl = imageUrl || thumbnailUrl || '';
+                    if (checkUrl.match(/\.(mp4|webm|ogv|mov|avi|flv|mkv)$/i)) {
+                      mediaType = 'video';
+                    } else if (checkUrl.match(/\.gif$/i)) {
+                      mediaType = 'gif';
+                    }
+                  }
+                  
+                  return {
+                    id: String(postId),
+                    imageUrl: imageUrl,
+                    thumbnailUrl: thumbnailUrl,
+                    sampleUrl: imageUrl,
+                    tags: post.tags || [],
+                    artists: [artist.artist],
+                    score: post.score || 0,
+                    rating: 'unknown',
+                    width: post.width || 0,
+                    height: post.height || 0,
+                    aspectRatio: (post.height && post.width) ? post.height / post.width : 1,
+                    createdAt: Date.now(),
+                    url: postUrl,
+                    mediaType: mediaType
+                  };
+                });
+
+                resolve(mappedPosts);
+              } else {
+                console.warn(`  ⚠️ Scraper returned no data for ${artist.artist}`);
+                resolve([]);
+              }
+            } catch (error) {
+              console.error(`  ❌ Error parsing scraper response for ${artist.artist}: ${error.message}`);
+              resolve([]);
+            }
+          });
+        });
+
+        req.on('error', (error) => {
+          console.error(`  ❌ Error fetching scraper page for ${artist.artist}: ${error.message}`);
+          resolve([]);
+        });
+
+        req.on('timeout', () => {
+          req.destroy();
+          console.warn(`  ⚠️ Scraper timeout for ${artist.artist}`);
+          resolve([]);
+        });
+
+        req.end();
+      } catch (error) {
+        console.error(`  ❌ Error in fetchArtistPostsFromScraperSource for ${artist.artist}: ${error.message}`);
+        resolve([]);
+      }
+    });
   }
 
   // Helper function to fetch posts for a specific artist from a source

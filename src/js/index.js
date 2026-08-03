@@ -2379,6 +2379,10 @@ function showLightboxImage(idx) {
   const isVideo = url.toLowerCase().endsWith('.mp4') || url.toLowerCase().endsWith('.webm') || 
                   url.toLowerCase().endsWith('.mov') || url.toLowerCase().includes('.mp4?') || 
                   url.toLowerCase().includes('.webm?') || url.toLowerCase().includes('.mov?');
+  const isGif = url.toLowerCase().endsWith('.gif') || url.toLowerCase().includes('.gif?');
+  
+  // Set data-is-gif attribute
+  lightboxImage.dataset.isGif = isGif ? 'true' : 'false';
 
   // Always show loading state (no crossfade)
   const fadeDuration = parseFloat(slideshowFadeDurationInput ? slideshowFadeDurationInput.value : 0) || 0;
@@ -2525,7 +2529,11 @@ function showLightboxImage(idx) {
       // Always use the gallery image's current src as the placeholder
         lightboxImage.dataset.hqLoaded = 'false';
         lightboxImage.src = galleryImg.src;
-        lightboxImage.classList.toggle('tall', galleryImg.naturalHeight >= 3 * galleryImg.naturalWidth);
+        if (lightboxImage.naturalHeight != null && lightboxImage.naturalWidth != null) {
+          if (lightboxImage.naturalHeight > 0 && lightboxImage.naturalWidth > 0) {
+            lightboxImage.classList.toggle('tall', galleryImg.naturalHeight >= 3 * galleryImg.naturalWidth);
+          }
+        }
         lightboxImage.classList.add('loaded');
         lightboxImage.classList.remove('tall-scroll');
       } else {
@@ -2540,7 +2548,11 @@ function showLightboxImage(idx) {
         }
         if (lowQualityUrl) {
           lightboxImage.src = getImageUrl(lowQualityUrl);
-          lightboxImage.classList.toggle('tall', lightboxImage.naturalHeight >= 3 * lightboxImage.naturalWidth);
+          if (lightboxImage.naturalHeight != null && lightboxImage.naturalWidth != null) {
+            if (lightboxImage.naturalHeight > 0 && lightboxImage.naturalWidth > 0) {
+              lightboxImage.classList.toggle('tall', lightboxImage.naturalHeight >= 3 * lightboxImage.naturalWidth);
+            }
+          }
           lightboxImage.classList.add('loaded');
           lightboxImage.classList.add('loading');
           lightboxImage.classList.remove('tall-scroll');
