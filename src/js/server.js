@@ -1566,7 +1566,7 @@ const server = isWorkerMode ? null : http.createServer((req, res) => {
 
         let allArtists = Array.isArray(artistResponse) ? artistResponse : [];
         const artists = allArtists
-          .filter(a => a.artist !== 'Unknown')
+          .filter(a => a.artist !== 'Unknown' && a.artist !== 'artist_request')
         const filteredOutCount = allArtists.length - artists.length;
         console.log(`✓ Fetched ${artists.length} artists (${Date.now() - artistFetchStart}ms) [DEBUG]`);
         

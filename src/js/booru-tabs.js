@@ -394,7 +394,25 @@ function handleDragOver(e) {
 function handleDrop(e) {
   e.preventDefault();
   if (draggedTab) {
-    const targetTab = e.target.closest('.booru-tab-item');
+    let targetTab = e.target.closest('.booru-tab-item');
+    // if targetTab is null, get closest tab item to the drop position
+    if (!targetTab) {
+      const tabsContainer = document.getElementById('booru-tabs-container');
+      const tabs = Array.from(tabsContainer.querySelectorAll('.booru-tab-item'));
+      let closestTab = null;
+      let closestDistance = Infinity;
+
+      tabs.forEach(tab => {
+        const rect = tab.getBoundingClientRect();
+        const distance = Math.abs(e.clientX - (rect.left + rect.width / 2));
+        if (distance < closestDistance) {
+          closestDistance = distance;
+          closestTab = tab;
+        }
+      });
+      targetTab = closestTab;
+    }
+
     if (targetTab && targetTab !== draggedTab) {
       const container = draggedTab.parentNode;
       const rect = targetTab.getBoundingClientRect();
@@ -1393,7 +1411,15 @@ function closeBooruTab(tabId) {
   booruTabs.splice(tabIndex, 1);
   
   const tabButton = document.querySelector(`.booru-tab-item[data-tab-id="${tabId}"]`);
-  if (tabButton) tabButton.remove();
+  if (tabButton) {
+    // Add the closing animation class
+    tabButton.classList.add('closing');
+    
+    // Remove after animation completes
+    setTimeout(() => {
+      tabButton.remove();
+    }, 500);
+  }
   
   if (activeTabId === tabId) {
     // Clean up gallery before switching

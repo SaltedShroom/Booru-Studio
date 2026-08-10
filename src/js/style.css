@@ -2366,6 +2366,7 @@ body, html {
 
 /* Download toasts (separate, bottom-left) */
 #download-toast-container {
+  margin-top: 4.4px;
   position: relative;
   display: flex;
   flex-direction: column;
@@ -2457,7 +2458,6 @@ body, html {
   border-bottom: solid 2px var(--bg-dark);
 }
 .download-toast:nth-child(2) {
-  border-bottom-right-radius: 8px;
   overflow: hidden;
 }
 .download-toast .dt-top {
@@ -2961,11 +2961,31 @@ body, html {
   background: rgba(255, 255, 255, 0.3);
 }
 
+.booru-tab-item.closing {
+  animation: slideOutTab 0.3s ease-out forwards;
+}
+
+@keyframes slideOutTab {
+  0% {
+    opacity: 1;
+    margin-right: 8px;
+    border-width: 2px;
+  }
+  100% {
+    max-width: 0;
+    opacity: 0;
+    margin-right: 0;
+    padding: 0;
+    border-width: 0;
+  }
+}
+
 .booru-tab-btn {
   background: var(--surface);
   border: 2px solid var(--border);
   color: var(--text-secondary);
   width: auto;
+  max-width: 280px;
   margin-left: 10px;
   border-radius: 0px;
   cursor: pointer;
