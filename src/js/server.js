@@ -1597,23 +1597,27 @@ const server = isWorkerMode ? null : http.createServer((req, res) => {
 
         console.log(`✓ Starting to fetch posts from ${artists.length} artists until we reach 100 posts...`);
 
-        const newPosts = [];
         const artistStats = [];
         const MIN_POSTS = 100;
         const PARALLEL_BATCH_SIZE = 8; // Fetch 8 artists in parallel
+
+        // Load existing posts ONCE at the start for incremental saves
+        let existingPosts = database.loadHomepageData() || [];
+        let existingIds = new Set(existingPosts.map(p => p.id));
+        let totalPostsAdded = 0;
 
         // Helper to fetch from a batch of artists
         const fetchArtistBatch = async (artistsToFetch, label = '') => {
           let artistIndex = 0;
           for (let batchStart = 0; batchStart < artistsToFetch.length; batchStart += PARALLEL_BATCH_SIZE) {
-            if (newPosts.length >= MIN_POSTS) {
+            if (totalPostsAdded >= MIN_POSTS) {
               console.log(`✓ Reached ${MIN_POSTS} posts, stopping fetch`);
               break;
             }
 
             const batchEnd = Math.min(batchStart + PARALLEL_BATCH_SIZE, artistsToFetch.length);
             const batch = artistsToFetch.slice(batchStart, batchEnd);
-            console.log(`${label}[${batchStart + 1}-${batchEnd}/${artistsToFetch.length}] [found: ${newPosts.length}] Fetching artists in parallel...`);
+            console.log(`${label}[${batchStart + 1}-${batchEnd}/${artistsToFetch.length}] [found: ${totalPostsAdded}] Fetching artists in parallel...`);
 
             const batchPromises = batch.map(async (artist) => {
 
@@ -1656,6 +1660,9 @@ const server = isWorkerMode ? null : http.createServer((req, res) => {
             });
 
             const batchResults = await Promise.all(batchPromises);
+            
+            // Process and save batch results incrementally
+            let batchAddedCount = 0;
             for (const result of batchResults) {
               if (result.posts.length > 0) {
                 for (const post of result.posts) {
@@ -1674,7 +1681,17 @@ const server = isWorkerMode ? null : http.createServer((req, res) => {
                       displayed_count: 0
                     };
                   }
-                  newPosts.push(mappedPost);
+                  
+                  // Check for duplicates and add to existingPosts
+                  if (!mappedPost.id || !existingIds.has(mappedPost.id)) {
+                    if (!mappedPost.id) {
+                      mappedPost.id = `${Date.now()}_${Math.random().toString(36).substr(2, 9)}`;
+                    }
+                    existingPosts.push(mappedPost);
+                    existingIds.add(mappedPost.id);
+                    batchAddedCount++;
+                    totalPostsAdded++;
+                  }
                 }
               }
 
@@ -1687,6 +1704,11 @@ const server = isWorkerMode ? null : http.createServer((req, res) => {
                 error: result.error,
                 duration: result.duration
               });
+            }
+            
+            // Save batch results incrementally
+            if (batchAddedCount > 0) {
+              database.saveHomepageData(existingPosts);
             }
           }
         };
@@ -1707,8 +1729,8 @@ const server = isWorkerMode ? null : http.createServer((req, res) => {
         await fetchArtistBatch(eligibleArtists);
 
         // If not enough posts, reset and try again with all artists
-        if (newPosts.length < MIN_POSTS) {
-          console.log(`⚠️ Not enough posts from eligible artists (found ${newPosts.length}/${MIN_POSTS}). Resetting last_checked_out and trying again...`);
+        if (totalPostsAdded < MIN_POSTS) {
+          console.log(`⚠️ Not enough posts from eligible artists (found ${totalPostsAdded}/${MIN_POSTS}). Resetting last_checked_out and trying again...`);
           
           try {
             for (const artist of artists) {
@@ -1722,45 +1744,20 @@ const server = isWorkerMode ? null : http.createServer((req, res) => {
           if (artists.length > 0) {
             console.log(`✓ Starting SECOND ATTEMPT with all ${artists.length} artists`);
             await fetchArtistBatch(artists, '[RETRY] ');
-            console.log(`✓ SECOND ATTEMPT COMPLETE: Found ${newPosts.length} total posts (target: ${MIN_POSTS})`);
+            console.log(`✓ SECOND ATTEMPT COMPLETE: Found ${totalPostsAdded} total posts (target: ${MIN_POSTS})`);
           }
         }
 
-
-        // Load existing posts and merge with new posts (avoiding duplicates)
-        const mergeStartTime = Date.now();
-        const existingPosts = database.loadHomepageData() || [];
-        
-        const existingIds = new Set(existingPosts.map(p => p.id));
-        
-        let actuallyAdded = 0;
-        for (const post of newPosts) {
-          // If post has no id, skip duplicate check; if it has id, check against existing
-          if (!post.id || !existingIds.has(post.id)) {
-            // Generate an ID for posts without one
-            if (!post.id) {
-              post.id = `${Date.now()}_${Math.random().toString(36).substr(2, 9)}`;
-            }
-            existingPosts.push(post);
-            existingIds.add(post.id);
-            actuallyAdded++;
-          }
-        }
-        // Save all posts to the database
-        const saveStartTime = Date.now();
-        database.saveHomepageData(existingPosts);
         const uniqueSources = new Set(artistStats.map(a => a.source || 'Unknown')).size;
         const totalDuration = Date.now() - batchStartTime;
-        console.log(`\n✓ BATCH COMPLETE: Added ${actuallyAdded} new posts from ${artistStats.length} artists, ${uniqueSources} sources. Total: ${totalDuration}ms`);
+        console.log(`\n✓ BATCH COMPLETE: Added ${totalPostsAdded} new posts from ${artistStats.length} artists, ${uniqueSources} sources. Total: ${totalDuration}ms`);
         console.log(`✓ ============ /api/get-favorite-batch END (${totalDuration}ms total) ============\n`);
 
         res.writeHead(200, { 'Content-Type': 'application/json' });
         res.end(JSON.stringify({ 
           ok: true, 
           message: 'Batch processed successfully',
-          postsFetched: newPosts.length,
-          postsAdded: actuallyAdded,
-          duplicatesSkipped: newPosts.length - actuallyAdded,
+          postsAdded: totalPostsAdded,
           totalPosts: existingPosts.length,
           artistsProcessed: artistStats,
           duration: totalDuration

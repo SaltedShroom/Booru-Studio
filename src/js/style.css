@@ -2366,7 +2366,6 @@ body, html {
 
 /* Download toasts (separate, bottom-left) */
 #download-toast-container {
-  margin-top: 4.4px;
   position: relative;
   display: flex;
   flex-direction: column;
@@ -2393,8 +2392,9 @@ body, html {
 .loading-toast-counter {
   position: relative;
   width: 100%;
-  padding: 6px 10px;
+  padding: 6px 10px 14px;
   font-size: 11px;
+  z-index: 9;
   color: var(--text-secondary);
   border-bottom: 1px solid var(--border);
   overflow: hidden;
@@ -2404,8 +2404,8 @@ body, html {
   pointer-events: none;
   user-select: none;
   margin: 0;
-  margin-top: 6.4px;
   transition: transform 0.5s ease, opacity 0.2s ease;
+  box-shadow: 0 0 8px var(--control-bar-shadow);
 }
 .loading-toast-counter b {
   font-weight: bold;
@@ -2422,11 +2422,10 @@ body, html {
   opacity: 0.5;
 }
 .hq-loading-progress-bar {
-  position: absolute;
+  position: relative;
   width: 100%;
   height: 6px;
   z-index: 10;
-  top: 0;
   background: var(--bg-dark);
   border-bottom: 1px solid var(--border);
   overflow: hidden;
@@ -2448,6 +2447,8 @@ body, html {
   color: var(--text-primary);
   border-top: 1px solid var(--surface-dark);
   padding: 8px 12px;
+  height: 54px;
+  min-height: 54px;
   display: flex;
   flex-direction: column;
   gap: 0;
@@ -6396,6 +6397,9 @@ textarea.settings-input {
   overflow-y: auto;
   gap: 4px;
   max-height: 200px;
+  background: var(--surface-darkest);
+  padding: 4px;
+  box-sizing: border-box;
 }
 
 .query-item {
@@ -6467,3 +6471,4 @@ textarea.settings-input {
   font-size: 18px;
   text-align: center;
 }
+
