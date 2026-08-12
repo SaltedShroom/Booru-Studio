@@ -235,21 +235,6 @@ document.addEventListener('DOMContentLoaded', () => {
   fillBooruEndTags();
 });
 
-// Function to fetch the next batch of favorite posts from artists
-async function fetchFavoriteBatch() {
-  try {
-    const response = await fetch('http://localhost:3001/api/get-favorite-batch');
-    const data = await response.json();
-    
-    if (!response.ok) {
-      console.warn('⚠️ Error fetching favorite batch:', data.error || 'Unknown error');
-      return;
-    }
-  } catch (error) {
-    console.warn('⚠️ Error calling get-favorite-batch endpoint:', error.message);
-  }
-}
-
 // Setup booru panel drag functionality with snap-to-state
 function setupBooruPanelDrag() {
   const panelToggle = document.getElementById('booru-panel-toggle');
@@ -723,6 +708,7 @@ let aiFilterEnabled = false; // AI filter OFF by default
 let animateGifs = false; // GIF animation OFF by default (show first frame only)
 let maxRecommendedTags = 20;
 let activeDownloadsSidebarTab = 'analytics'; // or 'mosaic'
+let homepageIsFetching = false;
 
 // Gallery quality state
 let showHighQualityGallery = false;
@@ -4110,6 +4096,11 @@ window.showHomepage = showHomepage;
 
 // Function to load homepage posts
 async function loadHomepagePosts(fetchNew = false, append = false) {
+  if (homepageIsFetching) {
+    console.warn('Homepage fetch already in progress, skipping new request.');
+    return;
+  }
+  homepageIsFetching = true;
   const booruGallery = document.getElementById('booru-gallery');
   const booruCounter = document.getElementById('booru-total-count');
   const noPostsAvailable = document.getElementById('no-posts-available');
@@ -4135,6 +4126,7 @@ async function loadHomepagePosts(fetchNew = false, append = false) {
         if (booruGallery) {
           booruGallery.innerHTML = '';
         }
+        homepageIsFetching = false;
         return;
       }
 
@@ -4163,6 +4155,7 @@ async function loadHomepagePosts(fetchNew = false, append = false) {
         }
         const booruLoading = document.getElementById('booru-loading');
         if (booruLoading) booruLoading.style.display = 'none';
+        homepageIsFetching = false;
         return;
       }
       
@@ -4185,6 +4178,7 @@ async function loadHomepagePosts(fetchNew = false, append = false) {
         booruCounter.innerHTML = `HOMEPAGE <b>${window.booruPosts.length}</b>`;
       }
       
+      homepageIsFetching = false;
       return;
     }
     
@@ -4208,6 +4202,7 @@ async function loadHomepagePosts(fetchNew = false, append = false) {
         if (booruGallery) {
           booruGallery.innerHTML = '';
         }
+        homepageIsFetching = false;
         return;
       }
     }
@@ -4222,6 +4217,7 @@ async function loadHomepagePosts(fetchNew = false, append = false) {
       if (booruGallery) {
         booruGallery.innerHTML = `<div style="display: flex; align-items: center; justify-content: center; width: 100%; height: 300px; flex-direction: column; color: var(--text-secondary); font-size: 18px; text-align: center;"><i class="fas fa-exclamation-circle" style="font-size: 48px; margin-bottom: 10px;"></i><div>Error loading posts</div><div style="font-size: 14px; margin-top: 5px;">${errMsg}</div></div>`;
       }
+      homepageIsFetching = false;
       return;
     }
     
@@ -4252,6 +4248,7 @@ async function loadHomepagePosts(fetchNew = false, append = false) {
         booruCounter.innerHTML = `HOMEPAGE <b>0</b>`;
         booruCounter.style.display = 'block';
       }
+      homepageIsFetching = false;
       return;
     }
     
@@ -4301,6 +4298,7 @@ async function loadHomepagePosts(fetchNew = false, append = false) {
       }
     }
   }
+  homepageIsFetching = false;
 }
 
 // Clean up posts up to and including the downloaded post from homepage table
@@ -11137,6 +11135,8 @@ if (booruContent) {
         const clientHeight = booruContent.clientHeight;
 
         if (scrollTop + clientHeight >= scrollHeight - 300) {
+          if (homepageIsFetching) return; // Prevent multiple fetches while fetching
+
           // Set loading state to prevent multiple loads
           isLoadingBooru = true;
           
