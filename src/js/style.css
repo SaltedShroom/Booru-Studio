@@ -3545,6 +3545,10 @@ body, html {
   transition: border-color 0.3s ease;
 }
 
+.booru-image-item video {
+  min-width: 100%;
+}
+
 .booru-image-item img.loaded,
 .booru-image-item video.loaded {
   opacity: 1;
@@ -3701,7 +3705,8 @@ body, html {
 /* Videos - constrain to prevent overflow */
 .booru-hover-preview-media video {
   max-width: 100%;
-  min-width: 250px;
+  min-width: 100%;
+  min-height: 300px;
   max-height: 520px;
   width: auto;
   height: auto;

@@ -9248,6 +9248,7 @@ document.addEventListener('mousemove', (e) => {
     if (
       mediaElement &&
       mediaElement.classList.contains('loaded') &&
+      mediaElement.parentElement.classList.contains('file-type-video') === false &&
       typeof showPreviewForElement === 'function'
     ) {
       window.booruLastHoveredElement = mediaElement;
@@ -10038,13 +10039,46 @@ function showPreviewForElement(mediaElement, forceVideoLoad = false, hidden = fa
     // If this post's preview is already loading, check if we should use cached element
     // But ALWAYS show the thumbnail first while loading, don't skip rendering
     if (previewAlreadyLoading && cachedPreview?.element) {
-      // Preview is loading - show cached element (which may be an img or video element)
-      // and continue to display HQ video once ready
-      if (cachedPreview.element.parentNode !== booruPreviewMediaContainer) {
+      // Preview is loading - if it's a video, don't show it yet (it's not ready)
+      // Only show the video once it's actually loaded, otherwise show thumbnail
+      if (cachedPreview.element.tagName === 'VIDEO' && cachedPreview.isLoading) {
+        // Video is still loading - DON'T start a new load, just show thumbnail and wait
+        // Create a thumbnail img to display while video loads in background
         booruPreviewMediaContainer.innerHTML = '';
-        booruPreviewMediaContainer.appendChild(cachedPreview.element);
+        const img = document.createElement('img');
+        img.alt = 'Loading video...';
+        img.dataset.postId = targetPostId;
+        img.dataset.postSource = targetPostSource;
+        const gallerySrc = mediaElement.currentSrc || mediaElement.src || mediaElement.dataset.resolvedThumbnailUrl || getImageUrl(mediaElement.dataset.thumbnailUrl || mediaElement.dataset.imageUrl);
+        const isGif = mediaElement.dataset.isGif === 'true';
+        if (isGif) {
+          img.src = gallerySrc;
+        } else {
+          try {
+            const canvas = document.createElement('canvas');
+            canvas.width = mediaElement.naturalWidth;
+            canvas.height = mediaElement.naturalHeight;
+            const ctx = canvas.getContext('2d');
+            if (ctx && mediaElement.naturalWidth > 0 && mediaElement.naturalHeight > 0 && mediaElement.complete) {
+              ctx.drawImage(mediaElement, 0, 0);
+              img.src = canvas.toDataURL('image/jpeg', 0.92);
+            } else {
+              img.src = gallerySrc;
+            }
+          } catch (err) {
+            img.src = gallerySrc;
+          }
+        }
+        booruPreviewMediaContainer.appendChild(img);
+        return; // Don't start a new load, wait for the existing one
+      } else {
+        // For already-loaded videos or images, show the cached element
+        if (cachedPreview.element.parentNode !== booruPreviewMediaContainer) {
+          booruPreviewMediaContainer.innerHTML = '';
+          booruPreviewMediaContainer.appendChild(cachedPreview.element);
+        }
+        return;
       }
-      return;
     }
 
     const previewDelay = window.hqHoverDelay ?? 150;
@@ -10179,7 +10213,8 @@ function showPreviewForElement(mediaElement, forceVideoLoad = false, hidden = fa
     });
 
     // When video is loaded, replace the image with the video
-    video.addEventListener('canplay', () => {
+    // Use 'loadeddata' instead of 'canplay' to ensure the first frame is ready for display
+    video.addEventListener('loadeddata', () => {
       if (img.parentNode === booruPreviewMediaContainer) {
         // Normal path: thumbnail placeholder still showing — swap it out for the loaded video
         booruPreviewMediaContainer.removeChild(img);
