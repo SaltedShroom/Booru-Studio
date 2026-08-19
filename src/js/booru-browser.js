@@ -9244,11 +9244,9 @@ document.addEventListener('mousemove', (e) => {
       el.matches('.booru-image-item img, .booru-image-item video')
     );
 
-    // Only reload preview if it's an image, not a video
     if (
       mediaElement &&
       mediaElement.classList.contains('loaded') &&
-      mediaElement.parentElement.classList.contains('file-type-video') === false &&
       typeof showPreviewForElement === 'function'
     ) {
       window.booruLastHoveredElement = mediaElement;
@@ -9518,6 +9516,81 @@ function pauseAllPreviewVideos() {
       if (entry && entry.element && entry.element.tagName === 'VIDEO') {
         try { entry.element.pause(); } catch (e) {}
       }
+    }
+  }
+}
+
+// Update preview metadata (tags, author, date) — shared for both video and image previews
+function updatePreviewMetadata(mediaElement) {
+  if (!mediaElement || !mediaElement.dataset.tags) return;
+  
+  const tags = mediaElement.dataset.tags.split(' ').filter(t => t.length > 0);
+  booruPreviewTags.innerHTML = '';
+  
+  // Get current search tags for highlighting
+  const rawSearchTags = searchFilterInput ? searchFilterInput.value.trim() : '';
+  const { searchTagsArray } = parseTagsAndBlacklist(rawSearchTags);
+  const searchTagsLower = searchTagsArray ? searchTagsArray.map(t => t.toLowerCase()) : [];
+  
+  tags.forEach(tag => {
+    const tagSpan = document.createElement('span');
+    tagSpan.className = 'booru-tag';
+    
+    // Highlight if it matches a searched tag
+    if (searchTagsLower.includes(tag.toLowerCase())) {
+      tagSpan.classList.add('searched');
+    }
+    
+    tagSpan.textContent = tag;
+    const tagKey = tag.toLowerCase();
+    if (previewMiddleClickedTags.has(tagKey)) {
+      tagSpan.classList.add('middle-selected');
+    }
+
+    // Add click handler for tag (only works when preview is frozen)
+    tagSpan.addEventListener('click', (e) => {
+      if (previewFrozen && searchFilterInput) {
+        e.preventDefault();
+        e.stopPropagation();
+        togglePreviewTagSelection(tag);
+      }
+    });
+    
+    tagSpan.addEventListener('mousedown', (e) => {
+      if (e.button === 1) { // Middle mouse button
+        e.preventDefault();
+        e.stopPropagation();
+        if (previewFrozen) {
+          togglePreviewMiddleTagSelection(tag);
+          return;
+        }
+        if (typeof createNewBooruTab === 'function') {
+          try {
+            createNewBooruTab(tag);
+          } catch (err) {
+            showToast('Failed to create new tab for tag: ' + tag + ' - ' + err.message, 'error');
+          }
+        }
+      }
+    });
+    
+    booruPreviewTags.appendChild(tagSpan);
+  });
+
+  // Render all Artists as tags
+  const authorValue = mediaElement.parentElement?.dataset.artist || mediaElement.dataset.author || '?';
+  setPreviewArtistNames(mediaElement, authorValue);
+  
+  // Display upload date if available
+  booruPreviewDate.innerHTML = '';
+  const createdAt = mediaElement.dataset.createdAt;
+  if (createdAt && createdAt !== '') {
+    const dateTag = document.createElement('span');
+    dateTag.className = 'booru-tag date-tag';
+    const dateObj = new Date(parseInt(createdAt) || createdAt);
+    if (!isNaN(dateObj.getTime())) {
+      dateTag.textContent = dateObj.toLocaleDateString('en-US', { year: 'numeric', month: 'short', day: 'numeric' });
+      booruPreviewDate.appendChild(dateTag);
     }
   }
 }
@@ -10033,6 +10106,8 @@ function showPreviewForElement(mediaElement, forceVideoLoad = false, hidden = fa
     // If we already have a fully loaded cached preview for this post, use it
     if (cachedPreview?.isLoaded && cachedPreview.element) {
       renderCachedPreview();
+      updatePreviewMetadata(mediaElement);
+      if (!hidden) booruHoverPreview.classList.add('active');
       return;
     }
 
@@ -10070,6 +10145,8 @@ function showPreviewForElement(mediaElement, forceVideoLoad = false, hidden = fa
           }
         }
         booruPreviewMediaContainer.appendChild(img);
+        updatePreviewMetadata(mediaElement);
+        if (!hidden) booruHoverPreview.classList.add('active');
         return; // Don't start a new load, wait for the existing one
       } else {
         // For already-loaded videos or images, show the cached element
@@ -10077,6 +10154,8 @@ function showPreviewForElement(mediaElement, forceVideoLoad = false, hidden = fa
           booruPreviewMediaContainer.innerHTML = '';
           booruPreviewMediaContainer.appendChild(cachedPreview.element);
         }
+        updatePreviewMetadata(mediaElement);
+        if (!hidden) booruHoverPreview.classList.add('active');
         return;
       }
     }
@@ -10093,10 +10172,14 @@ function showPreviewForElement(mediaElement, forceVideoLoad = false, hidden = fa
         // Resume video load after delay
         showPreviewForElement(mediaElement, true, hidden);
       }, previewDelay);
+      updatePreviewMetadata(mediaElement);
+      if (!hidden) booruHoverPreview.classList.add('active');
       return;
     }
 
     if (!forceVideoLoad && mediaElement._videoPreviewDelayTimer) {
+      updatePreviewMetadata(mediaElement);
+      if (!hidden) booruHoverPreview.classList.add('active');
       return;
     }
 
@@ -10849,75 +10932,8 @@ function showPreviewForElement(mediaElement, forceVideoLoad = false, hidden = fa
     return;
   }
   
-  const tags = mediaElement.dataset.tags.split(' ').filter(t => t.length > 0);
-  booruPreviewTags.innerHTML = '';
-  
-  // Get current search tags for highlighting
-  const rawSearchTags = searchFilterInput ? searchFilterInput.value.trim() : '';
-  const { searchTagsArray } = parseTagsAndBlacklist(rawSearchTags);
-  const searchTagsLower = searchTagsArray ? searchTagsArray.map(t => t.toLowerCase()) : [];
-  
-  tags.forEach(tag => {
-    const tagSpan = document.createElement('span');
-    tagSpan.className = 'booru-tag';
-    
-    // Highlight if it matches a searched tag
-    if (searchTagsLower.includes(tag.toLowerCase())) {
-      tagSpan.classList.add('searched');
-    }
-    
-    tagSpan.textContent = tag;
-    const tagKey = tag.toLowerCase();
-    if (previewMiddleClickedTags.has(tagKey)) {
-      tagSpan.classList.add('middle-selected');
-    }
-
-    // Add click handler for tag (only works when preview is frozen)
-    tagSpan.addEventListener('click', (e) => {
-      if (previewFrozen && searchFilterInput) {
-        e.preventDefault();
-        e.stopPropagation();
-        togglePreviewTagSelection(tag);
-      }
-    });
-    
-    tagSpan.addEventListener('mousedown', (e) => {
-      if (e.button === 1) { // Middle mouse button
-        e.preventDefault();
-        e.stopPropagation();
-        if (previewFrozen) {
-          togglePreviewMiddleTagSelection(tag);
-          return;
-        }
-        if (typeof createNewBooruTab === 'function') {
-          try {
-            createNewBooruTab(tag);
-          } catch (err) {
-            showToast('Failed to create new tab for tag: ' + tag + ' - ' + err.message, 'error');
-          }
-        }
-      }
-    });
-    
-    booruPreviewTags.appendChild(tagSpan);
-  });
-
-  // Render all Artists as tags
-  const authorValue = mediaElement.parentElement?.dataset.artist || mediaElement.dataset.author || '?';
-  setPreviewArtistNames(mediaElement, authorValue);
-  
-  // Display upload date if available
-  booruPreviewDate.innerHTML = '';
-  const createdAt = mediaElement.dataset.createdAt;
-  if (createdAt && createdAt !== '') {
-    const dateTag = document.createElement('span');
-    dateTag.className = 'booru-tag date-tag';
-    const dateObj = new Date(parseInt(createdAt) || createdAt);
-    if (!isNaN(dateObj.getTime())) {
-      dateTag.textContent = dateObj.toLocaleDateString('en-US', { year: 'numeric', month: 'short', day: 'numeric' });
-      booruPreviewDate.appendChild(dateTag);
-    }
-  }
+  // Update preview metadata (tags, author, date) for both video and image previews
+  updatePreviewMetadata(mediaElement);
   
   if (!hidden) {
     booruHoverPreview.classList.add('active');

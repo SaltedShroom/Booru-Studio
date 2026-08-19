@@ -2369,15 +2369,12 @@ body, html {
   position: relative;
   display: flex;
   flex-direction: column;
-  pointer-events: auto;
   overflow: hidden;
-  user-select: none;
   height: 50%;
   min-height: 200px;
   opacity: 1;
   transition: opacity 0.2s ease;
-
-  pointer-events: none;
+  z-index: 200;
 }
 #download-toast-list {
   position: relative;
@@ -2386,7 +2383,7 @@ body, html {
   overflow-y: scroll;
   height: 100%;
   max-height: 100%;
-  z-index: 1;
+  z-index: 300;
 }
 
 .loading-toast-counter {

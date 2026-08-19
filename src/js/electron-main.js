@@ -15,6 +15,8 @@ const fs = require('fs');
 const https = require('https');
 const { autoUpdater } = require('electron-updater');
 
+app.setName('Booru Studio');
+
 // Keep global references to prevent garbage collection
 let mainWindow = null;
 let launcherWindow = null;
