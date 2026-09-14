@@ -5533,6 +5533,48 @@ textarea.settings-input {
   text-shadow: 0 0 4px #000000;
 }
 
+.star-project {
+  position: relative;
+  overflow: visible;
+  margin-right: 20px;
+  word-wrap: none;
+  text-wrap: none;
+  white-space: nowrap;
+}
+
+.star-project a {
+  color: var(--accent-secondary);
+  border: none !important;
+  outline: none !important;
+  text-decoration: none;
+}
+.star-project a:hover {
+  color: var(--accent-secondary);
+  border: none !important;
+  outline: none !important;
+  text-decoration: solid underline;
+}
+
+.star-project img {
+  position: absolute;
+  bottom: -144px;
+  left: -30px;
+  width: 260px;
+  min-width: 260px;
+  height: 140px;
+  min-height: 140px;
+  z-index: 1000;
+  border: solid 2px var(--accent-secondary);
+  outline: solid 1px var(--border);
+  box-shadow: 0 0 8px rgba(0, 0, 0, 0.4);
+  opacity: 0;
+  pointer-events: none;
+}
+
+.star-project a:hover img {
+  opacity: 1;
+}
+
 .window-zoom-controls {
   position: relative;
   display: flex;
