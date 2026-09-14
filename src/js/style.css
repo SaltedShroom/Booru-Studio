@@ -2369,7 +2369,6 @@ body, html {
   position: relative;
   display: flex;
   flex-direction: column;
-  overflow: hidden;
   height: 50%;
   min-height: 200px;
   opacity: 1;
@@ -2384,6 +2383,46 @@ body, html {
   height: 100%;
   max-height: 100%;
   z-index: 300;
+}
+.sidebar-content {
+  container-type: size;
+}
+
+@container (width <= 0px) {
+  .sidebar-content {
+    overflow: visible !important;
+  }
+  
+  #download-toast-list {
+    position: fixed !important;
+    width: 200px !important;
+    height: 500px !important;
+    left: 0 !important;
+    bottom: 130px !important;
+    z-index: 99999 !important;
+    opacity: 1 !important;
+    visibility: visible !important;
+    pointer-events: none !important;
+    overflow-y: hidden;
+    flex-direction: column-reverse;
+    border-bottom-right-radius: 8px;
+    border-top-right-radius: 8px;
+  }
+  
+  #download-toast-list .download-toast:last-child {
+    border-top-right-radius: 8px;
+  }
+
+  .download-toast {
+    opacity: 0;
+  }
+
+  .download-toast.show {
+    opacity: 0.9 !important;
+    visibility: visible !important;
+    transform: translateX(0) !important;
+    display: flex !important;
+  }
 }
 
 .loading-toast-counter {
@@ -3635,7 +3674,10 @@ body, html {
   position: fixed;
   pointer-events: none;
   z-index: 99999999;
-  display: none;
+  display: flex;
+  opacity: 0;
+  visibility: hidden;
+  transition: opacity 0.4s ease, visibility 0.4s ease, width 0.4s ease, height 0.4s ease, max-height 0.4s ease;
   background: var(--surface);
   border: 2px solid var(--border);
   border-radius: 8px;
@@ -3675,7 +3717,8 @@ body, html {
 }
 
 .booru-hover-preview.active {
-  display: flex;
+  opacity: 1;
+  visibility: visible;
 }
 
 .booru-hover-preview-media {
@@ -5283,6 +5326,10 @@ textarea.settings-input {
   width: 280px;
 }
 
+.app-loading-download-container.hidden {
+  display: none !important;
+}
+
 .app-loading-download-container.loaded {
   opacity: 1;
 }
@@ -5291,6 +5338,10 @@ textarea.settings-input {
   left: 0px;
   width: 199px;
   transform: translateX(0);
+}
+
+.app-loading-download-container.hidden:has(.loaded) {
+  display: none !important;
 }
 
 

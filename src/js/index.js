@@ -35,6 +35,7 @@ const root = document.documentElement;
 const themeToggleBtn = document.getElementById('theme-toggle-btn');
 const supportToastEnabled = document.getElementById('support-toast-enabled');
 const coinAnimationEnabled = document.getElementById('coin-animation-enabled');
+const showDownloadCounterEnabled = document.getElementById('show-download-counter-enabled');
 const LOCAL_SERVER_ERROR_COOLDOWN_MS = 15000;
 let tallImageScrollSpeedMultiplier = 1.1; // seconds per 100px of image height
 let localServerUnavailableUntil = 0;
@@ -99,6 +100,29 @@ if (coinAnimationEnabled) {
     if (window.CoinCollector) {
       window.CoinCollector.coinAnimationsDisabled = !coinAnimationEnabled.checked;
     }
+    // When download coin animation is enabled, ensure show download counter is also enabled
+    if (coinAnimationEnabled.checked && showDownloadCounterEnabled) {
+      showDownloadCounterEnabled.checked = true;
+      localStorage.setItem('showDownloadCounterEnabled', 'true');
+    }
+    debouncedSettingsSave();
+  });
+}
+
+if (showDownloadCounterEnabled) {
+  showDownloadCounterEnabled.checked = localStorage.getItem('showDownloadCounterEnabled') !== 'false';
+  showDownloadCounterEnabled.addEventListener('change', () => {
+    localStorage.setItem('showDownloadCounterEnabled', showDownloadCounterEnabled.checked ? 'true' : 'false');
+    // When show download counter is disabled, also disable download coin animation
+    if (!showDownloadCounterEnabled.checked && coinAnimationEnabled) {
+      coinAnimationEnabled.checked = false;
+      localStorage.setItem('coinAnimationEnabled', 'false');
+      if (window.CoinCollector) {
+        window.CoinCollector.coinAnimationsDisabled = true;
+      }
+    }
+    // Update the download counter visibility
+    updateDownloadCounterVisibility();
     debouncedSettingsSave();
   });
 }
@@ -1273,6 +1297,19 @@ function hideLoadingOverlay() {
   overlay.classList.add('fade-out');
 }
 
+// Update the visibility of the download counter container
+function updateDownloadCounterVisibility() {
+  const container = document.getElementById('app-loading-download-container');
+  if (!container) return;
+  
+  const isEnabled = showDownloadCounterEnabled ? showDownloadCounterEnabled.checked : true;
+  if (isEnabled) {
+    container.classList.remove('hidden');
+  } else {
+    container.classList.add('hidden');
+  }
+}
+
 // Global function to update download folder size odometer
 window.updateDownloadFolderSizeOdometer = async function() {
   try {
@@ -1392,6 +1429,9 @@ window.incrementDownloadFolderSizeOdometer = function(downloadedBytes) {
   if (window._initBooruTabs) await window._initBooruTabs();
   hideLoadingOverlay();
   countContainer.classList.add('loaded');
+  
+  // Apply download counter visibility setting
+  updateDownloadCounterVisibility();
   
   // Setup booru source change tracking
   setupBooruSourceChangeTracking();

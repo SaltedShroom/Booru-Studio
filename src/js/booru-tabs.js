@@ -1,4 +1,5 @@
 booruTabs = [];
+let booruSource = null;
 
 // Browser-mode fallback: custom input dialog replacing prompt()
 function showFolderPrompt(defaultValue) {
@@ -705,9 +706,11 @@ function openNewQueryTab(query, source) {
 }
 
 // Create a new booru tab
-function createNewBooruTab(name = 'Search', switchToIt = false, initialSearch = '', scrollToTab = true) {
+function createNewBooruTab(name = 'Search', switchToIt = false, initialSearch = '', scrollToTab = true, source = null) {
   const existingEndMessage = booruContent.querySelector('.booru-end-message');
   if (existingEndMessage) existingEndMessage.remove();
+
+  booruSource = source;
 
   const tabId = `booru-tab-${tabIdCounter++}`;
   
@@ -762,7 +765,7 @@ function createNewBooruTab(name = 'Search', switchToIt = false, initialSearch = 
 // Get current state from controls
 function getCurrentState() {
   return {
-    source: document.getElementById('booru-source-select')?.value,
+    source: booruSource ?? document.getElementById('booru-source-select')?.value,
     sort: document.getElementById('booru-sort-select')?.value || 'hot',
     limit: parseInt(document.getElementById('booru-limit-input')?.value) || 100,
     imageSize: parseInt(document.getElementById('image-size-slider')?.value) || 250,

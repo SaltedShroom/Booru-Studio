@@ -7789,6 +7789,10 @@ function renderBooruGallery(posts, append = true, addSeparators = true) {
       }
       // Refresh gallery with new items
       $(booruGallery).justifiedGallery('norewindItems');
+      
+      // CRITICAL: Start batch loading thumbnails for newly appended images
+      // Without this, appended items won't have src set and won't display
+      startBatchThumbnailLoading();
     });
   } else {
     // CHECK STATE BEFORE RENDERING DOM
@@ -10221,22 +10225,18 @@ function showPreviewForElement(mediaElement, forceVideoLoad = false, hidden = fa
 
     // Create preview loading overlay for videos (show loading indicator during HQ load)
     let loadingOverlay = booruPreviewMediaContainer.querySelector('.preview-loading-overlay');
-    if (!loadingOverlay && (mediaElement.tagName === 'VIDEO' || (mediaElement.tagName === 'IMG' && mediaElement.dataset.thumbnailUrl && mediaElement.dataset.imageUrl !== mediaElement.dataset.thumbnailUrl))) {
-      // For videos, always show loading overlay since HQ loading may take time
-      // For images, show overlay if HQ version exists and differs from thumbnail
-      loadingOverlay = document.createElement('div');
-      loadingOverlay.className = 'preview-loading-overlay';
-      loadingOverlay.innerHTML = `
-        <svg class="preview-progress-circle" viewBox="0 0 100 100" width="45" height="45">
-          <circle class="preview-progress-bg" cx="50" cy="50" r="42" />
-          <circle class="preview-progress-fill" cx="50" cy="50" r="42" />
-        </svg>
-        <div class="preview-loading-percent">0%</div>
-      `;
-      loadingOverlay.dataset.hqLoading = 'true';
-      booruPreviewMediaContainer.style.position = 'relative';
-      booruPreviewMediaContainer.appendChild(loadingOverlay);
-    }
+    loadingOverlay = document.createElement('div');
+    loadingOverlay.className = 'preview-loading-overlay';
+    loadingOverlay.innerHTML = `
+      <svg class="preview-progress-circle" viewBox="0 0 100 100" width="45" height="45">
+        <circle class="preview-progress-bg" cx="50" cy="50" r="42" />
+        <circle class="preview-progress-fill" cx="50" cy="50" r="42" />
+      </svg>
+      <div class="preview-loading-percent">0%</div>
+    `;
+    loadingOverlay.dataset.hqLoading = 'true';
+    booruPreviewMediaContainer.style.position = 'relative';
+    booruPreviewMediaContainer.appendChild(loadingOverlay);
 
     // Also show gallery item's loader + set download button spinner (if present)
     const galleryItem = mediaElement.closest('.booru-image-item');
