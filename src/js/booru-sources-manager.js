@@ -64,19 +64,23 @@ class BooruSourcesManager {
         source.fields = {};
       }
 
-      // Only update metaTagFields if they exist and are an array
+      // Check if metaTagFields exists and has items
       if (source.fields.metaTagFields && Array.isArray(source.fields.metaTagFields) && source.fields.metaTagFields.length > 0) {
-        // Check if any fields are missing the keyPath property
+        // Add keyPath property to existing fields that don't have it
         const needsKeyPathMigration = source.fields.metaTagFields.some(field => !('keyPath' in field));
-
         if (needsKeyPathMigration) {
-          // Add keyPath property to existing fields (but don't replace the array)
           for (const field of source.fields.metaTagFields) {
             if (!('keyPath' in field)) {
               field.keyPath = '';
               migrationOccurred = true;
             }
           }
+        }
+      } else if (!source.fields.metaTagFields) {
+        // If metaTagFields is missing (not just empty), populate it from the default source
+        if (defaultSource.fields && defaultSource.fields.metaTagFields && defaultSource.fields.metaTagFields.length > 0) {
+          source.fields.metaTagFields = JSON.parse(JSON.stringify(defaultSource.fields.metaTagFields));
+          migrationOccurred = true;
         }
       }
     }
@@ -1478,6 +1482,9 @@ class BooruSourcesManager {
     const colorInput = row.querySelector('.metaTag-field-color');
     const colorValue = row.querySelector('.meta-tag-color-value');
     const previewTag = row.querySelector('.booru-preview-meta-tag');
+    
+    // Set the color input value (required for color inputs to work properly)
+    colorInput.value = color;
     
     // Update displayed color value and preview when input changes
     colorInput.addEventListener('input', (e) => {
