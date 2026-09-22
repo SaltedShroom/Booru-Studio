@@ -56,35 +56,24 @@ class BooruSourcesManager {
       const source = this.sources[i];
       const defaultSource = defaultSources.find(d => d.id === source.id);
 
-      if (!defaultSource) continue; // Skip sources that don't have a default
+      // Only update sources that match a default source
+      if (!defaultSource) continue;
 
-      // Check if metaTagFields need migration (missing keyPath property)
-      if (source.fields && source.fields.metaTagFields && Array.isArray(source.fields.metaTagFields)) {
+      // Ensure fields object exists
+      if (!source.fields) {
+        source.fields = {};
+      }
+
+      // Only update metaTagFields if they exist and are an array
+      if (source.fields.metaTagFields && Array.isArray(source.fields.metaTagFields) && source.fields.metaTagFields.length > 0) {
+        // Check if any fields are missing the keyPath property
         const needsKeyPathMigration = source.fields.metaTagFields.some(field => !('keyPath' in field));
 
         if (needsKeyPathMigration) {
-          // Merge new default metaTagFields into existing source
-          // This preserves user customizations while adding new fields from defaults
-          const defaultMetaTagFields = defaultSource.fields.metaTagFields || [];
-
-          // Create a map of existing fields by type for easier lookup
-          const existingFieldsMap = new Map(
-            source.fields.metaTagFields.map(field => [field.type, field])
-          );
-
-          // Merge defaults: for each default field, if it exists in user's config, update it with keyPath
-          // If it doesn't exist, add it from defaults
-          for (const defaultField of defaultMetaTagFields) {
-            if (existingFieldsMap.has(defaultField.type)) {
-              // Field exists in user's config - add keyPath if missing
-              const existingField = existingFieldsMap.get(defaultField.type);
-              if (!('keyPath' in existingField)) {
-                existingField.keyPath = defaultField.keyPath || '';
-                migrationOccurred = true;
-              }
-            } else {
-              // Field doesn't exist - add it from defaults
-              source.fields.metaTagFields.push({ ...defaultField });
+          // Add keyPath property to existing fields (but don't replace the array)
+          for (const field of source.fields.metaTagFields) {
+            if (!('keyPath' in field)) {
+              field.keyPath = '';
               migrationOccurred = true;
             }
           }
