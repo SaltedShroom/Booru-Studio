@@ -54,7 +54,9 @@ async function initDatabase() {
       source TEXT,
       aspect_ratio REAL,
       created_at INTEGER,
-      downloaded_at INTEGER
+      downloaded_at INTEGER,
+      rating INTEGER DEFAULT 0,
+      tag_info TEXT
     );
     
     CREATE TABLE IF NOT EXISTS downloaded_artists (
@@ -122,12 +124,14 @@ async function initDatabase() {
   `);
 
   migrateDownloadedPostsSchema();
+  migrateAddTagInfoColumn();
   migrateTagSuggestionsSchema();
   migrateDownloadedArtistsSchema();
   migrateDownloadedArtistsAddSourceColumn();
   migrateDownloadedArtistsAddExistingCountColumn();
   migrateDownloadedArtistsAddScoreColumn();
   migrateDownloadedArtistsAddLastCheckedOutColumn();
+  migrateDownloadedPostsAddRatingColumn();
   migrateHomepageSchema();
 
   db.exec(`
@@ -195,6 +199,23 @@ function migrateDownloadedPostsSchema() {
     DROP TABLE downloaded_posts;
     ALTER TABLE downloaded_posts_temp RENAME TO downloaded_posts;
   `);
+}
+
+// Add tag_info column to downloaded_posts if it doesn't exist
+function migrateAddTagInfoColumn() {
+  if (!db) return;
+  
+  try {
+    const existingColumns = db.prepare('PRAGMA table_info(downloaded_posts)').all().map(col => col.name);
+    
+    if (!existingColumns.includes('tag_info')) {
+      console.log('⏳ Adding tag_info column to downloaded_posts...');
+      db.prepare('ALTER TABLE downloaded_posts ADD COLUMN tag_info TEXT').run();
+      console.log('✅ tag_info column added to downloaded_posts');
+    }
+  } catch (error) {
+    console.warn('⚠️  Could not add tag_info column (may already exist):', error.message);
+  }
 }
 
 // Initialize downloaded_artists from downloaded_posts if it's empty but posts exist
@@ -296,8 +317,8 @@ function saveDownloadedPost(post) {
     // Save the post
     const stmt = db.prepare(`
       INSERT OR REPLACE INTO downloaded_posts 
-      (id, image_url, thumbnail_url, tags, artist, score, source, aspect_ratio, created_at, downloaded_at)
-      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+      (id, image_url, thumbnail_url, tags, artist, score, source, aspect_ratio, created_at, downloaded_at, rating, tag_info)
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
     `);
     
     stmt.run(
@@ -310,7 +331,9 @@ function saveDownloadedPost(post) {
       post.source || undefined,
       post.aspectRatio || post.aspect_ratio || null,
       post.createdAt || post.created_at || null,
-      downloadedAt
+      downloadedAt,
+      post.rating !== undefined ? Number(post.rating) : 0,
+      JSON.stringify(Array.isArray(post.tag_info) ? post.tag_info : [])
     );
     
     // Handle artist statistics
@@ -377,6 +400,51 @@ function removeDownloadedPost(id) {
     return true;
   } catch (error) {
     console.error('❌ removeDownloadedPost FAILED for post', id, ':', error.message);
+    throw error;
+  }
+}
+
+// Rating operations
+function updatePostRating(id, rating) {
+  if (!db) throw new Error('Database not initialized');
+  if (!id) throw new Error('Post id is required');
+  
+  // Clamp rating between 0 and 5
+  const clampedRating = Math.max(0, Math.min(5, parseInt(rating) || 0));
+  
+  try {
+    const stmt = db.prepare('UPDATE downloaded_posts SET rating = ? WHERE id = ?');
+    stmt.run(clampedRating, id);
+    return true;
+  } catch (error) {
+    console.error('❌ updatePostRating FAILED for post', id, ':', error.message);
+    throw error;
+  }
+}
+
+function getPostRating(id) {
+  if (!db) throw new Error('Database not initialized');
+  if (!id) throw new Error('Post id is required');
+  
+  try {
+    const stmt = db.prepare('SELECT rating FROM downloaded_posts WHERE id = ?');
+    const row = stmt.get(id);
+    return row ? row.rating : 0;
+  } catch (error) {
+    console.error('❌ getPostRating FAILED for post', id, ':', error.message);
+    throw error;
+  }
+}
+
+function getDownloadedPostsByRating(minRating = 0, maxRating = 5) {
+  if (!db) throw new Error('Database not initialized');
+  
+  try {
+    const stmt = db.prepare('SELECT * FROM downloaded_posts WHERE rating >= ? AND rating <= ? ORDER BY rating DESC, downloaded_at DESC');
+    const rows = stmt.all(minRating, maxRating);
+    return rows.map(rowToPost);
+  } catch (error) {
+    console.error('❌ getDownloadedPostsByRating FAILED:', error.message);
     throw error;
   }
 }
@@ -1013,13 +1081,15 @@ function rowToPost(row) {
     imageUrl: row.image_url,
     thumbnailUrl: row.thumbnail_url,
     tags: JSON.parse(row.tags || '[]'),
+    tag_info: JSON.parse(row.tag_info || '[]'),
     author: row.artist,
     artist: row.artist,
     score: row.score,
     source: row.source,
     aspectRatio: row.aspect_ratio,
     createdAt: row.created_at,
-    downloadedAt: row.downloaded_at
+    downloadedAt: row.downloaded_at,
+    rating: row.rating || 0
   };
 }
 
@@ -1467,6 +1537,76 @@ function migrateDownloadedArtistsAddLastCheckedOutColumn() {
   }
 }
 
+// Add rating column to downloaded_posts table for backwards compatibility
+function migrateDownloadedPostsAddRatingColumn() {
+  if (!db) throw new Error('Database not initialized');
+
+  try {
+    const tableInfo = db.prepare('PRAGMA table_info(downloaded_posts)').all();
+    const columns = tableInfo.map(col => col.name);
+    const hasRatingColumn = columns.includes('rating');
+
+    if (!hasRatingColumn) {
+      console.log('⚠ rating column missing, attempting to add...');
+      
+      try {
+        // Try direct ALTER TABLE first
+        db.prepare('ALTER TABLE downloaded_posts ADD COLUMN rating INTEGER DEFAULT 0').run();
+        console.log('✓ Successfully added rating column via ALTER TABLE');
+      } catch (alterError) {
+        console.warn('⚠ ALTER TABLE failed:', alterError.message);
+        console.log('Attempting to recreate table with new schema...');
+        
+        // Fallback: recreate the table with the new column
+        try {
+          db.exec(`
+            CREATE TABLE downloaded_posts_backup AS 
+            SELECT id, image_url, thumbnail_url, tags, artist, score, source, aspect_ratio, created_at, downloaded_at 
+            FROM downloaded_posts;
+            
+            DROP TABLE downloaded_posts;
+            
+            CREATE TABLE downloaded_posts (
+              id TEXT PRIMARY KEY,
+              image_url TEXT,
+              thumbnail_url TEXT,
+              tags TEXT,
+              artist TEXT,
+              score INTEGER,
+              source TEXT,
+              aspect_ratio REAL,
+              created_at INTEGER,
+              downloaded_at INTEGER,
+              rating INTEGER DEFAULT 0
+            );
+            
+            INSERT INTO downloaded_posts (id, image_url, thumbnail_url, tags, artist, score, source, aspect_ratio, created_at, downloaded_at, rating)
+            SELECT id, image_url, thumbnail_url, tags, artist, score, source, aspect_ratio, created_at, downloaded_at, 0 
+            FROM downloaded_posts_backup;
+            
+            DROP TABLE downloaded_posts_backup;
+            
+            CREATE INDEX IF NOT EXISTS idx_downloaded_posts_downloaded_at ON downloaded_posts(downloaded_at);
+            CREATE INDEX IF NOT EXISTS idx_downloaded_posts_artist ON downloaded_posts(artist);
+            CREATE INDEX IF NOT EXISTS idx_downloaded_posts_source ON downloaded_posts(source);
+          `);
+          console.log('✓ Successfully recreated table with rating column');
+        } catch (recreateError) {
+          console.error('❌ Failed to recreate table:', recreateError.message);
+          throw recreateError;
+        }
+      }
+    }
+
+    // Verify the column now exists
+    const finalTableInfo = db.prepare('PRAGMA table_info(downloaded_posts)').all();
+    const finalColumns = finalTableInfo.map(col => col.name);
+    
+  } catch (error) {
+    console.error('❌ Error during rating column migration:', error.message);
+  }
+}
+
 // Migrate homepage table from old schema (key/data columns) to new schema (individual post rows)
 function migrateHomepageSchema() {
   if (!db) throw new Error('Database not initialized');
@@ -1796,6 +1936,9 @@ module.exports = {
   getDownloadedPost,
   getAllDownloadedPosts,
   removeDownloadedPost,
+  updatePostRating,
+  getPostRating,
+  getDownloadedPostsByRating,
   searchDownloadedPosts,
   getDownloadedPostsByArtist,
   getDownloadedPostCount,

@@ -104,7 +104,7 @@
       <div style="display: flex; align-items: center; gap: 20px;">
         <div class="star-project">
           <a href="https://github.com/SaltedShroom/Booru-Studio" target="_blank" rel="noopener noreferrer" title="https://github.com/SaltedShroom/Booru-Studio" class="ref-link">
-            <i class="fa-solid fa-child-reaching"></i>I like this Software
+            <i class="fa-solid fa-child-reaching"></i>Like this Software?
             <img src="/src/assets/givestar.gif" alt="Star Project">
           </a>
         </div>
@@ -554,16 +554,19 @@
     <div id="settings-tab" class="tab-content">
       
       <div class="settings-container">
-        <form class="settings-content">
+        <form class="settings-content" novalidate>
 
           <div class="settings-header">
             <h2>Application Settings</h2>
           </div>
 
           <!-- Controls Guide Section -->
-          <div class="settings-group-container controls-guide">
-            <h3>Gallery Controls</h3>
-            
+          <div class="settings-group-container">
+            <button class="settings-collapsible-header" data-section="controls" type="button">
+              <i class="fas fa-chevron-down"></i>
+              <h3>Gallery Controls</h3>
+            </button>
+            <div class="settings-collapsible-content" id="controls-settings-content">
             <div class="controls-list">
               <div class="control-item">
                 <div class="control-icon">
@@ -603,12 +606,15 @@
                 </div>
               </div>
             </div>
+            </div>
           </div>
 
-          <div class="settings-divider"></div>
-
           <div class="settings-group-container">
-            <h3>General</h3>
+            <button class="settings-collapsible-header" data-section="general" type="button">
+              <i class="fas fa-chevron-down"></i>
+              <h3>General</h3>
+            </button>
+            <div class="settings-collapsible-content" id="general-settings-content">
             <div class="settings-group">
               <label for="theme-select">Theme</label>
               <select id="theme-select" class="settings-input">
@@ -668,12 +674,15 @@
               <textarea id="blacklist-tags-input" class="settings-input" placeholder="tag1 tag2 tag3"></textarea>
               <small>Space-separated tags that will be automatically excluded from all Booru searches</small>
             </div>
+            </div>
           </div>
 
-          <div class="settings-divider"></div>
-
           <div class="settings-group-container">
-            <h3>Proxy Settings</h3>
+            <button class="settings-collapsible-header" data-section="proxy" type="button">
+              <i class="fas fa-chevron-down"></i>
+              <h3>Proxy Settings</h3>
+            </button>
+            <div class="settings-collapsible-content" id="proxy-settings-content">
             <div class="settings-group">
               <label class="checkbox-label">Active</label>
               <input type="checkbox" id="proxy-active" class="settings-checkbox">
@@ -761,9 +770,8 @@
                 <small id="anon-tor-rotate-status">Sends SIGNAL NEWNYM to Tor control port 9051</small>
               </div>
             </div>
+            </div>
           </div>
-
-          <div class="settings-divider"></div>
 
           <div class="settings-group-container">
             <h3>Booru Sources Management</h3>
@@ -774,8 +782,6 @@
             </div>
 
           </div>
-
-          <div class="settings-divider"></div>
 
           <div class="settings-group-container">
             <h3>Custom CSS Stylesheet</h3>
@@ -1068,6 +1074,33 @@
                   <small>JSON key that contains artist name(s) (optional)</small>
                 </div>
               </div>
+              
+              <!-- Meta Tag Fields -->
+              <div class="form-row" style="margin-top: 10px; margin-bottom: 10px;">
+                <div class="form-group" style="flex: 1;">
+                  <label>Meta Tag Fields</label>
+                  <small>Add custom tag type mappings (e.g., characters, parody, species)</small>
+                  <table id="metaTagFields-table" class="meta-tag-fields-table" style="margin-top: 10px; width: 100%;">
+                    <thead>
+                      <tr>
+                        <th>Title</th>
+                        <th>Type</th>
+                        <th>Key Path <span style="font-size: 11px; opacity: 0.7;">(optional)</span></th>
+                        <th>Color</th>
+                        <th style="width: 80px;">Preview</th>
+                        <th style="width: 60px;">Remove</th>
+                      </tr>
+                    </thead>
+                    <tbody id="metaTagFields-container">
+                      <!-- Dynamic fields will be added here -->
+                    </tbody>
+                  </table>
+                  <button type="button" id="add-metaTag-field-btn" class="btn btn-small" style="margin-top: 8px;">
+                    <i class="fas fa-plus"></i> Add Meta Tag Field
+                  </button>
+                </div>
+              </div>
+
               <div class="form-row">
                 <div class="form-group">
                   <label>Created Date Field</label>

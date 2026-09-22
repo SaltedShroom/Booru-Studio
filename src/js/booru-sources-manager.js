@@ -30,6 +30,12 @@ class BooruSourcesManager {
       const savedSources = await dbStore.loadSetting('booru-sources');
       if (savedSources && Array.isArray(savedSources)) {
         this.sources = savedSources;
+        
+        // Check if sources need migration (e.g., adding keyPath to metaTagFields)
+        const needsMigration = await this.migrateSourcesIfNeeded();
+        if (needsMigration) {
+          await this.saveSources();
+        }
       } else {
         // Initialize with default sources if none exist
         this.sources = this.getDefaultSources();
@@ -40,6 +46,53 @@ class BooruSourcesManager {
       // Use defaults if loading fails
       this.sources = this.getDefaultSources();
     }
+  }
+
+  async migrateSourcesIfNeeded() {
+    const defaultSources = this.getDefaultSources();
+    let migrationOccurred = false;
+
+    for (let i = 0; i < this.sources.length; i++) {
+      const source = this.sources[i];
+      const defaultSource = defaultSources.find(d => d.id === source.id);
+
+      if (!defaultSource) continue; // Skip sources that don't have a default
+
+      // Check if metaTagFields need migration (missing keyPath property)
+      if (source.fields && source.fields.metaTagFields && Array.isArray(source.fields.metaTagFields)) {
+        const needsKeyPathMigration = source.fields.metaTagFields.some(field => !('keyPath' in field));
+
+        if (needsKeyPathMigration) {
+          // Merge new default metaTagFields into existing source
+          // This preserves user customizations while adding new fields from defaults
+          const defaultMetaTagFields = defaultSource.fields.metaTagFields || [];
+
+          // Create a map of existing fields by type for easier lookup
+          const existingFieldsMap = new Map(
+            source.fields.metaTagFields.map(field => [field.type, field])
+          );
+
+          // Merge defaults: for each default field, if it exists in user's config, update it with keyPath
+          // If it doesn't exist, add it from defaults
+          for (const defaultField of defaultMetaTagFields) {
+            if (existingFieldsMap.has(defaultField.type)) {
+              // Field exists in user's config - add keyPath if missing
+              const existingField = existingFieldsMap.get(defaultField.type);
+              if (!('keyPath' in existingField)) {
+                existingField.keyPath = defaultField.keyPath || '';
+                migrationOccurred = true;
+              }
+            } else {
+              // Field doesn't exist - add it from defaults
+              source.fields.metaTagFields.push({ ...defaultField });
+              migrationOccurred = true;
+            }
+          }
+        }
+      }
+    }
+
+    return migrationOccurred;
   }
 
   async saveSources() {
@@ -81,6 +134,20 @@ class BooruSourcesManager {
           sampleUrl: "sample_url",
           tags: "tags",
           artistTag: "",
+          metaTagFields: [
+            {
+              title: "Characters",
+              type: "character",
+              color: "#1f8112",
+              keyPath: ""
+            },
+            {
+              title: "Franchise",
+              type: "copyright",
+              color: "#a30080",
+              keyPath: ""
+            }
+          ],
           createdAt: "change",
           dateType: "timestamp",
           tagsFilter: "\\+",
@@ -137,6 +204,7 @@ class BooruSourcesManager {
           sampleUrl: "sample.url",
           tags: "tags",
           artistTag: "tags.artist",
+          metaTagFields: [],
           createdAt: "created_at",
           dateType: "dateString",
           tagsFilter: "",
@@ -158,6 +226,26 @@ class BooruSourcesManager {
           tagSeparator: " ",
           postUrlPattern: ""
         },
+        metaTagFields: [
+          {
+            title: "Franchise",
+            type: "copyright",
+            color: "#a30080",
+            keyPath: "tags.copyright"
+          },
+          {
+            title: "Characters",
+            type: "character",
+            color: "#1f8112",
+            keyPath: "tags.character"
+          },
+          {
+            title: "Species",
+            type: "species",
+            color: "#d18400",
+            keyPath: "tags.species"
+          }
+        ],
         ui: {
           defaultSort: "new",
           defaultLimit: 100,
@@ -199,6 +287,20 @@ class BooruSourcesManager {
           sampleUrl: "sample_url",
           tags: "tags",
           artistTag: "",
+          metaTagFields: [
+            {
+              title: "Characters",
+              type: "character",
+              color: "#1f8112",
+              keyPath: ""
+            },
+            {
+              title: "Franchise",
+              type: "copyright",
+              color: "#a30080",
+              keyPath: ""
+            }
+          ],
           createdAt: "change",
           dateType: "timestamp",
           tagsFilter: "",
@@ -260,6 +362,20 @@ class BooruSourcesManager {
           sampleUrl: "sample_url",
           tags: "tags",
           artistTag: "tags.artist",
+          metaTagFields: [
+            {
+              title: "Characters",
+              type: "character",
+              color: "#1f8112",
+              keyPath: ""
+            },
+            {
+              title: "Franchise",
+              type: "copyright",
+              color: "#a30080",
+              keyPath: ""
+            }
+          ],
           createdAt: "change",
           dateType: "timestamp",
           tagsFilter: "\\+",
@@ -411,6 +527,11 @@ class BooruSourcesManager {
       if (urlTemplatesFields) {
         urlTemplatesFields.style.display = e.target.checked ? 'block' : 'none';
       }
+    });
+
+    // Meta Tag Fields
+    document.getElementById('add-metaTag-field-btn')?.addEventListener('click', () => {
+      this.addMetaTagField();
     });
 
     // Close modal on overlay click
@@ -901,6 +1022,10 @@ class BooruSourcesManager {
         document.getElementById('source-fields-sampleUrl').value = source.fields.sampleUrl;
         document.getElementById('source-fields-tags').value = source.fields.tags;
         document.getElementById('source-fields-artistTag').value = source.fields.artistTag || '';
+        
+        // Render meta tag fields
+        this.renderMetaTagFields(source.fields.metaTagFields || []);
+        
         document.getElementById('source-fields-createdAt').value = source.fields.createdAt;
         document.getElementById('source-fields-dateType').value = source.fields.dateType;
         document.getElementById('source-fields-tagsFilter').value = source.fields.tagsFilter || '';
@@ -1046,6 +1171,7 @@ class BooruSourcesManager {
         sampleUrl: document.getElementById('source-fields-sampleUrl').value.trim(),
         tags: document.getElementById('source-fields-tags').value.trim(),
         artistTag: document.getElementById('source-fields-artistTag').value.trim(),
+        metaTagFields: this.getMetaTagFields(),
         createdAt: document.getElementById('source-fields-createdAt').value.trim(),
         dateType: document.getElementById('source-fields-dateType').value,
         tagsFilter: document.getElementById('source-fields-tagsFilter').value.trim(),
@@ -1166,6 +1292,9 @@ class BooruSourcesManager {
 
       if (data.fields.artistTag && typeof data.fields.artistTag !== 'string') {
         errors.push('Artist tag field must be a string');
+      }
+      if (data.fields.metaTagFields && !Array.isArray(data.fields.metaTagFields)) {
+        errors.push('Meta tag fields must be an array');
       }
       if (data.artist?.tagApiUrl && typeof data.artist.tagApiUrl !== 'string') {
         errors.push('Artist Tag API URL must be a string');
@@ -1312,6 +1441,89 @@ class BooruSourcesManager {
     } else if (this.sources.length > 0) {
       dropdown.value = this.sources[0].id;
     }
+  }
+
+  renderMetaTagFields(fields) {
+    const container = document.getElementById('metaTagFields-container');
+    if (!container) return;
+    
+    container.innerHTML = '';
+    
+    fields.forEach((field, index) => {
+      this.addMetaTagField(field.title, field.type, field.color, field.keyPath || '');
+    });
+  }
+
+  addMetaTagField(title = '', type = '', color = '#64c43b', keyPath = '') {
+    const container = document.getElementById('metaTagFields-container');
+    if (!container) return;
+    
+    const row = document.createElement('tr');
+    row.className = 'meta-tag-field-row';
+    row.innerHTML = `
+      <td>
+        <input type="text" class="metaTag-field-title" placeholder="e.g., characters" value="${title}" />
+      </td>
+      <td>
+        <input type="text" class="metaTag-field-type" placeholder="e.g., character" value="${type}" />
+      </td>
+      <td>
+        <input type="text" class="metaTag-field-keyPath" placeholder="e.g., tags.character" value="${keyPath}" title="Nested path to tags (e.g., 'tags.character' for tags{character:[...]}). Leave empty to auto-detect." style="font-size: 12px;" />
+      </td>
+      <td>
+        <div class="meta-tag-color-wrapper">
+          <input type="color" class="metaTag-field-color" style="background: ${color}; height: 32px; width: 32px;" />
+          <span class="meta-tag-color-value">${color.toUpperCase()}</span>
+        </div>
+      </td>
+      <td style="text-align: center;">
+        <span class="booru-preview-meta-tag booru-tag" style="background-color: ${color};">example</span>
+      </td>
+      <td style="text-align: center;">
+        <button type="button" class="remove-metaTag-btn">
+          <i class="fas fa-trash"></i>
+        </button>
+      </td>
+    `;
+    
+    const colorInput = row.querySelector('.metaTag-field-color');
+    const colorValue = row.querySelector('.meta-tag-color-value');
+    const previewTag = row.querySelector('.booru-preview-meta-tag');
+    
+    // Update displayed color value and preview when input changes
+    colorInput.addEventListener('input', (e) => {
+      colorValue.textContent = e.target.value.toUpperCase();
+      colorInput.style.background = e.target.value;
+      previewTag.style.backgroundColor = e.target.value;
+    });
+    
+    const removeBtn = row.querySelector('.remove-metaTag-btn');
+    removeBtn.addEventListener('click', () => {
+      row.remove();
+    });
+    
+    container.appendChild(row);
+  }
+
+  getMetaTagFields() {
+    const container = document.getElementById('metaTagFields-container');
+    if (!container) return [];
+    
+    const fields = [];
+    const rows = container.querySelectorAll('.meta-tag-field-row');
+    
+    rows.forEach(row => {
+      const title = row.querySelector('.metaTag-field-title')?.value?.trim() || '';
+      const type = row.querySelector('.metaTag-field-type')?.value?.trim() || '';
+      const color = row.querySelector('.metaTag-field-color')?.value || '#64c43b';
+      const keyPath = row.querySelector('.metaTag-field-keyPath')?.value?.trim() || '';
+      
+      if (title && type) {
+        fields.push({ title, type, color, keyPath });
+      }
+    });
+    
+    return fields;
   }
 
   getSource(sourceId) {

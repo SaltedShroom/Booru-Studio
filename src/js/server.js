@@ -1938,7 +1938,8 @@ const server = isWorkerMode ? null : http.createServer((req, res) => {
       width: widthVal || 0,
       height: heightVal || 0,
       aspectRatio: widthVal && heightVal ? heightVal / widthVal : 1,
-      createdAt: createdAt
+      createdAt: createdAt,
+      tag_info: post.tag_info || []
     };
   }
 
@@ -4934,6 +4935,47 @@ const server = isWorkerMode ? null : http.createServer((req, res) => {
         }
         res.writeHead(200, { 'Content-Type': 'application/json' });
         res.end(JSON.stringify({ success: true }));
+      } catch (error) {
+        res.writeHead(500, { 'Content-Type': 'application/json' });
+        res.end(JSON.stringify({ success: false, error: error.message }));
+      }
+    });
+
+  } else if (req.method === 'POST' && req.url === '/api/update-post-rating') {
+    res.setHeader('Access-Control-Allow-Origin', '*');
+    res.setHeader('Access-Control-Allow-Methods', 'POST, OPTIONS');
+    res.setHeader('Access-Control-Allow-Headers', 'Content-Type');
+    
+    if (req.method === 'OPTIONS') {
+      res.writeHead(200);
+      res.end();
+      return;
+    }
+    
+    let body = '';
+    req.on('data', chunk => body += chunk.toString());
+    req.on('end', () => {
+      try {
+        const { id, rating } = JSON.parse(body);
+        if (!id) throw new Error('Post id is required');
+        if (rating === undefined || rating === null) throw new Error('Rating is required');
+        
+        // Clamp rating between 0 and 5
+        const clampedRating = Math.max(0, Math.min(5, parseInt(rating)));
+        
+        if (typeof database !== 'undefined' && database && typeof database.updatePostRating === 'function') {
+          try {
+            database.updatePostRating(id, clampedRating);
+            res.writeHead(200, { 'Content-Type': 'application/json' });
+            res.end(JSON.stringify({ success: true, rating: clampedRating }));
+          } catch (dbErr) {
+            console.warn('Failed to update post rating in DB', dbErr);
+            res.writeHead(500, { 'Content-Type': 'application/json' });
+            res.end(JSON.stringify({ success: false, error: dbErr.message || String(dbErr) }));
+          }
+        } else {
+          throw new Error('Database module not available');
+        }
       } catch (error) {
         res.writeHead(500, { 'Content-Type': 'application/json' });
         res.end(JSON.stringify({ success: false, error: error.message }));

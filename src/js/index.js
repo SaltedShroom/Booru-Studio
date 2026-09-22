@@ -285,6 +285,38 @@ function updateProxyFieldsDisabled() {
   if (typeof anonTorRotateNow !== 'undefined') anonTorRotateNow.disabled = isDisabled;
 }
 
+// Initialize collapsible settings sections
+function initializeCollapsibleSettings() {
+  const collapsibleHeaders = document.querySelectorAll('.settings-collapsible-header');
+  
+  collapsibleHeaders.forEach(header => {
+    const section = header.dataset.section;
+    const contentId = `${section}-settings-content`;
+    const content = document.getElementById(contentId);
+    
+    if (!content) return;
+    
+    // Load collapsed state from localStorage
+    const isCollapsed = localStorage.getItem(`settings-${section}-collapsed`) === 'true';
+    if (isCollapsed) {
+      header.classList.add('collapsed');
+      content.classList.add('collapsed');
+    }
+    
+    // Add click handler
+    header.addEventListener('click', (e) => {
+      e.preventDefault();
+      const wasCollapsed = header.classList.contains('collapsed');
+      
+      header.classList.toggle('collapsed');
+      content.classList.toggle('collapsed');
+      
+      // Save state to localStorage
+      localStorage.setItem(`settings-${section}-collapsed`, !wasCollapsed ? 'true' : 'false');
+    });
+  });
+}
+
 // Disable jitter-max input when both jitter fields are 0
 function updateJitterMaxDisabled() {
   // nothing to disable anymore — both fields are always editable
@@ -1427,6 +1459,10 @@ window.incrementDownloadFolderSizeOdometer = function(downloadedBytes) {
   await Promise.allSettled([loadJsonConfigs(), loadCheckpoints()]);
   await setLoadingStatus('Loading gallery…', 'Setting up booru browser and tabs…');
   if (window._initBooruTabs) await window._initBooruTabs();
+  
+  // Initialize collapsible settings sections
+  initializeCollapsibleSettings();
+  
   hideLoadingOverlay();
   countContainer.classList.add('loaded');
   

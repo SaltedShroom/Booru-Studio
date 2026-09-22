@@ -1,3 +1,10 @@
+// --- HTML Entity Decoder ---
+function decodeHtmlEntities(text) {
+  const textarea = document.createElement('textarea');
+  textarea.innerHTML = text;
+  return textarea.value;
+}
+
 // --- Booru Gallery Counter Logic ---
 function updateBooruGalleryCounter() {
 
@@ -105,8 +112,8 @@ function fillBooruEndTags() {
   topTags.forEach(tag => {
     const tagSpan = document.createElement('span');
     tagSpan.className = 'booru-tag';
-    tagSpan.textContent = tag;
-        
+    tagSpan.textContent = decodeHtmlEntities(tag);
+
     tagSpan.addEventListener('click', (e) => {
       if (searchFilterInput) {
         e.stopPropagation();
@@ -1044,7 +1051,7 @@ async function loadAndDownloadPost(task) {
         if (hasInitializedProgress) {
           updateHqLoadingCounter(-1, taskId);
         }
-        throw new Error(`Failed to load high-quality version: ${err.message}`);
+        throw new Error(`Try reloading the gallery with the reload-button...`);
       }
     }
   }
@@ -3418,6 +3425,12 @@ function updateControlBar(viewMode = 'normal_tab') {
     .forEach(control => {
       if (control) control.style.display = 'none';
     });
+  
+  // Also hide downloads rating control
+  const downloadsRatingControl = controlBar.querySelector('.control-section-downloads-rating');
+  if (downloadsRatingControl) {
+    downloadsRatingControl.style.display = 'none';
+  }
 
   if (booruControlRight) {
     // Only hide direct children, not all descendants (to avoid hiding icons inside buttons)
@@ -3486,6 +3499,32 @@ function updateControlBar(viewMode = 'normal_tab') {
         }
       }
       if (downloadsMediaTypeControl) downloadsMediaTypeControl.style.display = '';
+
+      // Create rating filter section with star buttons if it doesn't exist
+      const downloadsRatingControl = controlBar.querySelector('.control-section-downloads-rating');
+      if (!downloadsRatingControl && booruControlLeft) {
+        const ratingSection = document.createElement('div');
+        ratingSection.className = 'control-section control-section-downloads-rating';
+        ratingSection.innerHTML = `
+          <div class="section-label">Rating</div>
+          <div class="rating-filter-stars" style="display: flex">
+            <button class="rating-filter-star select-all" data-rating="all" title="All ratings" style="color: #999;">All</button>
+            <button class="rating-filter-star" data-rating="1" title="≥1 star"><i class="fas fa-star"></i></button>
+            <button class="rating-filter-star" data-rating="2" title="≥2 stars"><i class="fas fa-star"></i></button>
+            <button class="rating-filter-star" data-rating="3" title="≥3 stars"><i class="fas fa-star"></i></button>
+            <button class="rating-filter-star" data-rating="4" title="≥4 stars"><i class="fas fa-star"></i></button>
+            <button class="rating-filter-star" data-rating="5" title="5 stars"><i class="fas fa-star"></i></button>
+          </div>
+        `;
+        const searchSection = booruControlLeft.querySelector('.control-section-search');
+        if (searchSection) {
+          booruControlLeft.insertBefore(ratingSection, searchSection.nextSibling);
+        } else {
+          booruControlLeft.appendChild(ratingSection);
+        }
+      }
+      const downloadsRatingControlElement = controlBar.querySelector('.control-section-downloads-rating');
+      if (downloadsRatingControlElement) downloadsRatingControlElement.style.display = '';
 
       if (artistControl) artistControl.style.display = '';
       if (sourceControl) sourceControl.style.display = '';
@@ -3740,6 +3779,48 @@ async function showDownloadsGallery(forceReload = false) {
         document.getElementById('search-filter-input')?.dispatchEvent(new Event('input', { bubbles: true }));
       });
     }
+
+    // Add rating filter listener for star buttons
+    const ratingFilterStars = controlBar.querySelectorAll('.rating-filter-star');
+    if (ratingFilterStars.length > 0) {
+      // Set initial active state
+      const currentFilter = window.downloadsRatingFilter || 'all';
+      ratingFilterStars.forEach(btn => {
+        if (btn.dataset.rating === currentFilter) {
+          btn.classList.add('active');
+        } else {
+          btn.classList.remove('active');
+        }
+      });
+      
+      // Add click listeners
+      ratingFilterStars.forEach(btn => {
+        btn.addEventListener('click', () => {
+          const rating = btn.dataset.rating;
+          window.downloadsRatingFilter = rating;
+          
+          // Update active state - activate all stars up to and including the clicked one
+          ratingFilterStars.forEach(b => {
+            if (b.dataset.rating === 'all') {
+              b.classList.remove('active');
+            } else if (rating === 'all') {
+              b.classList.remove('active');
+            } else {
+              const btnRating = parseInt(b.dataset.rating);
+              const clickedRating = parseInt(rating);
+              if (btnRating <= clickedRating) {
+                b.classList.add('active');
+              } else {
+                b.classList.remove('active');
+              }
+            }
+          });
+          
+          // Trigger search filter update
+          document.getElementById('search-filter-input')?.dispatchEvent(new Event('input', { bubbles: true }));
+        });
+      });
+    }
     
     // Add shuffle button before search input if not already added (original logic)
     // Always remove sort by artist button before adding (prevents it from appearing in regular galleries)
@@ -3978,6 +4059,9 @@ async function showDownloadsGallery(forceReload = false) {
         if (mediaTypeState.gif) enabledMediaTypes.add('gif');
         if (mediaTypeState.video) enabledMediaTypes.add('video');
         
+        // Get rating filter
+        const ratingFilter = window.downloadsRatingFilter || 'all';
+        
         // Check if search contains OR operator ||
         const hasOrOperator = val.includes('||');
         let filterGroups = [];
@@ -3993,6 +4077,15 @@ async function showDownloadsGallery(forceReload = false) {
         const filtered = sourcePosts.filter(post => {
           if (selectedSource && post.source !== selectedSource) {
             return false;
+          }
+          
+          // Apply rating filter
+          if (ratingFilter !== 'all') {
+            const minRating = parseInt(ratingFilter);
+            const postRating = post.rating || 0;
+            if (postRating < minRating) {
+              return false;
+            }
           }
           
           // Check media type filter
@@ -4891,6 +4984,7 @@ function initBooruBrowser() {
                     postToSave.imageUrl = post.imageUrl;
                     postToSave.tags = post.tags;
                     postToSave.artist = post.artist;
+                    postToSave.tag_info = post.tag_info;
                     try { await dbStore.saveDownloadedPost(postToSave); } catch (e) { console.warn('Failed to save downloaded post to dbStore', e); }
                   }
 
@@ -5010,11 +5104,12 @@ function initBooruBrowser() {
               // Render tags with styling based on influence
               // First create span elements and compute outlineOpacity, then sort
               const tagSpansWithOpacity = post.tags.map(tag => {
+                const decodedTag = decodeHtmlEntities(tag);
                 const tagSpan = document.createElement('span');
                 tagSpan.className = 'booru-tag';
-                tagSpan.textContent = tag;
+                tagSpan.textContent = decodedTag;
 
-                const tagLower = tag.toLowerCase();
+                const tagLower = decodedTag.toLowerCase();
                 
                 // Determine outline opacity based on tag category
                 let outlineOpacity = 0; // Default: no outline
@@ -5046,9 +5141,9 @@ function initBooruBrowser() {
                     // Create new tab with this tag
                     if (typeof createNewBooruTab === 'function') {
                       try {
-                        const newTabId = createNewBooruTab(tag);
+                        const newTabId = createNewBooruTab(decodedTag);
                       } catch (err) {
-                        showToast('Failed to create new tab for tag: ' + tag + ' - ' + err.message, 'error');
+                        showToast('Failed to create new tab for tag: ' + decodedTag + ' - ' + err.message, 'error');
                       }
                     }
                   }
@@ -5062,9 +5157,9 @@ function initBooruBrowser() {
                     // Create new tab with this tag
                     if (typeof createNewBooruTab === 'function') {
                       try {
-                        const newTabId = createNewBooruTab(tag);
+                        const newTabId = createNewBooruTab(decodedTag);
                       } catch (err) {
-                        showToast('Failed to create new tab for tag: ' + tag + ' - ' + err.message, 'error');
+                        showToast('Failed to create new tab for tag: ' + decodedTag + ' - ' + err.message, 'error');
                       }
                     }
                   }
@@ -6901,6 +6996,7 @@ async function loadScraperBooru(sourceId, append) {
             post.imageUrl = dbEntry.imageUrl; // Full quality URL saved at download time
             post.tags = dbEntry.tags || post.tags;
             post.artists = dbEntry.artists || post.artists;
+            post.tag_info = dbEntry.tag_info || post.tag_info;
           }
           return post;
         });
@@ -7177,6 +7273,7 @@ async function loadGenericBooru(sourceId, append) {
             post.imageUrl = dbEntry.imageUrl; // Full quality URL saved at download time
             post.tags = dbEntry.tags || post.tags;
             post.artists = dbEntry.artists || post.artists;
+            post.tag_info = dbEntry.tag_info || post.tag_info;
           }
           return post;
         });
@@ -7555,6 +7652,36 @@ function normalizePosts(posts, sourceConfig) {
       return urlOrFilename;
     };
 
+    // Build tag_info from metaTagFields with keyPath or use existing tag_info
+    let tagInfo = post.tag_info || [];
+    
+    if (sourceConfig.fields.metaTagFields && sourceConfig.fields.metaTagFields.length > 0) {
+      // Check if any metaTagFields have keyPath specified
+      const fieldsWithKeyPath = sourceConfig.fields.metaTagFields.filter(f => f.keyPath && f.keyPath.trim());
+      
+      if (fieldsWithKeyPath.length > 0) {
+        // Build tag_info from nested paths
+        tagInfo = [];
+        for (const field of fieldsWithKeyPath) {
+          const tagsAtPath = resolveField(post, field.keyPath);
+          if (tagsAtPath) {
+            let extractedTags = [];
+            if (typeof tagsAtPath === 'string') {
+              extractedTags = [tagsAtPath];
+            } else if (Array.isArray(tagsAtPath)) {
+              extractedTags = tagsAtPath;
+            }
+            
+            for (const tag of extractedTags) {
+              if (tag && typeof tag === 'string') {
+                tagInfo.push({ type: field.type, tag: tag });
+              }
+            }
+          }
+        }
+      }
+    }
+
     return {
       id: normalizePostId(post.id),
       imageUrl: constructUrl(resolveField(post, sourceConfig.fields.imageUrl), 'image'),  // Full quality
@@ -7568,7 +7695,8 @@ function normalizePosts(posts, sourceConfig) {
       width: widthVal,
       height: heightVal,
       aspectRatio: widthVal && heightVal ? heightVal / widthVal : (post.width && post.height ? post.height / post.width : 1),
-      createdAt: createdAt
+      createdAt: createdAt,
+      tag_info: tagInfo
     };
   });
 }
@@ -8458,6 +8586,124 @@ function renderBooruGallery(posts, append = true, addSeparators = true) {
 //   return link;
 // }
 
+// Helper function to create a rating wrapper with star buttons and download button
+function createRatingWrapper(post, container, downloadBtn) {
+  const wrapper = document.createElement('div');
+  wrapper.className = 'booru-rating-wrapper';
+  // Always visible - shows both stars and button
+  
+  // Create rating stars container
+  const starsContainer = document.createElement('div');
+  starsContainer.className = 'booru-rating-stars';
+  
+  // Get current rating from post (0-5)
+  const currentRating = post.rating || 0;
+  
+  // Create 5 star buttons
+  for (let i = 1; i <= 5; i++) {
+    const starBtn = document.createElement('button');
+    starBtn.className = 'booru-rating-star';
+    starBtn.dataset.rating = i;
+    starBtn.innerHTML = '<i class="fas fa-star"></i>';
+    starBtn.title = `Rate ${i} star${i !== 1 ? 's' : ''}`;
+    
+    // Highlight stars up to current rating
+    if (i <= currentRating) {
+      starBtn.classList.add('active');
+    }
+    
+    // Hover effect - highlight stars up to hovered star
+    starBtn.addEventListener('mouseenter', () => {
+      const rating = parseInt(starBtn.dataset.rating);
+      starsContainer.querySelectorAll('.booru-rating-star').forEach((s, idx) => {
+        if (idx + 1 <= rating) {
+          s.classList.add('hover');
+        } else {
+          s.classList.remove('hover');
+        }
+      });
+    });
+    
+    // Click handler - update rating or trigger download
+    starBtn.addEventListener('click', async (e) => {
+      e.preventDefault();
+      e.stopPropagation();
+      
+      const rating = parseInt(starBtn.dataset.rating);
+      const downloadBtn = wrapper.querySelector('.booru-download-btn');
+      const isDownloaded = container.dataset.downloaded === 'true';
+      
+      if (!isDownloaded && downloadBtn) {
+        // Post not yet downloaded - simulate download button click
+        // This will trigger the download process and then set the rating
+        post.desiredRating = rating; // Store desired rating to set after download
+        
+        // Update stars UI immediately for visual feedback
+        starsContainer.querySelectorAll('.booru-rating-star').forEach((s, idx) => {
+          if (idx + 1 <= rating) {
+            s.classList.add('active');
+          } else {
+            s.classList.remove('active');
+          }
+        });
+        
+        downloadBtn.click();
+      } else {
+        // Post already downloaded - just update the rating
+        try {
+          // Update rating in database via server
+          const response = await fetch('http://localhost:3001/api/update-post-rating', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ id: post.id, rating: rating })
+          });
+          
+          const data = await response.json();
+          if (!response.ok) {
+            console.warn('Failed to update rating:', data.error);
+            showToast('Failed to update rating: ' + (data.error || 'Unknown error'), 'error');
+            return;
+          }
+          
+          // Update UI - highlight all stars up to clicked rating
+          starsContainer.querySelectorAll('.booru-rating-star').forEach((s, idx) => {
+            if (idx + 1 <= rating) {
+              s.classList.add('active');
+            } else {
+              s.classList.remove('active');
+            }
+          });
+          
+          // Update post object
+          post.rating = rating;
+        } catch (error) {
+          console.error('Failed to update post rating:', error);
+          showToast('Error updating rating: ' + (error.message || error), 'error');
+        }
+      }
+    });
+    
+    starsContainer.appendChild(starBtn);
+  }
+  
+  // Clear hover effect when leaving container
+  starsContainer.addEventListener('mouseleave', () => {
+    starsContainer.querySelectorAll('.booru-rating-star').forEach(s => {
+      s.classList.remove('hover');
+    });
+  });
+  
+  // Add download button to wrapper first (will appear on right due to flex-direction: row-reverse)
+  if (downloadBtn) {
+    wrapper.appendChild(downloadBtn);
+  }
+  
+  // Add stars to wrapper second (will appear on left due to flex-direction: row-reverse)
+  wrapper.appendChild(starsContainer);
+  
+  return wrapper;
+}
+
 function createBooruImageElement(post, maxHeight = null, imageWidth = null) {
 
   const loader = document.createElement('i');
@@ -8508,6 +8754,7 @@ function createBooruImageElement(post, maxHeight = null, imageWidth = null) {
   mediaElement.dataset.author = Array.isArray(post.artist) ? post.artist.join(', ') : (post.artist || post.author || 'Unknown');
   mediaElement.dataset.title = post.title || '';
   mediaElement.dataset.createdAt = post.createdAt || '';
+  mediaElement.dataset.tagInfo = JSON.stringify(post.tag_info || []);
 
   if (isVideo) {
     container.classList.add('file-type-video');
@@ -8731,6 +8978,9 @@ function createBooruImageElement(post, maxHeight = null, imageWidth = null) {
   progressBar.style.width = '0%';
   progressContainer.appendChild(progressBar);
   
+  // Create rating wrapper (will contain stars and button)
+  const ratingWrapper = createRatingWrapper(post, container, downloadBtn);
+  
   // Store download state
   // First check if post has downloadedAt flag (from restored tab data)
   let isDownloaded = !!(post.downloadedAt || post.downloaded_at);
@@ -8843,6 +9093,16 @@ function createBooruImageElement(post, maxHeight = null, imageWidth = null) {
           downloadBtn.innerHTML = '<i class="fas fa-download"></i>';
           downloadBtn.classList.remove('downloaded');
           downloadBtn.title = 'Download';
+          
+          // Clear star ratings visually when post is deleted
+          const starsContainer = ratingWrapper.querySelector('.booru-rating-stars');
+          if (starsContainer) {
+            starsContainer.querySelectorAll('.booru-rating-star').forEach(s => {
+              s.classList.remove('active');
+              s.classList.remove('hover');
+            });
+          }
+          
           if (hoverHandlers) {
             downloadBtn.removeEventListener('mouseenter', hoverHandlers.mouseEnterHandler);
             downloadBtn.removeEventListener('mouseleave', hoverHandlers.mouseLeaveHandler);
@@ -8850,7 +9110,7 @@ function createBooruImageElement(post, maxHeight = null, imageWidth = null) {
           }
           if (window.isViewingDownloadsGallery) {
             // Remove from UI immediately if in downloads gallery
-            downloadBtn.remove();
+            downloadBtn.parentElement.remove();
             downloadBtn = null;
             container.style.opacity = '0.25';
           }
@@ -8988,14 +9248,22 @@ function createBooruImageElement(post, maxHeight = null, imageWidth = null) {
         await downloadQueue.enqueue(task);
 
         // On success: Save post to dbStore and update preview UI
-        if (typeof dbStore !== 'undefined' && dbStore && post && post.id) {
-          const postToSave = { ...post };
+        // Use task.post to ensure we have the correct post object with desiredRating
+        const postForSave = task.post;
+        if (typeof dbStore !== 'undefined' && dbStore && postForSave && postForSave.id) {
+          // If a desired rating was set (from clicking a star), update post.rating first
+          if (postForSave.desiredRating !== undefined) {
+            postForSave.rating = postForSave.desiredRating;
+          }
+          
+          const postToSave = { ...postForSave };
           postToSave.artist = artist;
           postToSave.downloadedAt = downloadInitiatedAt;
           // Explicitly ensure all important fields are included (especially for scraper posts)
-          postToSave.imageUrl = post.imageUrl;
-          postToSave.tags = post.tags;
-          postToSave.artists = post.artists;
+          postToSave.imageUrl = postForSave.imageUrl;
+          postToSave.tags = postForSave.tags;
+          postToSave.artists = postForSave.artists;
+          postToSave.tag_info = postForSave.tag_info;
           try { await dbStore.saveDownloadedPost(postToSave); } catch (e) { console.warn('Failed to save downloaded post to dbStore', e); }
         }
         if (mediaElement) {
@@ -9004,6 +9272,32 @@ function createBooruImageElement(post, maxHeight = null, imageWidth = null) {
         progressBar.style.width = '100%';
         setTimeout(() => {
           container.dataset.downloaded = 'true';
+          
+          // If a desired rating was set (from clicking a star), apply it now
+          if (task.post.desiredRating !== undefined) {
+            const rating = task.post.desiredRating;
+            task.post.rating = rating;
+            delete task.post.desiredRating;
+            
+            // Update rating in database
+            fetch('http://localhost:3001/api/update-post-rating', {
+              method: 'POST',
+              headers: { 'Content-Type': 'application/json' },
+              body: JSON.stringify({ id: task.post.id, rating: rating })
+            }).catch(err => console.warn('Failed to apply desired rating after download:', err));
+            
+            // Update stars UI to show the rating
+            const starsContainer = ratingWrapper.querySelector('.booru-rating-stars');
+            if (starsContainer) {
+              starsContainer.querySelectorAll('.booru-rating-star').forEach((s, idx) => {
+                if (idx + 1 <= rating) {
+                  s.classList.add('active');
+                } else {
+                  s.classList.remove('active');
+                }
+              });
+            }
+          }
           
           // If download was from homepage gallery, clean up older posts from homepage table
           if (task.fromHomepage && task.post) {
@@ -9022,7 +9316,7 @@ function createBooruImageElement(post, maxHeight = null, imageWidth = null) {
                 window.CoinCollector.triggerCoinAnimation(mediaElement, task.totalBytes);
                 // Add downloaded item to the panel
                 if (typeof addDownloadedItemToPanel === 'function') {
-                  addDownloadedItemToPanel(mediaElement, post);
+                  addDownloadedItemToPanel(mediaElement, task.post);
                 }
               }
             }
@@ -9031,7 +9325,8 @@ function createBooruImageElement(post, maxHeight = null, imageWidth = null) {
           downloadBtn.classList.add('downloaded');
           downloadBtn.title = 'Delete';
           downloadBtn.disabled = false;
-            progressContainer.style.display = 'none';
+          
+          progressContainer.style.display = 'none';
             progressBar.style.width = '0%';
 
             // Add hover handlers to swap between check and X icons
@@ -9066,7 +9361,7 @@ function createBooruImageElement(post, maxHeight = null, imageWidth = null) {
     }
   });
   
-  container.appendChild(downloadBtn);
+  container.appendChild(ratingWrapper);
   container.appendChild(progressContainer);
   
   return container;
@@ -9168,6 +9463,7 @@ document.addEventListener('mousemove', (e) => {
   const downloadStatsContainer = document.querySelector('.app-loading-download-container')?.getBoundingClientRect();
   const booruPanel = document.querySelector('#booru-panel')?.getBoundingClientRect();
   const booruPanelToggle = document.querySelector('#booru-panel-toggle')?.getBoundingClientRect();
+  const ratingWrapper = document.querySelector('.booru-rating-wrapper')?.getBoundingClientRect();
   if (selectRect && e.clientX >= selectRect.left && e.clientX <= selectRect.right &&
       e.clientY >= selectRect.top && e.clientY <= selectRect.bottom ||
       suppportRect && e.clientX >= suppportRect.left && e.clientX <= suppportRect.right &&
@@ -9177,7 +9473,9 @@ document.addEventListener('mousemove', (e) => {
       booruPanel && e.clientX >= booruPanel.left && e.clientX <= booruPanel.right &&
       e.clientY >= booruPanel.top && e.clientY <= booruPanel.bottom ||
       booruPanelToggle && e.clientX >= booruPanelToggle.left && e.clientX <= booruPanelToggle.right &&
-      e.clientY >= booruPanelToggle.top && e.clientY <= booruPanelToggle.bottom) {
+      e.clientY >= booruPanelToggle.top && e.clientY <= booruPanelToggle.bottom ||
+      ratingWrapper && e.clientX >= ratingWrapper.left && e.clientX <= ratingWrapper.right &&
+      e.clientY >= ratingWrapper.top && e.clientY <= ratingWrapper.bottom) {
     const previewMedia = document.querySelector('.booru-hover-preview');
     if (previewMedia) {
       previewMedia.classList.remove('active');
@@ -9349,6 +9647,8 @@ booruHoverPreview.innerHTML = `
   <div class="booru-hover-preview-media"></div>
   <div class="booru-hover-preview-info">
     <div class="booru-hover-preview-tags"></div>
+    <div class="booru-hover-preview-top"></div>
+    <div class="booru-hover-preview-custom-meta"></div>
     <div class="booru-hover-preview-footer">
       <div class="booru-hover-preview-author"></div>
       <div class="booru-hover-preview-metadata">
@@ -9367,6 +9667,7 @@ const booruPreviewMetadata = booruHoverPreview.querySelector('.booru-hover-previ
 const booruPreviewId = booruHoverPreview.querySelector('.booru-hover-preview-id');
 const booruPreviewSource = booruHoverPreview.querySelector('.booru-hover-preview-source');
 const booruPreviewAuthor = booruHoverPreview.querySelector('.booru-hover-preview-author');
+const booruPreviewCustomMeta = booruHoverPreview.querySelector('.booru-hover-preview-custom-meta');
 const booruPreviewDate = booruHoverPreview.querySelector('.booru-hover-preview-date');
 
 const activeArtistRequests = new Set();
@@ -9395,6 +9696,69 @@ function setPreviewArtistNames(mediaElement, rawArtists) {
   booruPreviewAuthor.innerHTML = '';
   artistNames.forEach(name => booruPreviewAuthor.appendChild(createPreviewAuthorTag(mediaElement, name)));
   return artistText;
+}
+
+function setPreviewCustomMeta(booruPreviewCustomMeta, metaTags) {
+  booruPreviewCustomMeta.innerHTML = '';
+  if (!metaTags || Object.keys(metaTags).length === 0) return;
+
+  for (const [title, tagData] of Object.entries(metaTags)) {
+    const color = tagData.color || null;
+    const container = document.createElement('div');
+    container.className = 'booru-hover-preview-metasection';
+    const titleElem = document.createElement('span');
+    titleElem.className = 'booru-preview-meta-title booru-tag';
+    titleElem.textContent = decodeHtmlEntities(title);
+    if (color) {
+      titleElem.style.backgroundColor = color;
+    }
+    container.appendChild(titleElem);
+
+    // tagData can be either an array of strings (legacy) or an object with tags and color
+    const tags = tagData.tags || tagData;
+
+    for (const tag of tags) {
+      const decodedTag = decodeHtmlEntities(tag);
+      const tagElem = document.createElement('span');
+      tagElem.className = 'booru-preview-meta-tag booru-tag';
+      tagElem.textContent = decodedTag;
+      if (color) {
+        tagElem.style.border = `1px solid ${color}`;
+      }
+      
+      // Add click handler (only works when preview is frozen)
+      tagElem.addEventListener('click', (e) => {
+        if (previewFrozen && searchFilterInput) {
+          e.preventDefault();
+          e.stopPropagation();
+          togglePreviewTagSelection(decodedTag);
+        }
+      });
+      
+      // Add middle mouse button handler
+      tagElem.addEventListener('mousedown', (e) => {
+        if (e.button === 1) { // Middle mouse button
+          e.preventDefault();
+          e.stopPropagation();
+          if (previewFrozen) {
+            togglePreviewMiddleTagSelection(decodedTag);
+            return;
+          }
+          if (typeof createNewBooruTab === 'function') {
+            try {
+              createNewBooruTab(decodedTag);
+            } catch (err) {
+              showToast('Failed to create new tab for tag: ' + decodedTag + ' - ' + err.message, 'error');
+            }
+          }
+        }
+      });
+      
+      container.appendChild(tagElem);
+    }
+
+    booruPreviewCustomMeta.appendChild(container);
+  }
 }
 
 function createPreviewAuthorTag(mediaElement, artistName) {
@@ -9537,16 +9901,17 @@ function updatePreviewMetadata(mediaElement) {
   const searchTagsLower = searchTagsArray ? searchTagsArray.map(t => t.toLowerCase()) : [];
   
   tags.forEach(tag => {
+    const decodedTag = decodeHtmlEntities(tag);
     const tagSpan = document.createElement('span');
     tagSpan.className = 'booru-tag';
     
     // Highlight if it matches a searched tag
-    if (searchTagsLower.includes(tag.toLowerCase())) {
+    if (searchTagsLower.includes(decodedTag.toLowerCase())) {
       tagSpan.classList.add('searched');
     }
     
-    tagSpan.textContent = tag;
-    const tagKey = tag.toLowerCase();
+    tagSpan.textContent = decodedTag;
+    const tagKey = decodedTag.toLowerCase();
     if (previewMiddleClickedTags.has(tagKey)) {
       tagSpan.classList.add('middle-selected');
     }
@@ -9556,7 +9921,7 @@ function updatePreviewMetadata(mediaElement) {
       if (previewFrozen && searchFilterInput) {
         e.preventDefault();
         e.stopPropagation();
-        togglePreviewTagSelection(tag);
+        togglePreviewTagSelection(decodedTag);
       }
     });
     
@@ -9565,14 +9930,14 @@ function updatePreviewMetadata(mediaElement) {
         e.preventDefault();
         e.stopPropagation();
         if (previewFrozen) {
-          togglePreviewMiddleTagSelection(tag);
+          togglePreviewMiddleTagSelection(decodedTag);
           return;
         }
         if (typeof createNewBooruTab === 'function') {
           try {
-            createNewBooruTab(tag);
+            createNewBooruTab(decodedTag);
           } catch (err) {
-            showToast('Failed to create new tab for tag: ' + tag + ' - ' + err.message, 'error');
+            showToast('Failed to create new tab for tag: ' + decodedTag + ' - ' + err.message, 'error');
           }
         }
       }
@@ -9787,6 +10152,10 @@ async function fetchScraperPostDetails(postId, sourceId, forceFresh = true) {
 
 // Function to show preview for a media element
 function showPreviewForElement(mediaElement, forceVideoLoad = false, hidden = false) {
+  // Ignore function if booruHoverPreview is frozen
+  if (booruHoverPreview.classList.contains('frozen')) {
+    return;
+  }
   // Don't show preview if lightbox is open or any modal overlay is actually visible to the user
   if (lightboxModal && lightboxModal.classList.contains('active')) {
     return;
@@ -9798,6 +10167,19 @@ function showPreviewForElement(mediaElement, forceVideoLoad = false, hidden = fa
     previewFrozen = false;
     return;
   }
+  // check if user is hovering over a rating wrapper
+  const ratingWrapper = mediaElement.parentElement.querySelector('.booru-rating-wrapper');
+  if (ratingWrapper) {
+    const ratingRect = ratingWrapper.getBoundingClientRect();
+    if (lastMouseX >= ratingRect.left && lastMouseX <= ratingRect.right &&
+        lastMouseY >= ratingRect.top && lastMouseY <= ratingRect.bottom) {
+      booruHoverPreview.classList.remove('active');
+      lastHoveredElement = null;
+      pauseAllPreviewVideos();
+      return;
+    }
+  }
+
   // Only block if overlay is visible AND its parent modal is active (open)
   const overlays = document.querySelectorAll('.modal-overlay');
   for (const overlay of overlays) {
@@ -9824,6 +10206,36 @@ function showPreviewForElement(mediaElement, forceVideoLoad = false, hidden = fa
   if (postId && postSource) {
     // Check if source is scraper type
     const sourceConfig = booruSourcesManager?.getSource(postSource);
+    
+    const metaTags = {};
+
+    if (sourceConfig.fields) {
+      if (sourceConfig.fields.metaTagFields && sourceConfig.fields.metaTagFields.length > 0) {
+        
+        for (const metaField of sourceConfig.fields.metaTagFields) {
+          const { title, type, color } = metaField;
+          
+          // Filter tags by type
+          const tagInfo = mediaElement.dataset.tagInfo ? JSON.parse(mediaElement.dataset.tagInfo) : [];
+          const tagsOfType = tagInfo
+            .filter(item => item && item.type === type)
+            .map(item => item.tag)
+            .filter(tag => tag && tag.length > 0);
+          
+          if (tagsOfType.length > 0) {
+            metaTags[title] = { tags: tagsOfType, color: color || '#64c43b' };
+          }
+        }
+      }
+    }
+    
+    // Log if we found any meta tags
+    if (Object.keys(metaTags).length > 0) {
+      setPreviewCustomMeta(booruPreviewCustomMeta, metaTags);
+    } else {
+      booruPreviewCustomMeta.innerHTML = '';
+    }
+    
     if (sourceConfig?.type === 'scraper') {
       // Don't fetch details if we're in the downloads gallery
       const isDownloadsGallery = booruGallery?.classList.contains('downloads-gallery');
@@ -11013,11 +11425,15 @@ if (galleryWrapper) {
     // Check if mouse is over an image
     const mediaElement = e.target.closest('.booru-image-item img, .booru-image-item video');
     
-    // Hide preview if not over an image and not frozen
-    if (!mediaElement && !previewFrozen && booruHoverPreview.classList.contains('active')) {
+    // Check if mouse is over rating wrapper
+    const ratingWrapper = e.target.closest('.booru-rating-wrapper');
+    
+    // Hide preview if not over an image, not frozen, or if hovering over rating wrapper
+    if ((!mediaElement || ratingWrapper) && !previewFrozen && booruHoverPreview.classList.contains('active')) {
       booruHoverPreview.classList.remove('active');
       lastHoveredElement = null;
       pauseAllPreviewVideos();
+      return;
     }
     
     if (booruHoverPreview.classList.contains('active') && !previewFrozen) {
