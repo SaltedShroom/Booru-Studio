@@ -714,7 +714,7 @@ let isLoadingBooru = false;
 let aiFilterEnabled = false; // AI filter OFF by default
 let animateGifs = false; // GIF animation OFF by default (show first frame only)
 let maxRecommendedTags = 20;
-let activeDownloadsSidebarTab = 'analytics'; // or 'mosaic'
+let activeDownloadsSidebarTab = 'export'; // or 'mosaic' or 'export'
 let homepageIsFetching = false;
 
 // Gallery quality state
@@ -1978,21 +1978,26 @@ function renderDownloadsSidebar() {
 
   let analyticsActive = '';
   let mosaicActive = '';
+  let exportActive = '';
   if (activeDownloadsSidebarTab === 'analytics') {
     analyticsActive = 'active';
-  } else {
+  } else if (activeDownloadsSidebarTab === 'mosaic') {
     mosaicActive = 'active';
+  } else if (activeDownloadsSidebarTab === 'export') {
+    exportActive = 'active';
   }
 
   const navbarContainer = document.createElement('div');
   navbarContainer.className = 'sidebar-navbar-container';
-  navbarContainer.innerHTML = `<button id="downloads-sidebar-analytics-btn" onclick="selectDownloadsSidebarTab('analytics')" class="sidebar-nav-btn ${analyticsActive}">Analytics</button> <button id="downloads-sidebar-mosaic-btn" onclick="selectDownloadsSidebarTab('mosaic')" class="sidebar-nav-btn ${mosaicActive}">Mosaic</button>`;
+  navbarContainer.innerHTML = `<button id="downloads-sidebar-analytics-btn" onclick="selectDownloadsSidebarTab('analytics')" class="sidebar-nav-btn ${analyticsActive}">Analytics</button> <button id="downloads-sidebar-mosaic-btn" class="sidebar-nav-btn ${mosaicActive}" disabled style="opacity: 0.5; cursor: not-allowed;">Mosaic</button> <button id="downloads-sidebar-export-btn" onclick="selectDownloadsSidebarTab('export')" class="sidebar-nav-btn ${exportActive}">Export</button>`;
   sidebar.appendChild(navbarContainer);
 
   if (activeDownloadsSidebarTab === 'analytics') {
     renderDownloadsAnalytics(sidebar);
-  } else {
+  } else if (activeDownloadsSidebarTab === 'mosaic') {
     renderDownloadsMosaic(sidebar);
+  } else if (activeDownloadsSidebarTab === 'export') {
+    renderDownloadsExport(sidebar);
   }
 }
 
@@ -2333,7 +2338,7 @@ function buildMosaic() {
   const imageHeight = mosaicInputImg.naturalHeight;
   
   if (!imageWidth || !imageHeight) {
-    alert('Error: Unable to get image dimensions. Please ensure an image is loaded.');
+    showToast('Error: Unable to get image dimensions. Please ensure an image is loaded.', 'error');
     document.getElementById('run-mosaic-btn').disabled = false;
     document.getElementById('mosaic-progress-bar').classList.remove('active');
     return;
@@ -2660,7 +2665,7 @@ function buildMosaic() {
       if (progressIntervalId) {
         clearTimeout(progressIntervalId);
       }
-      alert('Error building mosaic: ' + (error.message || error));
+      showToast('Error building mosaic: ' + (error.message || error), 'error');
       document.getElementById('run-mosaic-btn').disabled = false;
       setTimeout(() => {
       document.getElementById('mosaic-progress-bar').classList.remove('active');
@@ -2669,6 +2674,1344 @@ function buildMosaic() {
       document.getElementById('grid-size-input').disabled = false;
     }
   })();
+}
+
+// Find the post with aspect ratio closest to the target
+function findBestMatchingPost(posts, targetX, targetY) {
+  if (!posts || posts.length === 0) return null;
+  if (!targetX || !targetY || targetX <= 0 || targetY <= 0) return posts[0];
+  
+  const targetRatio = targetY / targetX;
+  
+  let bestPost = posts[0];
+  let bestDifference = Math.abs(bestPost.aspectRatio - targetRatio);
+  
+  for (let i = 1; i < posts.length; i++) {
+    const post = posts[i];
+    const postRatio = post.aspectRatio;
+    if (!postRatio || postRatio <= 0) continue;
+    
+    const difference = Math.abs(postRatio - targetRatio);
+    if (difference < bestDifference) {
+      bestDifference = difference;
+      bestPost = post;
+    }
+  }
+  
+  return bestPost;
+}
+
+// Find the post with aspect ratio furthest from the target
+// Find post furthest toward X aspect (widest/lowest ratio)
+function findFurthestMatchingPostByX(posts) {
+  if (!posts || posts.length === 0) return null;
+  
+  let furthestPost = posts[0];
+  let minRatio = furthestPost.aspectRatio || 0;
+  
+  for (let i = 1; i < posts.length; i++) {
+    const post = posts[i];
+    const postRatio = post.aspectRatio || 0;
+    if (postRatio < minRatio) {
+      minRatio = postRatio;
+      furthestPost = post;
+    }
+  }
+  
+  return furthestPost;
+}
+
+// Find post furthest toward Y aspect (tallest/highest ratio)
+function findFurthestMatchingPostByY(posts) {
+  if (!posts || posts.length === 0) return null;
+  
+  let furthestPost = posts[0];
+  let maxRatio = furthestPost.aspectRatio || 0;
+  
+  for (let i = 1; i < posts.length; i++) {
+    const post = posts[i];
+    const postRatio = post.aspectRatio || 0;
+    if (postRatio > maxRatio) {
+      maxRatio = postRatio;
+      furthestPost = post;
+    }
+  }
+  
+  return furthestPost;
+}
+
+// Parse aspect ratio string (e.g., "16:9" or "1.78") and return decimal value
+function parseAspectRatio(ratioString) {
+  if (!ratioString || !ratioString.trim()) {
+    return null;
+  }
+  
+  ratioString = ratioString.trim();
+  
+  // Check if it's in format "W:H"
+  if (ratioString.includes(':')) {
+    const parts = ratioString.split(':');
+    if (parts.length === 2) {
+      const width = parseFloat(parts[0]);
+      const height = parseFloat(parts[1]);
+      if (!isNaN(width) && !isNaN(height) && width !== 0) {
+        // Note: calculate as height/width (inverted) in case database stores aspect ratio inversely
+        const result = height / width;
+        return result;
+      }
+    }
+  }
+  
+  // Try to parse as decimal
+  const decimal = parseFloat(ratioString);
+  if (!isNaN(decimal) && decimal > 0) {
+    return decimal;
+  }
+  
+  return null;
+}
+
+// Filter posts by file type (image, gif, video)
+function filterPostsByFileType(posts, allowImage = true, allowGif = true, allowVideo = true) {
+  const imageExtensions = ['.jpg', '.jpeg', '.png', '.bmp', '.webp', '.tiff'];
+  const gifExtensions = ['.gif'];
+  const videoExtensions = ['.mp4', '.webm', '.mkv', '.avi', '.mov', '.flv', '.wmv', '.m4v'];
+
+  return posts.filter(post => {
+    if (!post.imageUrl) return false;
+
+    const url = post.imageUrl.toLowerCase();
+    const ext = url.substring(url.lastIndexOf('.')).split('?')[0]; // Get extension, ignore query params
+
+    if (allowImage && imageExtensions.includes(ext)) return true;
+    if (allowGif && gifExtensions.includes(ext)) return true;
+    if (allowVideo && videoExtensions.includes(ext)) return true;
+
+    return false;
+  });
+}
+
+// Filter posts by date - only include posts from selected date onwards
+function filterPostsByDate(posts, dateThreshold) {
+  if (!dateThreshold) return posts;
+
+  // Parse date as local timezone midnight (not UTC)
+  const [year, month, day] = dateThreshold.split('-');
+  const thresholdTime = new Date(parseInt(year), parseInt(month) - 1, parseInt(day)).getTime();
+
+  return posts.filter(post => {
+    // Use createdAt if available, fall back to downloadedAt
+    const timestamp = post.createdAt || post.downloadedAt;
+    if (!timestamp) return false;
+    const postTime = typeof timestamp === 'string' ? parseInt(timestamp) : timestamp;
+    return postTime >= thresholdTime;
+  });
+}
+
+// Filter posts by minimum resolution (height in pixels)
+async function filterPostsByResolution(posts, minHeight) {
+  if (!minHeight || minHeight <= 0) return posts;
+  
+  // Fallback: Estimate resolution based on aspect ratio
+  // This is fast - just simple math for each post
+  return posts.filter(post => {
+    const aspectRatio = post.aspectRatio || 1;
+    const estimatedHeight = estimateResolutionFromAspectRatio(post, minHeight);
+    return estimatedHeight >= minHeight;
+  });
+}
+
+// Estimate resolution from aspect ratio by assuming typical video/image dimensions
+function estimateResolutionFromAspectRatio(post, minHeight) {
+  const aspectRatio = post.aspectRatio || 1;
+  
+  // If aspect ratio is very close to 16:9 (videos typically), estimate video resolution
+  if (aspectRatio >= 0.5 && aspectRatio <= 0.6) {
+    // Likely video format - assume typical video width of 1920
+    return 1920 * aspectRatio; // 1920 * 0.5625 ≈ 1080p
+  }
+  
+  // For other aspect ratios, assume it's an image with typical width of 2000
+  return Math.round(2000 * aspectRatio);
+}
+
+// Filter posts by aspect ratio with wiggle room tolerance
+function filterPostsByAspectRatio(posts, targetX, targetY, wiggleRoom = 0) {
+  
+  if (!targetX || !targetY || targetX <= 0 || targetY <= 0) {
+    // If no valid filter specified, return all posts
+    return posts;
+  }
+
+  // If wiggleRoom is 100%, accept all aspect ratios
+  if (wiggleRoom >= 1) {
+    return posts.filter(post => post.aspectRatio && post.aspectRatio > 0);
+  }
+  
+  const targetRatio = targetY / targetX;
+  
+  let matchCount = 0;
+  const result = posts.filter(post => {
+    const postRatio = post.aspectRatio;
+    if (!postRatio || postRatio <= 0) {
+      // If post has no aspect ratio, exclude it
+      return false;
+    }
+    
+    // Calculate the tolerance range
+    const tolerance = targetRatio * wiggleRoom;
+    const minRatio = targetRatio - tolerance;
+    const maxRatio = targetRatio + tolerance;
+    
+    const isMatch = postRatio >= minRatio && postRatio <= maxRatio;
+    if (isMatch) matchCount++;
+    
+    return isMatch;
+  });
+  
+  return result;
+}
+
+// Filter posts for cropping - only include images, exclude GIFs and videos
+function filterPostsForCrop(posts) {
+  const imageExtensions = ['.jpg', '.jpeg', '.png', '.bmp', '.webp', '.tiff'];
+  
+  return posts.filter(post => {
+    if (!post.imageUrl) return false;
+    
+    const url = post.imageUrl.toLowerCase();
+    const ext = url.substring(url.lastIndexOf('.')).split('?')[0];
+    
+    return imageExtensions.includes(ext);
+  });
+}
+
+// Filter posts for output file type conversion - only include images, exclude GIFs and videos
+function filterPostsForOutputFileType(posts) {
+  const imageExtensions = ['.jpg', '.jpeg', '.png', '.bmp', '.webp', '.tiff'];
+  
+  return posts.filter(post => {
+    if (!post.imageUrl) return false;
+    
+    const url = post.imageUrl.toLowerCase();
+    const ext = url.substring(url.lastIndexOf('.')).split('?')[0];
+    
+    return imageExtensions.includes(ext);
+  });
+}
+
+// Perform the actual export of files
+async function performExport(posts, exportFolder, progressFill, progressText, cropConfig = null, outputFormatConfig = null, outputFileTypeConfig = null) {
+  
+  if (!window.electronAPI || !window.electronAPI.copyFiles) {
+    console.error('[performExport] electronAPI.copyFiles not available');
+    throw new Error('File copy functionality not available');
+  }
+  
+  const total = posts.length;
+  
+  for (let i = 0; i < posts.length; i++) {
+    const post = posts[i];
+    const filename = getFilenameFromUrl(post.imageUrl, post.id);
+    const sourceFilePath = window.downloadFolder ? 
+      window.downloadFolder + '\\' + filename : 
+      filename;
+    
+    // Determine final destination filename based on output file type and format
+    let destFilename = filename;
+    if (outputFormatConfig) {
+      // Add dimensions to filename when resizing
+      const nameWithoutExt = filename.substring(0, filename.lastIndexOf('.'));
+      destFilename = nameWithoutExt + '_' + outputFormatConfig.width + 'x' + outputFormatConfig.height;
+      
+      if (outputFileTypeConfig) {
+        // Add the file type extension
+        destFilename = destFilename + '.' + outputFileTypeConfig.fileType;
+      } else {
+        // Keep original extension
+        const ext = filename.substring(filename.lastIndexOf('.'));
+        destFilename = destFilename + ext;
+      }
+    } else if (outputFileTypeConfig) {
+      // Just change extension, no dimensions added
+      const nameWithoutExt = filename.substring(0, filename.lastIndexOf('.'));
+      destFilename = nameWithoutExt + '.' + outputFileTypeConfig.fileType;
+    }
+    
+    const destFilePath = exportFolder + '\\' + destFilename;
+    const tempPath1 = destFilePath.replace(/\.[^.]+$/, '.temp1');
+    const tempPath2 = destFilePath.replace(/\.[^.]+$/, '.temp2');
+    
+    try {
+      // Build operation chain: crop -> resize -> convert
+      // Determine intermediate file paths
+      let cropOutputPath = sourceFilePath;
+      let resizeInputPath = sourceFilePath;
+      let resizeOutputPath = destFilePath;
+      let convertInputPath = destFilePath;
+      
+      if (cropConfig) {
+        // Crop to temp1
+        cropOutputPath = tempPath1;
+        resizeInputPath = tempPath1;
+        resizeOutputPath = (outputFormatConfig && outputFileTypeConfig) ? tempPath2 : destFilePath;
+        convertInputPath = resizeOutputPath;
+        
+        await window.electronAPI.cropImage(sourceFilePath, cropOutputPath, cropConfig.x, cropConfig.y, post.aspectRatio);
+      }
+      
+      if (outputFormatConfig) {
+        // If we also need to convert, resize to temp, otherwise to dest
+        if (outputFileTypeConfig && !cropConfig) {
+          resizeOutputPath = tempPath1;
+          convertInputPath = tempPath1;
+        }
+        
+        await window.electronAPI.resizeImage(resizeInputPath, resizeOutputPath, outputFormatConfig.width, outputFormatConfig.height);
+      }
+      
+      if (outputFileTypeConfig) {
+        // Convert to final destination
+        await window.electronAPI.convertFileType(convertInputPath, destFilePath, outputFileTypeConfig.fileType);
+      }
+      
+      // If no operations were done, just copy the file
+      if (!cropConfig && !outputFormatConfig && !outputFileTypeConfig) {
+        await window.electronAPI.copyFiles(sourceFilePath, destFilePath);
+      }
+      
+      // Clean up temp files
+      const tempFiles = [];
+      if (cropConfig && (outputFormatConfig || outputFileTypeConfig)) tempFiles.push(tempPath1);
+      if (cropConfig && outputFormatConfig && outputFileTypeConfig) tempFiles.push(tempPath2);
+      if (!cropConfig && outputFormatConfig && outputFileTypeConfig) tempFiles.push(tempPath1);
+      
+      if (tempFiles.length > 0) {
+        try {
+          await window.electronAPI.deleteFiles(tempFiles);
+        } catch (e) {
+          // Ignore cleanup errors
+        }
+      }
+    } catch (error) {
+      console.warn(`[performExport] Failed to process file ${destFilename}:`, error);
+      // Continue with next file instead of failing completely
+    }
+    
+    // Update progress
+    const percentage = Math.round((i + 1) / total * 100);
+    progressFill.style.width = percentage + '%';
+    progressText.textContent = `${i + 1}/${total}`;
+    
+    // Allow UI to update
+    await new Promise(resolve => setTimeout(resolve, 10));
+  }
+}
+
+function renderDownloadsExport(sidebar) {
+  const exportContainer = document.createElement('div');
+  exportContainer.className = 'export-container';
+
+  sidebar.appendChild(exportContainer);
+  const exportTitle = document.createElement('h3');
+  exportTitle.textContent = 'EXPORT';
+  exportContainer.appendChild(exportTitle);
+
+  // Aspect Ratio Filter Section
+  const filterContainer = document.createElement('div');
+  filterContainer.className = 'export-filter-container';
+  exportContainer.appendChild(filterContainer);
+
+  const filterTitle = document.createElement('h1');
+  filterTitle.textContent = 'Filters';
+  filterContainer.appendChild(filterTitle);
+
+  // Aspect Ratio Section
+  const aspectRatioSection = document.createElement('div');
+  aspectRatioSection.className = 'export-aspect-ratio-section';
+
+  const aspectRatioLabel = document.createElement('div');
+  aspectRatioLabel.className = 'export-aspect-ratio-label export-filter-label';
+  
+  const aspectRatioCheckbox = document.createElement('input');
+  aspectRatioCheckbox.id = 'export-aspect-ratio-checkbox';
+  aspectRatioCheckbox.className = 'export-filter-checkbox';
+  aspectRatioCheckbox.type = 'checkbox';
+  aspectRatioCheckbox.checked = false;
+  
+  const aspectRatioLabelText = document.createElement('span');
+  aspectRatioLabelText.textContent = 'Aspect Ratio Filter [X] : [Y]';
+  
+  aspectRatioLabel.appendChild(aspectRatioCheckbox);
+  aspectRatioLabel.appendChild(aspectRatioLabelText);
+  aspectRatioSection.appendChild(aspectRatioLabel);
+
+  // Create wrapper for all filter content (inputs, preview, etc.)
+  const aspectRatioContent = document.createElement('div');
+  aspectRatioContent.className = 'export-aspect-ratio-content';
+  aspectRatioContent.id = 'export-aspect-ratio-content';
+
+  // X and Y Input Fields
+  const xyInputDiv = document.createElement('div');
+  xyInputDiv.className = 'export-xy-input-container';
+
+  const xInput = document.createElement('input');
+  xInput.id = 'export-aspect-ratio-x';
+  xInput.className = 'export-xy-input';
+  xInput.type = 'number';
+  xInput.placeholder = '16';
+  xInput.value = '16';
+  xInput.step = '0.1';
+  xInput.min = '0.1';
+  xyInputDiv.appendChild(xInput);
+
+  const yInput = document.createElement('input');
+  yInput.id = 'export-aspect-ratio-y';
+  yInput.className = 'export-xy-input';
+  yInput.type = 'number';
+  yInput.placeholder = '9';
+  yInput.value = '9';
+  yInput.step = '0.1';
+  yInput.min = '0.1';
+  xyInputDiv.appendChild(yInput);
+
+  aspectRatioContent.appendChild(xyInputDiv);
+
+  // Crop Checkbox
+  const cropDiv = document.createElement('div');
+  cropDiv.className = 'export-crop-checkbox-container';
+
+  const cropCheckbox = document.createElement('input');
+  cropCheckbox.id = 'export-crop-checkbox';
+  cropCheckbox.className = 'export-filter-checkbox';
+  cropCheckbox.type = 'checkbox';
+  cropCheckbox.checked = false;
+
+  const cropLabel = document.createElement('label');
+  cropLabel.className = 'export-crop-label';
+  cropLabel.style.display = 'flex';
+  cropLabel.style.alignItems = 'center';
+  cropLabel.style.gap = '8px';
+  cropLabel.style.cursor = 'pointer';
+
+  const cropLabelText = document.createElement('span');
+  cropLabelText.textContent = 'Crop to Aspect Ratio (removes GIFs & videos)';
+
+  cropLabel.appendChild(cropCheckbox);
+  cropLabel.appendChild(cropLabelText);
+  cropDiv.appendChild(cropLabel);
+  aspectRatioContent.appendChild(cropDiv);
+
+  // Wiggle Room Slider
+  const wiggleRoomLabel = document.createElement('div');
+  wiggleRoomLabel.className = 'export-wiggle-room-label';
+  wiggleRoomLabel.textContent = 'Tolerance';
+
+  const wiggleRoomSliderDiv = document.createElement('div');
+  wiggleRoomSliderDiv.className = 'export-wiggle-room-slider-container';
+
+  const wiggleRoomSlider = document.createElement('input');
+  wiggleRoomSlider.id = 'export-wiggle-room-slider';
+  wiggleRoomSlider.className = 'export-wiggle-room-slider';
+  wiggleRoomSlider.type = 'range';
+  wiggleRoomSlider.min = '0';
+  wiggleRoomSlider.max = '100';
+  wiggleRoomSlider.value = '0';
+
+  const wiggleRoomValue = document.createElement('span');
+  wiggleRoomValue.id = 'export-wiggle-room-value';
+  wiggleRoomValue.className = 'export-wiggle-room-value';
+  wiggleRoomValue.textContent = '0%';
+
+  wiggleRoomSliderDiv.appendChild(wiggleRoomLabel);
+  wiggleRoomSliderDiv.appendChild(wiggleRoomSlider);
+  wiggleRoomSliderDiv.appendChild(wiggleRoomValue);
+  aspectRatioContent.appendChild(wiggleRoomSliderDiv);
+
+  // Preview Container
+  const previewImageContainer = document.createElement('div');
+  previewImageContainer.id = 'export-preview-image-container';
+  previewImageContainer.className = 'export-preview-image';
+  previewImageContainer.textContent = 'No matching posts';
+
+  aspectRatioContent.appendChild(previewImageContainer);
+
+  aspectRatioSection.appendChild(aspectRatioContent);
+  filterContainer.appendChild(aspectRatioSection);
+
+  // Output Format Filter Section
+  const outputFormatSection = document.createElement('div');
+  outputFormatSection.className = 'export-output-format-section';
+
+  const outputFormatLabel = document.createElement('div');
+  outputFormatLabel.className = 'export-output-format-label export-filter-label';
+
+  const outputFormatCheckbox = document.createElement('input');
+  outputFormatCheckbox.id = 'export-output-format-checkbox';
+  outputFormatCheckbox.className = 'export-filter-checkbox';
+  outputFormatCheckbox.type = 'checkbox';
+  outputFormatCheckbox.checked = false;
+
+  const outputFormatLabelText = document.createElement('span');
+  outputFormatLabelText.innerHTML = 'Output Format <b>(removes GIFs & videos)</b>';
+
+  outputFormatLabel.appendChild(outputFormatCheckbox);
+  outputFormatLabel.appendChild(outputFormatLabelText);
+  outputFormatSection.appendChild(outputFormatLabel);
+
+  // Create wrapper for output format filter content
+  const outputFormatContent = document.createElement('div');
+  outputFormatContent.className = 'export-output-format-content';
+  outputFormatContent.id = 'export-output-format-content';
+
+  // Width input row
+  const widthInputRow = document.createElement('div');
+  widthInputRow.className = 'export-format-input-row';
+
+  const widthLabelSpan = document.createElement('span');
+  widthLabelSpan.className = 'export-format-label';
+  widthLabelSpan.textContent = 'Width';
+
+  const widthInput = document.createElement('input');
+  widthInput.id = 'export-output-width';
+  widthInput.className = 'export-format-input';
+  widthInput.type = 'number';
+  widthInput.placeholder = '1920';
+  widthInput.min = '1';
+
+  widthInputRow.appendChild(widthLabelSpan);
+  widthInputRow.appendChild(widthInput);
+  outputFormatContent.appendChild(widthInputRow);
+
+  // Height input row
+  const heightInputRow = document.createElement('div');
+  heightInputRow.className = 'export-format-input-row';
+
+  const heightLabelSpan = document.createElement('span');
+  heightLabelSpan.className = 'export-format-label';
+  heightLabelSpan.textContent = 'Height';
+
+  const heightInput = document.createElement('input');
+  heightInput.id = 'export-output-height';
+  heightInput.className = 'export-format-input';
+  heightInput.type = 'number';
+  heightInput.placeholder = '1080';
+  heightInput.min = '1';
+
+  heightInputRow.appendChild(heightLabelSpan);
+  heightInputRow.appendChild(heightInput);
+  outputFormatContent.appendChild(heightInputRow);
+
+  outputFormatSection.appendChild(outputFormatContent);
+  filterContainer.appendChild(outputFormatSection);
+
+  // File Type Filter Section
+  const fileTypeSection = document.createElement('div');
+  fileTypeSection.className = 'export-file-type-section';
+
+  const fileTypeLabel = document.createElement('div');
+  fileTypeLabel.className = 'export-file-type-label export-filter-label';
+
+  const fileTypeCheckbox = document.createElement('input');
+  fileTypeCheckbox.id = 'export-file-type-checkbox';
+  fileTypeCheckbox.className = 'export-filter-checkbox';
+  fileTypeCheckbox.type = 'checkbox';
+  fileTypeCheckbox.checked = false;
+
+  const fileTypeLabelText = document.createElement('span');
+  fileTypeLabelText.textContent = 'File Type Filter';
+
+  fileTypeLabel.appendChild(fileTypeCheckbox);
+  fileTypeLabel.appendChild(fileTypeLabelText);
+  fileTypeSection.appendChild(fileTypeLabel);
+
+  // Create wrapper for file type filter content
+  const fileTypeContent = document.createElement('div');
+  fileTypeContent.className = 'export-file-type-content';
+  fileTypeContent.id = 'export-file-type-content';
+
+  // File type checkboxes container
+  const fileTypeCheckboxContainer = document.createElement('div');
+  fileTypeCheckboxContainer.className = 'export-file-type-checkbox-container';
+
+  // Image checkbox
+  const imageCheckboxLabel = document.createElement('label');
+  imageCheckboxLabel.className = 'export-file-type-option-label';
+
+  const imageCheckbox = document.createElement('input');
+  imageCheckbox.id = 'export-file-type-image';
+  imageCheckbox.className = 'export-file-type-option-checkbox';
+  imageCheckbox.type = 'checkbox';
+  imageCheckbox.checked = true;
+
+  const imageCheckboxText = document.createElement('span');
+  imageCheckboxText.textContent = 'Images';
+
+  imageCheckboxLabel.appendChild(imageCheckbox);
+  imageCheckboxLabel.appendChild(imageCheckboxText);
+  fileTypeCheckboxContainer.appendChild(imageCheckboxLabel);
+
+  // GIF checkbox
+  const gifCheckboxLabel = document.createElement('label');
+  gifCheckboxLabel.className = 'export-file-type-option-label';
+
+  const gifCheckbox = document.createElement('input');
+  gifCheckbox.id = 'export-file-type-gif';
+  gifCheckbox.className = 'export-file-type-option-checkbox';
+  gifCheckbox.type = 'checkbox';
+  gifCheckbox.checked = true;
+
+  const gifCheckboxText = document.createElement('span');
+  gifCheckboxText.textContent = 'GIFs';
+
+  gifCheckboxLabel.appendChild(gifCheckbox);
+  gifCheckboxLabel.appendChild(gifCheckboxText);
+  fileTypeCheckboxContainer.appendChild(gifCheckboxLabel);
+
+  // Video checkbox
+  const videoCheckboxLabel = document.createElement('label');
+  videoCheckboxLabel.className = 'export-file-type-option-label';
+
+  const videoCheckbox = document.createElement('input');
+  videoCheckbox.id = 'export-file-type-video';
+  videoCheckbox.className = 'export-file-type-option-checkbox';
+  videoCheckbox.type = 'checkbox';
+  videoCheckbox.checked = true;
+
+  const videoCheckboxText = document.createElement('span');
+  videoCheckboxText.textContent = 'Videos';
+
+  videoCheckboxLabel.appendChild(videoCheckbox);
+  videoCheckboxLabel.appendChild(videoCheckboxText);
+  fileTypeCheckboxContainer.appendChild(videoCheckboxLabel);
+
+  fileTypeContent.appendChild(fileTypeCheckboxContainer);
+  fileTypeSection.appendChild(fileTypeContent);
+  filterContainer.appendChild(fileTypeSection);
+
+  // Date Filter Section
+  const dateSection = document.createElement('div');
+  dateSection.className = 'export-date-section';
+
+  const dateLabel = document.createElement('div');
+  dateLabel.className = 'export-date-label export-filter-label';
+
+  const dateCheckbox = document.createElement('input');
+  dateCheckbox.id = 'export-date-checkbox';
+  dateCheckbox.className = 'export-filter-checkbox';
+  dateCheckbox.type = 'checkbox';
+  dateCheckbox.checked = false;
+
+  const dateLabelText = document.createElement('span');
+  dateLabelText.textContent = 'Date Filter (From)';
+
+  dateLabel.appendChild(dateCheckbox);
+  dateLabel.appendChild(dateLabelText);
+  dateSection.appendChild(dateLabel);
+
+  // Create wrapper for date filter content
+  const dateContent = document.createElement('div');
+  dateContent.className = 'export-date-content';
+  dateContent.id = 'export-date-content';
+
+  // Date input
+  const dateInputWrapper = document.createElement('div');
+  dateInputWrapper.className = 'export-date-input-wrapper';
+
+  const dateInput = document.createElement('input');
+  dateInput.id = 'export-date-input';
+  dateInput.className = 'export-date-input';
+  dateInput.type = 'date';
+  // Set default to today's date
+  const today = new Date();
+  dateInput.value = today.toISOString().split('T')[0];
+
+  dateInputWrapper.appendChild(dateInput);
+  dateContent.appendChild(dateInputWrapper);
+  dateSection.appendChild(dateContent);
+  filterContainer.appendChild(dateSection);
+
+  // Resolution Filter Section
+  const resolutionSection = document.createElement('div');
+  resolutionSection.className = 'export-resolution-section';
+
+  const resolutionLabel = document.createElement('div');
+  resolutionLabel.className = 'export-resolution-label export-filter-label';
+
+  const resolutionCheckbox = document.createElement('input');
+  resolutionCheckbox.id = 'export-resolution-checkbox';
+  resolutionCheckbox.className = 'export-filter-checkbox';
+  resolutionCheckbox.type = 'checkbox';
+  resolutionCheckbox.checked = false;
+
+  const resolutionLabelText = document.createElement('span');
+  resolutionLabelText.textContent = 'Minimum Resolution';
+
+  resolutionLabel.appendChild(resolutionCheckbox);
+  resolutionLabel.appendChild(resolutionLabelText);
+  resolutionSection.appendChild(resolutionLabel);
+
+  // Create wrapper for resolution filter content
+  const resolutionContent = document.createElement('div');
+  resolutionContent.className = 'export-resolution-content';
+  resolutionContent.id = 'export-resolution-content';
+
+  // Resolution dropdown
+  const resolutionDropdown = document.createElement('select');
+  resolutionDropdown.id = 'export-resolution-select';
+  resolutionDropdown.className = 'export-resolution-select';
+  
+  const resolutions = [
+    { label: 'Any Resolution', value: 0 },
+    { label: '420p', value: 420 },
+    { label: '720p', value: 720 },
+    { label: '1080p', value: 1080 },
+    { label: '1440p (2K)', value: 1440 },
+    { label: '2160p (4K)', value: 2160 },
+    { label: '4320p (8K)', value: 4320 }
+  ];
+  
+  resolutions.forEach(res => {
+    const option = document.createElement('option');
+    option.value = res.value;
+    option.textContent = res.label;
+    resolutionDropdown.appendChild(option);
+  });
+  
+  resolutionContent.appendChild(resolutionDropdown);
+  resolutionSection.appendChild(resolutionContent);
+  filterContainer.appendChild(resolutionSection);
+
+  // Output File Type Filter Section
+  const outputFileTypeSection = document.createElement('div');
+  outputFileTypeSection.className = 'export-output-file-type-section';
+
+  const outputFileTypeLabel = document.createElement('div');
+  outputFileTypeLabel.className = 'export-output-file-type-label export-filter-label';
+
+  const outputFileTypeCheckbox = document.createElement('input');
+  outputFileTypeCheckbox.id = 'export-output-file-type-checkbox';
+  outputFileTypeCheckbox.className = 'export-filter-checkbox';
+  outputFileTypeCheckbox.type = 'checkbox';
+  outputFileTypeCheckbox.checked = false;
+
+  const outputFileTypeLabelText = document.createElement('span');
+  outputFileTypeLabelText.textContent = 'Output File Type';
+
+  outputFileTypeLabel.appendChild(outputFileTypeCheckbox);
+  outputFileTypeLabel.appendChild(outputFileTypeLabelText);
+  outputFileTypeSection.appendChild(outputFileTypeLabel);
+
+  // Create wrapper for output file type filter content
+  const outputFileTypeContent = document.createElement('div');
+  outputFileTypeContent.className = 'export-output-file-type-content';
+  outputFileTypeContent.id = 'export-output-file-type-content';
+
+  const outputFileTypeDropdown = document.createElement('select');
+  outputFileTypeDropdown.id = 'export-output-file-type-dropdown';
+  outputFileTypeDropdown.className = 'export-output-file-type-select';
+
+  const fileTypes = [
+    { value: 'png', text: 'PNG' },
+    { value: 'jpg', text: 'JPG' },
+    { value: 'jpeg', text: 'JPEG' },
+    { value: 'tiff', text: 'TIFF' },
+    { value: 'webp', text: 'WebP' },
+    { value: 'ico', text: 'ICO' },
+    { value: 'dds', text: 'DDS' }
+  ];
+
+  fileTypes.forEach(type => {
+    const option = document.createElement('option');
+    option.value = type.value;
+    option.textContent = type.text;
+    outputFileTypeDropdown.appendChild(option);
+  });
+
+  outputFileTypeContent.appendChild(outputFileTypeDropdown);
+  outputFileTypeSection.appendChild(outputFileTypeContent);
+  filterContainer.appendChild(outputFileTypeSection);
+
+  exportContainer.appendChild(filterContainer);
+
+  // End Container
+  const endContainer = document.createElement('div');
+  endContainer.className = 'export-end-container';
+  exportContainer.appendChild(endContainer);
+
+  // Count Display
+  const countContainer = document.createElement('div');
+  countContainer.className = 'export-count-container';
+
+  const countDisplay = document.createElement('div');
+  countDisplay.id = 'export-count-display-total';
+  countDisplay.className = 'export-count-display-total';
+  countDisplay.textContent = '0 posts will be exported';
+
+  countContainer.appendChild(countDisplay);
+  endContainer.appendChild(countContainer);
+
+  // Export Button with integrated progress
+  const exportButton = document.createElement('button');
+  exportButton.id = 'export-button';
+  exportButton.className = 'export-button';
+
+  // Progress fill div (behind text)
+  const exportButtonProgress = document.createElement('div');
+  exportButtonProgress.className = 'export-button-progress';
+  exportButton.appendChild(exportButtonProgress);
+
+  // Button text (on top)
+  const exportButtonText = document.createElement('span');
+  exportButtonText.className = 'export-button-text';
+  exportButtonText.textContent = 'Export';
+  exportButton.appendChild(exportButtonText);
+
+  endContainer.appendChild(exportButton);
+
+  // Progress Bar (initially hidden)
+  const progressContainer = document.createElement('div');
+  progressContainer.id = 'export-progress-container';
+  progressContainer.className = 'export-progress-container';
+
+  const progressTitle = document.createElement('div');
+  progressTitle.className = 'export-progress-title';
+  progressTitle.textContent = 'Export Progress';
+  progressContainer.appendChild(progressTitle);
+
+  const progressBar = document.createElement('div');
+  progressBar.id = 'export-progress-bar';
+  progressBar.className = 'export-progress-bar';
+
+  const progressFill = document.createElement('div');
+  progressFill.id = 'export-progress-fill';
+  progressFill.className = 'export-progress-fill';
+
+  const progressText = document.createElement('span');
+  progressText.id = 'export-progress-text';
+  progressText.className = 'export-progress-text';
+  progressText.textContent = '0/0';
+
+  progressBar.appendChild(progressFill);
+  progressBar.appendChild(progressText);
+  progressContainer.appendChild(progressBar);
+  endContainer.appendChild(progressContainer);
+
+  // Event listeners for filtering - define updateExportCount first
+  const updateExportCount = async () => {
+    const x = parseFloat(xInput.value) || 0;
+    const y = parseFloat(yInput.value) || 0;
+    const wiggleRoom = parseInt(wiggleRoomSlider.value) / 100;
+    
+    const posts = Array.isArray(window.allDownloadedPosts) ? window.allDownloadedPosts : [];
+
+    
+    // Only apply aspect ratio filter if checkbox is enabled
+    let filteredPosts = aspectRatioCheckbox.checked ? filterPostsByAspectRatio(posts, x, y, wiggleRoom) : posts;
+    
+    // Only apply file type filter if checkbox is enabled
+    if (fileTypeCheckbox.checked) {
+      const allowImage = imageCheckbox.checked;
+      const allowGif = gifCheckbox.checked;
+      const allowVideo = videoCheckbox.checked;
+      filteredPosts = filterPostsByFileType(filteredPosts, allowImage, allowGif, allowVideo);
+    }
+
+    // Only apply date filter if checkbox is enabled
+    if (dateCheckbox.checked) {
+      filteredPosts = filterPostsByDate(filteredPosts, dateInput.value);
+    }
+
+    // Only apply resolution filter if checkbox is enabled
+    if (resolutionCheckbox.checked) {
+      const minHeight = parseInt(resolutionDropdown.value) || 0;
+      filteredPosts = await filterPostsByResolution(filteredPosts, minHeight);
+    }
+
+    // Only apply crop filter if checkbox is enabled
+    if (cropCheckbox.checked) {
+      filteredPosts = filterPostsForCrop(filteredPosts);
+    }
+
+    // Only apply output file type filter if checkbox is enabled
+    if (outputFileTypeCheckbox.checked) {
+      filteredPosts = filterPostsForOutputFileType(filteredPosts);
+    }
+
+    // If output format is enabled, filter out videos and gifs
+    if (outputFormatCheckbox.checked) {
+      filteredPosts = filterPostsForOutputFileType(filteredPosts);
+    }
+     
+    // Calculate total file size from actual files in download folder
+    let totalFileSize = 0;
+    if (window.downloadFolder && filteredPosts.length > 0) {
+      try {
+        const filePaths = filteredPosts.map(post => {
+          const filename = getFilenameFromUrl(post.imageUrl, post.id);
+          return window.downloadFolder + '\\' + filename;
+        });
+        
+        const fileSizes = await window.electronAPI.getFileSizes(filePaths);
+        totalFileSize = fileSizes.reduce((sum, result) => sum + result.size, 0);
+      } catch (e) {
+        showToast(`Could not calculate file sizes: ${e.message}`);
+      }
+    }
+    
+    // Format file size
+    const formatFileSize = (bytes) => {
+      if (bytes === 0) return '0 B';
+      const k = 1024;
+      const sizes = ['B', 'KB', 'MB', 'GB'];
+      const i = Math.floor(Math.log(bytes) / Math.log(k));
+      return (bytes / Math.pow(k, i)).toFixed(2) + ' ' + sizes[i];
+    };
+    
+    const sizeString = totalFileSize > 0 ? ` (${formatFileSize(totalFileSize)})` : '';
+    countDisplay.textContent = `${filteredPosts.length} posts ${sizeString} selected`;
+    
+    // Update preview divs with best matching post and furthest if wiggleRoom > 0
+    if (filteredPosts.length > 0) {
+      const bestPost = findBestMatchingPost(filteredPosts, x, y);
+      previewImageContainer.innerHTML = '';
+      
+      // Helper function to size a preview div to fit container while maintaining aspect ratio
+      const sizePreviewDiv = (div, post) => {
+        const aspectRatio = post.aspectRatio ? (1 / post.aspectRatio) : 1;
+        div.style.aspectRatio = aspectRatio.toString();
+        
+        // Calculate container dimensions (accounting for margin)
+        const containerWidth = previewImageContainer.offsetWidth - 8;
+        const containerHeight = previewImageContainer.offsetHeight - 8;
+        
+        // Calculate height if width-constrained
+        const heightIfWidthConstrained = containerWidth / aspectRatio;
+        
+        // Determine which dimension to constrain
+        if (heightIfWidthConstrained <= containerHeight) {
+          // Width is the limiting factor
+          div.style.width = 'calc(100% - 8px)';
+          div.style.height = 'auto';
+        } else {
+          // Height is the limiting factor
+          div.style.height = 'calc(100% - 8px)';
+          div.style.width = 'auto';
+        }
+      };
+      
+      // Show best matching post
+      const bestPreviewDiv = document.createElement('div');
+      bestPreviewDiv.className = 'export-preview-img';
+      previewImageContainer.appendChild(bestPreviewDiv);
+      sizePreviewDiv(bestPreviewDiv, bestPost);
+      
+      // Show furthest X and Y posts if wiggleRoom > 0 and there are multiple posts
+      if (wiggleRoom > 0 && filteredPosts.length > 1) {
+        const furthestXPost = findFurthestMatchingPostByX(filteredPosts);
+        const furthestXPreviewDiv = document.createElement('div');
+        furthestXPreviewDiv.className = 'export-preview-img second';
+        previewImageContainer.appendChild(furthestXPreviewDiv);
+        sizePreviewDiv(furthestXPreviewDiv, furthestXPost);
+        
+        const furthestYPost = findFurthestMatchingPostByY(filteredPosts);
+        const furthestYPreviewDiv = document.createElement('div');
+        furthestYPreviewDiv.className = 'export-preview-img third';
+        previewImageContainer.appendChild(furthestYPreviewDiv);
+        sizePreviewDiv(furthestYPreviewDiv, furthestYPost);
+      }
+      
+      const exportCountDisplay = document.createElement('p');
+      exportCountDisplay.className = 'export-count-display';
+      exportCountDisplay.textContent = `Total: ${filteredPosts.length}`;
+      previewImageContainer.appendChild(exportCountDisplay);
+    } else {
+      previewImageContainer.innerHTML = '';
+      previewImageContainer.textContent = 'No matching posts';
+      previewImageContainer.style.color = 'var(--text-secondary)';
+    }
+  };
+
+  // Function to toggle aspect ratio filter elements
+  const toggleAspectRatioFilter = (enabled) => {
+    if (enabled) {
+      aspectRatioContent.classList.remove('filter-disabled');
+    } else {
+      aspectRatioContent.classList.add('filter-disabled');
+    }
+  };
+  
+  // Add checkbox event listener to toggle filter
+  aspectRatioCheckbox.addEventListener('change', () => {
+    toggleAspectRatioFilter(aspectRatioCheckbox.checked);
+    updateExportCount();
+  });
+  
+  // Initialize filters as disabled
+  toggleAspectRatioFilter(false);
+
+  // Function to toggle file type filter elements
+  const toggleFileTypeFilter = (enabled) => {
+    if (enabled) {
+      fileTypeContent.classList.remove('filter-disabled');
+    } else {
+      fileTypeContent.classList.add('filter-disabled');
+    }
+  };
+
+  // Add checkbox event listener to toggle file type filter
+  fileTypeCheckbox.addEventListener('change', () => {
+    toggleFileTypeFilter(fileTypeCheckbox.checked);
+    updateExportCount();
+  });
+
+  // Add change listeners to individual file type checkboxes
+  [imageCheckbox, gifCheckbox, videoCheckbox].forEach(checkbox => {
+    checkbox.addEventListener('change', updateExportCount);
+  });
+
+  // Initialize file type filter as disabled
+  toggleFileTypeFilter(false);
+
+  // Function to toggle date filter elements
+  const toggleDateFilter = (enabled) => {
+    if (enabled) {
+      dateContent.classList.remove('filter-disabled');
+    } else {
+      dateContent.classList.add('filter-disabled');
+    }
+  };
+
+  // Add checkbox event listener to toggle date filter
+  dateCheckbox.addEventListener('change', () => {
+    toggleDateFilter(dateCheckbox.checked);
+    updateExportCount();
+  });
+
+  // Add change listener to date input
+  dateInput.addEventListener('change', updateExportCount);
+
+  // Initialize date filter as disabled
+  toggleDateFilter(false);
+
+  // Function to toggle resolution filter elements
+  const toggleResolutionFilter = (enabled) => {
+    if (enabled) {
+      resolutionContent.classList.remove('filter-disabled');
+    } else {
+      resolutionContent.classList.add('filter-disabled');
+    }
+  };
+
+  // Add checkbox event listener to toggle resolution filter
+  resolutionCheckbox.addEventListener('change', () => {
+    toggleResolutionFilter(resolutionCheckbox.checked);
+    updateExportCount();
+  });
+
+  // Add change listener to resolution dropdown
+  resolutionDropdown.addEventListener('change', updateExportCount);
+
+  // Initialize resolution filter as disabled
+  toggleResolutionFilter(false);
+
+  // Add checkbox event listener to crop filter
+  cropCheckbox.addEventListener('change', updateExportCount);
+
+  // Function to toggle output format filter elements
+  const toggleOutputFormatFilter = (enabled) => {
+    if (enabled) {
+      outputFormatContent.classList.remove('filter-disabled');
+    } else {
+      outputFormatContent.classList.add('filter-disabled');
+    }
+  };
+
+  // Add checkbox event listener to toggle output format filter
+  outputFormatCheckbox.addEventListener('change', () => {
+    toggleOutputFormatFilter(outputFormatCheckbox.checked);
+    updateExportCount();
+  });
+
+  // Add change listeners to output format inputs
+  widthInput.addEventListener('change', updateExportCount);
+  heightInput.addEventListener('change', updateExportCount);
+
+  // Initialize output format filter as disabled
+  toggleOutputFormatFilter(false);
+
+  // Function to toggle output file type filter elements
+  const toggleOutputFileTypeFilter = (enabled) => {
+    if (enabled) {
+      outputFileTypeContent.classList.remove('filter-disabled');
+    } else {
+      outputFileTypeContent.classList.add('filter-disabled');
+    }
+  };
+
+  // Add checkbox event listener to toggle output file type filter
+  outputFileTypeCheckbox.addEventListener('change', () => {
+    toggleOutputFileTypeFilter(outputFileTypeCheckbox.checked);
+    updateExportCount();
+  });
+
+  // Add change listener to output file type dropdown
+  outputFileTypeDropdown.addEventListener('change', updateExportCount);
+
+  // Initialize output file type filter as disabled
+  toggleOutputFileTypeFilter(false);
+
+  xInput.addEventListener('input', updateExportCount);
+  yInput.addEventListener('input', updateExportCount);
+  
+  let wiggleRoomTimeout;
+  wiggleRoomSlider.addEventListener('input', () => {
+    wiggleRoomValue.textContent = wiggleRoomSlider.value + '%';
+    updateExportCount();
+    
+    clearTimeout(wiggleRoomTimeout);
+    wiggleRoomTimeout = setTimeout(() => {
+      updateExportCount();
+    }, 200);
+  });
+
+  // Export button click handler
+  exportButton.addEventListener('click', async () => {
+    const x = parseFloat(xInput.value) || 0;
+    const y = parseFloat(yInput.value) || 0;
+    const wiggleRoom = parseInt(wiggleRoomSlider.value) / 100;
+    
+    const posts = Array.isArray(window.allDownloadedPosts) ? window.allDownloadedPosts : [];
+    // Only apply aspect ratio filter if checkbox is enabled
+    let filteredPosts = aspectRatioCheckbox.checked ? filterPostsByAspectRatio(posts, x, y, wiggleRoom) : posts;
+    
+    // Only apply file type filter if checkbox is enabled
+    if (fileTypeCheckbox.checked) {
+      const allowImage = imageCheckbox.checked;
+      const allowGif = gifCheckbox.checked;
+      const allowVideo = videoCheckbox.checked;
+      filteredPosts = filterPostsByFileType(filteredPosts, allowImage, allowGif, allowVideo);
+    }
+
+    // Only apply date filter if checkbox is enabled
+    if (dateCheckbox.checked) {
+      filteredPosts = filterPostsByDate(filteredPosts, dateInput.value);
+    }
+
+    // Only apply resolution filter if checkbox is enabled
+    if (resolutionCheckbox.checked) {
+      const minHeight = parseInt(resolutionDropdown.value) || 0;
+      filteredPosts = await filterPostsByResolution(filteredPosts, minHeight);
+    }
+
+    // Only apply crop filter if checkbox is enabled
+    const shouldCrop = cropCheckbox.checked;
+    if (shouldCrop) {
+      filteredPosts = filterPostsForCrop(filteredPosts);
+    }
+
+    // If crop, output format, or output file type is enabled, remove videos and GIFs
+    // since they can't be processed by image tools
+    const needsImageOnly = shouldCrop || outputFormatCheckbox.checked || outputFileTypeCheckbox.checked;
+    if (needsImageOnly) {
+      const videoExtensions = ['mp4', 'webm', 'mkv', 'avi', 'mov', 'flv', 'wmv', 'm4v'];
+      filteredPosts = filteredPosts.filter(post => {
+        const ext = getFilenameFromUrl(post.imageUrl, post.id).split('.').pop().toLowerCase();
+        const isVideo = videoExtensions.includes(ext);
+        const isGif = ext === 'gif';
+        return !isVideo && !isGif;
+      });
+    }
+    
+    if (filteredPosts.length === 0) {
+      showToast('No posts match the current filter criteria','error');
+      return;
+    }
+
+    // Select export folder - use last export folder as default
+    const lastExportFolder = localStorage.getItem('booru-last-export-folder');
+    const defaultFolder = lastExportFolder || window.downloadFolder || 'C:\\Downloads';
+    const exportFolder = await window.electronAPI.selectFolder(defaultFolder);
+    if (!exportFolder) return; // User cancelled
+    
+    // Save the selected folder for next time
+    localStorage.setItem('booru-last-export-folder', exportFolder);
+
+    // Reset button progress to 0 and disable button
+    exportButtonProgress.style.width = '0%';
+    exportButton.disabled = true;
+    exportButton.style.opacity = '0.7';
+    exportButton.style.cursor = 'not-allowed';
+
+    try {
+      // Create a dummy element for progress text (not used, but kept for performExport compatibility)
+      const dummyProgressText = document.createElement('span');
+      
+      // If crop is enabled, we need the aspect ratio values
+      let cropConfig = null;
+      if (shouldCrop) {
+        cropConfig = {
+          x: x,
+          y: y,
+          wiggleRoom: wiggleRoom
+        };
+      }
+
+      // If output format is enabled, we need the width and height values
+      let outputFormatConfig = null;
+      if (outputFormatCheckbox.checked) {
+        const outputWidth = parseInt(widthInput.value);
+        const outputHeight = parseInt(heightInput.value);
+        if (outputWidth && outputWidth > 0 && outputHeight && outputHeight > 0) {
+          outputFormatConfig = {
+            width: outputWidth,
+            height: outputHeight
+          };
+        }
+      }
+
+      // If output file type is enabled, we need the file type value
+      let outputFileTypeConfig = null;
+      if (outputFileTypeCheckbox.checked) {
+        const fileType = outputFileTypeDropdown.value;
+        if (fileType) {
+          outputFileTypeConfig = {
+            fileType: fileType
+          };
+        }
+      }
+      
+      await performExport(filteredPosts, exportFolder, exportButtonProgress, dummyProgressText, cropConfig, outputFormatConfig, outputFileTypeConfig);
+      // Update last export folder for next time
+      localStorage.setItem('booru-last-export-folder', exportFolder);
+      showToast(`Successfully exported ${filteredPosts.length} posts to:\n${exportFolder}`, 'success');
+    } catch (error) {
+      console.error('Export error:', error);
+      showToast(`Export failed: ${error.message}`, 'error');
+    } finally {
+      exportButton.disabled = false;
+      exportButton.style.opacity = '1';
+      exportButton.style.cursor = 'pointer';
+      exportButtonProgress.style.width = '0%';
+    }
+  });
+
+  // Save/Restore Functions
+  const saveExportSettings = () => {
+    const settings = {
+      // Aspect ratio section
+      aspectRatioCheckbox: aspectRatioCheckbox.checked,
+      xInput: xInput.value,
+      yInput: yInput.value,
+      wiggleRoomSlider: wiggleRoomSlider.value,
+      cropCheckbox: cropCheckbox.checked,
+      
+      // File type section
+      fileTypeCheckbox: fileTypeCheckbox.checked,
+      imageCheckbox: imageCheckbox.checked,
+      gifCheckbox: gifCheckbox.checked,
+      videoCheckbox: videoCheckbox.checked,
+      
+      // Date section
+      dateCheckbox: dateCheckbox.checked,
+      dateInput: dateInput.value,
+      
+      // Resolution section
+      resolutionCheckbox: resolutionCheckbox.checked,
+      resolutionDropdown: resolutionDropdown.value,
+      
+      // Output format section
+      outputFormatCheckbox: outputFormatCheckbox.checked,
+      widthInput: widthInput.value,
+      heightInput: heightInput.value,
+      
+      // Output file type section
+      outputFileTypeCheckbox: outputFileTypeCheckbox.checked,
+      outputFileTypeDropdown: outputFileTypeDropdown.value
+    };
+    localStorage.setItem('booru-export-settings', JSON.stringify(settings));
+  };
+
+  const restoreExportSettings = () => {
+    const saved = localStorage.getItem('booru-export-settings');
+    if (!saved) return;
+    
+    try {
+      const settings = JSON.parse(saved);
+      
+      // Restore aspect ratio section
+      if (settings.aspectRatioCheckbox !== undefined) {
+        aspectRatioCheckbox.checked = settings.aspectRatioCheckbox;
+        toggleAspectRatioFilter(settings.aspectRatioCheckbox);
+      }
+      if (settings.xInput) xInput.value = settings.xInput;
+      if (settings.yInput) yInput.value = settings.yInput;
+      if (settings.wiggleRoomSlider) {
+        wiggleRoomSlider.value = settings.wiggleRoomSlider;
+        wiggleRoomValue.textContent = settings.wiggleRoomSlider + '%';
+      }
+      if (settings.cropCheckbox !== undefined) cropCheckbox.checked = settings.cropCheckbox;
+      
+      // Restore file type section
+      if (settings.fileTypeCheckbox !== undefined) {
+        fileTypeCheckbox.checked = settings.fileTypeCheckbox;
+        toggleFileTypeFilter(settings.fileTypeCheckbox);
+      }
+      if (settings.imageCheckbox !== undefined) imageCheckbox.checked = settings.imageCheckbox;
+      if (settings.gifCheckbox !== undefined) gifCheckbox.checked = settings.gifCheckbox;
+      if (settings.videoCheckbox !== undefined) videoCheckbox.checked = settings.videoCheckbox;
+      
+      // Restore date section
+      if (settings.dateCheckbox !== undefined) {
+        dateCheckbox.checked = settings.dateCheckbox;
+        toggleDateFilter(settings.dateCheckbox);
+      }
+      if (settings.dateInput) dateInput.value = settings.dateInput;
+      
+      // Restore resolution section
+      if (settings.resolutionCheckbox !== undefined) {
+        resolutionCheckbox.checked = settings.resolutionCheckbox;
+        toggleResolutionFilter(settings.resolutionCheckbox);
+      }
+      if (settings.resolutionDropdown) resolutionDropdown.value = settings.resolutionDropdown;
+      
+      // Restore output format section
+      if (settings.outputFormatCheckbox !== undefined) {
+        outputFormatCheckbox.checked = settings.outputFormatCheckbox;
+        toggleOutputFormatFilter(settings.outputFormatCheckbox);
+      }
+      if (settings.widthInput) widthInput.value = settings.widthInput;
+      if (settings.heightInput) heightInput.value = settings.heightInput;
+      
+      // Restore output file type section
+      if (settings.outputFileTypeCheckbox !== undefined) {
+        outputFileTypeCheckbox.checked = settings.outputFileTypeCheckbox;
+        toggleOutputFileTypeFilter(settings.outputFileTypeCheckbox);
+      }
+      if (settings.outputFileTypeDropdown) outputFileTypeDropdown.value = settings.outputFileTypeDropdown;
+    } catch (e) {
+      console.error('Failed to restore export settings:', e);
+    }
+  };
+
+  // Add save listeners to all controls
+  [aspectRatioCheckbox, xInput, yInput, wiggleRoomSlider, cropCheckbox, 
+   fileTypeCheckbox, imageCheckbox, gifCheckbox, videoCheckbox,
+   dateCheckbox, dateInput, resolutionCheckbox, resolutionDropdown,
+   outputFormatCheckbox, widthInput, heightInput,
+   outputFileTypeCheckbox, outputFileTypeDropdown].forEach(element => {
+    element.addEventListener('change', saveExportSettings);
+    element.addEventListener('input', saveExportSettings);
+  });
+
+  // Initial count update
+  updateExportCount();
+  
+  // Restore previously saved settings
+  restoreExportSettings();
+  
+  // Update count after restoring to reflect restored values
+  updateExportCount();
 }
 
 function renderDownloadsOutputPreview() {
@@ -3489,7 +4832,7 @@ function updateControlBar(viewMode = 'normal_tab') {
           <div class="section-label">MEDIA</div>
           <button id="media-type-image" class="media-type-btn" data-media-type="image" title="Images"></button>
           <button id="media-type-video" class="media-type-btn" data-media-type="video" title="Videos"></button>
-          <button id="media-type-gif" class="media-type-btn" data-media-type="animation" title="Animations"></button>
+          <button id="media-type-gif" class="media-type-btn" data-media-type="gif" title="Animations"></button>
         `;
         const searchSection = booruControlLeft.querySelector('.control-section-search');
         if (searchSection) {
@@ -4145,6 +5488,10 @@ async function showDownloadsGallery(forceReload = false) {
           }
           searchHandlerTimeout = setTimeout(() => {
             downloadsSearchHandler();
+            const exportSlider = document.getElementById('export-wiggle-room-slider');
+            if (exportSlider) {
+              exportSlider.dispatchEvent(new Event('input', { bubbles: true }));
+            }
           }, 400);
         }
       });
@@ -8615,6 +9962,7 @@ function createRatingWrapper(post, container, downloadBtn) {
     // Hover effect - highlight stars up to hovered star
     starBtn.addEventListener('mouseenter', () => {
       const rating = parseInt(starBtn.dataset.rating);
+      const download = wrapper.querySelector('.booru-download-btn');
       starsContainer.querySelectorAll('.booru-rating-star').forEach((s, idx) => {
         if (idx + 1 <= rating) {
           s.classList.add('hover');
@@ -8622,6 +9970,14 @@ function createRatingWrapper(post, container, downloadBtn) {
           s.classList.remove('hover');
         }
       });
+      download.classList.add('hover');
+      starBtn.classList.add('active');
+    });
+    
+    starBtn.addEventListener('mouseleave', () => {
+      const download = wrapper.querySelector('.booru-download-btn');
+      download.classList.remove('hover');
+      starBtn.classList.remove('active');
     });
     
     // Click handler - update rating or trigger download
@@ -10209,7 +11565,7 @@ function showPreviewForElement(mediaElement, forceVideoLoad = false, hidden = fa
     
     const metaTags = {};
 
-    if (sourceConfig.fields) {
+    if (sourceConfig?.fields) {
       if (sourceConfig.fields.metaTagFields && sourceConfig.fields.metaTagFields.length > 0) {
         
         for (const metaField of sourceConfig.fields.metaTagFields) {

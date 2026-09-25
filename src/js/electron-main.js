@@ -245,6 +245,264 @@ ipcMain.handle('select-folder', async (event, defaultPath) => {
   return result.canceled ? null : result.filePaths[0];
 });
 
+ipcMain.handle('copy-files', async (event, sourceFile, destFile) => {
+  const fs = require('fs').promises;
+  try {
+    await fs.copyFile(sourceFile, destFile);
+    return { success: true };
+  } catch (error) {
+    throw new Error(`Failed to copy file: ${error.message}`);
+  }
+});
+
+ipcMain.handle('crop-image', async (event, sourceFile, destFile, targetX, targetY, postAspectRatio) => {
+  const sharp = require('sharp');
+  const fs = require('fs');
+  try {
+    // Check if source file exists
+    if (!fs.existsSync(sourceFile)) {
+      throw new Error(`Source file does not exist: ${sourceFile}`);
+    }
+    
+    // Read the image metadata
+    const image = sharp(sourceFile);
+    const metadata = await image.metadata();
+    
+    // Calculate target aspect ratio (width/height)
+    const targetRatio = targetX / targetY;
+    const currentRatio = metadata.width / metadata.height;
+    
+    // Determine crop dimensions to fit the target aspect ratio
+    let cropWidth, cropHeight;
+    
+    if (currentRatio > targetRatio) {
+      // Image is wider than target - crop width
+      cropHeight = metadata.height;
+      cropWidth = Math.round(cropHeight * targetRatio);
+    } else {
+      // Image is taller than target - crop height
+      cropWidth = metadata.width;
+      cropHeight = Math.round(cropWidth / targetRatio);
+    }
+    
+    // Calculate position to center the crop
+    const leftOffset = Math.round((metadata.width - cropWidth) / 2);
+    const topOffset = Math.round((metadata.height - cropHeight) / 2);
+    
+    // Determine output format from destination file extension
+    const ext = destFile.split('.').pop().toLowerCase();
+    const supportedFormats = ['png', 'jpg', 'jpeg', 'webp', 'tiff', 'avif', 'heif', 'heic'];
+    
+    // Crop and save the image
+    let pipeline = image
+      .extract({ 
+        left: Math.max(0, leftOffset), 
+        top: Math.max(0, topOffset), 
+        width: cropWidth, 
+        height: cropHeight 
+      });
+    
+    // Specify output format if recognized, otherwise default to PNG
+    if (supportedFormats.includes(ext)) {
+      pipeline = pipeline.toFormat(ext);
+    } else {
+      // For temp files or unknown extensions, default to PNG
+      pipeline = pipeline.toFormat('png');
+    }
+    
+    await pipeline.toFile(destFile);
+    
+    return { success: true };
+  } catch (error) {
+    throw new Error(`Failed to crop image: ${error.message}`);
+  }
+});
+
+ipcMain.handle('resize-image', async (event, sourceFile, destFile, targetWidth, targetHeight) => {
+  const sharp = require('sharp');
+  const fs = require('fs');
+  try {
+    // Check if source file exists
+    if (!fs.existsSync(sourceFile)) {
+      throw new Error(`Source file does not exist: ${sourceFile}`);
+    }
+    
+    // Read metadata to validate the file
+    const metadata = await sharp(sourceFile).metadata();
+    
+    // Determine output format from destination file extension
+    const ext = destFile.split('.').pop().toLowerCase();
+    const supportedFormats = ['png', 'jpg', 'jpeg', 'webp', 'tiff', 'avif', 'heif', 'heic'];
+    const outputFormat = supportedFormats.includes(ext) ? ext : 'png';
+    
+    let pipeline = sharp(sourceFile)
+      .resize(targetWidth, targetHeight, { 
+        fit: 'cover',
+        position: 'center'
+      });
+    
+    // Specify output format
+    pipeline = pipeline.toFormat(outputFormat);
+    
+    await pipeline.toFile(destFile);
+    
+    return { success: true };
+  } catch (error) {
+    throw new Error(`Failed to resize image: ${error.message}`);
+  }
+});
+
+// Helper function to write uncompressed DDS file
+async function writeDDSFile(imageData, width, height, destFile) {
+  const fs = require('fs').promises;
+  
+  // DDS file header is 128 bytes total (4 + 124)
+  const header = Buffer.alloc(128, 0);
+  
+  // Magic number "DDS " at offset 0
+  header.write('DDS ', 0, 4, 'ascii');
+  
+  // DWORD dwSize (always 124) at offset 4
+  header.writeUInt32LE(124, 4);
+  
+  // DWORD dwFlags at offset 8
+  const DDSD_CAPS = 0x1;
+  const DDSD_HEIGHT = 0x2;
+  const DDSD_WIDTH = 0x4;
+  const DDSD_PITCH = 0x8;
+  const DDSD_PIXELFORMAT = 0x1000;
+  const DDSD_LINEARSIZE = 0x80000;
+  header.writeUInt32LE(DDSD_CAPS | DDSD_HEIGHT | DDSD_WIDTH | DDSD_LINEARSIZE | DDSD_PIXELFORMAT, 8);
+  
+  // DWORD dwHeight at offset 12
+  header.writeUInt32LE(height, 12);
+  
+  // DWORD dwWidth at offset 16
+  header.writeUInt32LE(width, 16);
+  
+  // DWORD dwPitchOrLinearSize (for uncompressed, linear size) at offset 20
+  header.writeUInt32LE(width * height * 4, 20);
+  
+  // DWORD dwDepth (not a volume texture) at offset 24
+  header.writeUInt32LE(0, 24);
+  
+  // DWORD dwMipMapCount (no mipmaps) at offset 28
+  header.writeUInt32LE(0, 28);
+  
+  // dwReserved1[11] at offsets 32-75 (44 bytes) - already zero-initialized
+  
+  // Pixel format structure at offset 76 (32 bytes)
+  // dwSize (always 32) at offset 76
+  header.writeUInt32LE(32, 76);
+  
+  // dwFlags (DDPF_ALPHAPIXELS | DDPF_RGB) at offset 80
+  const DDPF_ALPHAPIXELS = 0x1;
+  const DDPF_RGB = 0x40;
+  header.writeUInt32LE(DDPF_ALPHAPIXELS | DDPF_RGB, 80);
+  
+  // dwFourCC (0 for uncompressed) at offset 84
+  header.writeUInt32LE(0, 84);
+  
+  // dwRGBBitCount (32 for RGBA) at offset 88
+  header.writeUInt32LE(32, 88);
+  
+  // dwRBitMask (red channel: 0x000000FF - bits 0-7) at offset 92
+  header.writeUInt32LE(0x000000FF, 92);
+  
+  // dwGBitMask (green channel: 0x0000FF00 - bits 8-15) at offset 96
+  header.writeUInt32LE(0x0000FF00, 96);
+  
+  // dwBBitMask (blue channel: 0x00FF0000 - bits 16-23) at offset 100
+  header.writeUInt32LE(0x00FF0000, 100);
+  
+  // dwABitMask (alpha channel: 0xFF000000 - bits 24-31) at offset 104
+  header.writeUInt32LE(0xFF000000, 104);
+  
+  // dwCaps (DDSCAPS_TEXTURE) at offset 108
+  const DDSCAPS_TEXTURE = 0x1000;
+  header.writeUInt32LE(DDSCAPS_TEXTURE, 108);
+  
+  // dwCaps2, dwCaps3, dwCaps4 at offsets 112, 116, 120 - already zero-initialized
+  
+  // dwReserved2 at offset 124 - already zero-initialized
+  
+  // Write header and image data to file
+  const fd = await fs.open(destFile, 'w');
+  try {
+    await fd.write(header);
+    await fd.write(imageData);
+  } finally {
+    await fd.close();
+  }
+}
+
+ipcMain.handle('convert-file-type', async (event, sourceFile, destFile, fileType) => {
+  const sharp = require('sharp');
+  try {
+    if (fileType === 'dds') {
+      // Custom DDS conversion from image to uncompressed DDS
+      const image = sharp(sourceFile);
+      const metadata = await image.metadata();
+      
+      // Convert to RGBA buffer
+      const { data, info } = await sharp(sourceFile)
+        .ensureAlpha()
+        .raw()
+        .toBuffer({ resolveWithObject: true });
+      
+      // Write uncompressed DDS file
+      await writeDDSFile(data, info.width, info.height, destFile);
+      return { success: true };
+    } else {
+      // Use Sharp for standard formats
+      await sharp(sourceFile)
+        .toFormat(fileType)
+        .toFile(destFile);
+      
+      return { success: true };
+    }
+  } catch (error) {
+    throw new Error(`Failed to convert image to ${fileType}: ${error.message}`);
+  }
+});
+
+ipcMain.handle('delete-files', async (event, filePaths) => {
+  const fs = require('fs').promises;
+  try {
+    await Promise.all(
+      filePaths.map(async (filePath) => {
+        try {
+          await fs.unlink(filePath);
+        } catch (error) {
+          // Ignore individual file deletion errors
+        }
+      })
+    );
+    return { success: true };
+  } catch (error) {
+    throw new Error(`Failed to delete files: ${error.message}`);
+  }
+});
+
+ipcMain.handle('get-file-sizes', async (event, filePaths) => {
+  const fs = require('fs').promises;
+  try {
+    const sizes = await Promise.all(
+      filePaths.map(async (filePath) => {
+        try {
+          const stats = await fs.stat(filePath);
+          return { filePath, size: stats.size, error: null };
+        } catch (error) {
+          return { filePath, size: 0, error: error.message };
+        }
+      })
+    );
+    return sizes;
+  } catch (error) {
+    throw new Error(`Failed to get file sizes: ${error.message}`);
+  }
+});
+
 ipcMain.handle('get-app-version', async () => {
   return app.getVersion();
 });
