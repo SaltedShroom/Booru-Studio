@@ -1,6 +1,8 @@
 <div align="center">
 
 <img width="1600" height="470" alt="Booru Studio" src="https://github.com/user-attachments/assets/6eedf5b6-1312-4306-b8c0-1965269e55d5" />
+<a href="LICENSE"><img src="https://img.shields.io/badge/License-Apache_2.0-lightgray?style=flat-square"/></a>
+<a href="https://buymeacoffee.com/saltedshroom"><img src="https://img.shields.io/badge/Support-SaltedShroom-yellow?logo=buymeacoffee&style=flat-square"/></a>
 
 ### Browse, download, and manage your favorite booru sources
 
@@ -10,10 +12,14 @@
   <img width="356" height="41" alt="download_badge" src="https://github.com/user-attachments/assets/b383617a-8f5c-42e1-80a1-2e4a9ebc8c8f" />
 </a>
 
-<br><br>
+<br>
+<br>
 
-<a href="LICENSE"><img src="https://img.shields.io/badge/License-Apache_2.0-lightgray?style=flat-square"/></a>
-<a href="https://buymeacoffee.com/saltedshroom"><img src="https://img.shields.io/badge/Support-SaltedShroom-yellow?logo=buymeacoffee&style=flat-square"/></a>
+<a href="https://github.com/SaltedShroom/Booru-Studio#preview">
+  <img width="210" height="25" alt="previews_badge" src="https://github.com/user-attachments/assets/d426f686-9cae-4b01-b7b1-0c8637abe8bd" />
+</a>
+
+<br>
 
 </div>
 
