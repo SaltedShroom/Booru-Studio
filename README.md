@@ -11,22 +11,21 @@
 
 # Booru Studio
 
-### Booru Studio is an Electron-based desktop and web application<br> developed and maintained by SaltedShroom.
-<br>
-<b><em>browsing, downloading, viewing, organizing, customizing</em></b><br>
-<b><em>clean, intuitive, automized, easy-to-use UI</em></b><br>
-<b><em>create, change, customize and share booru sources &amp; designs</em></b><br>
-<b><em>automized tag recognition</em></b><br>
-<b><em>artist tagging better than anywhere else</em></b><br>
-<b><em>prebuilt tor and proxy support</em></b><br>
-<b><em>single window and fullscreen usable design</b></em><br>
-<b><em>can also be used in a browser of choice</b></em>
+### Booru Studio is a desktop and web application<br> made to Browse & Download & Manage<br> Booru Sources
+<sub>
+✨ Clean, intuitive & customizable UI<br>
+🎨 Create, customize & share booru sources and designs<br>
+🏷️ Automatic tag & artist recognition<br>
+🌐 Built-in Tor & proxy support<br>
+🖥️ Single-window & fullscreen modes<br>
+🔗 Use it standalone or through your favorite browser
+</sub>
 <br>
 <br>
    
 ### <a href="https://github.com/SaltedShroom/Booru-Studio/releases">⬇️ Downloads</a>
+<br>
 to install, download the latest *Setup.exe*
-
 <img width="1673" height="676" alt="downloads" src="https://github.com/user-attachments/assets/d4fed3a0-f1bb-4552-9b48-9ed20dfcde19" />
 
 
