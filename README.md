@@ -1,109 +1,76 @@
-<img width="1600" height="470" alt="Banner-small" src="https://github.com/user-attachments/assets/6eedf5b6-1312-4306-b8c0-1965269e55d5" />
-
 <div align="center">
 
-<a href="https://github.com/SaltedShroom/Booru-Studio/releases"><img src="https://img.shields.io/badge/Booru Studio-Downloads-blue?logo=github"/></a>
-<a href="https://github.com/SaltedShroom/Booru-Studio/releases"><img src="https://img.shields.io/badge/License-Apache2-lightgray"/></a>
-<a href="https://buymeacoffee.com/saltedshroom"><img src="https://img.shields.io/badge/Support-SaltedShroom-yellow?logo=buymeacoffee"/></a>
+<img width="1600" height="470" alt="Booru Studio" src="https://github.com/user-attachments/assets/6eedf5b6-1312-4306-b8c0-1965269e55d5" />
 
+### Browse, download, and manage your favorite booru sources
 
 <br>
 
-# Booru Studio
+<a href="https://github.com/SaltedShroom/Booru-Studio/releases/latest">
+  <img src="https://img.shields.io/badge/Download_Latest_Release-blue?style=for-the-badge&logo=github&logoColor=white" alt="Download Latest Release" />
+</a>
 
-### Booru Studio is a desktop and web application<br> made to Browse & Download & Manage<br> Booru Sources
-<div align="center">
+<br><br>
 
-<table>
-<tr>
-<td valign="top">
-<sub>
-✨ Clean, intuitive & customizable UI<br>
-🎨 Create, customize & share booru sources and designs<br>
-🏷️ Automatic tag & artist recognition
-</sub>
-</td>
-
-<td valign="top">
-<sub>
-🌐 Built-in Tor & proxy support<br>
-🖥️ Single-window & fullscreen modes<br>
-🔗 Use it standalone or through your favorite browser
-</sub>
-</td>
-</tr>
-</table>
+<a href="LICENSE"><img src="https://img.shields.io/badge/License-Apache_2.0-lightgray?style=flat-square"/></a>
+<a href="https://buymeacoffee.com/saltedshroom"><img src="https://img.shields.io/badge/Support-SaltedShroom-yellow?logo=buymeacoffee&style=flat-square"/></a>
 
 </div>
-
-<br>
-   
-### <a href="https://github.com/SaltedShroom/Booru-Studio/releases">⬇️ Downloads</a>
-<br>
-to install, download the latest *Setup.exe*
-<img width="1673" height="676" alt="downloads" src="https://github.com/user-attachments/assets/d4fed3a0-f1bb-4552-9b48-9ed20dfcde19" />
-
-
-</div>
-
-<br>
 
 ---
 
+Booru Studio is a desktop application for browsing, searching, and downloading content from booru imageboards. <br><br>
+At its core it's more than just a downloader, it saves complete posts together with their metadata, including tags, artists, and more. This gives you powerful tools to filter, organize, export, and browse your collections. It also allows you to follow the artists you like, keep track of their new posts, and discover more similar content.
+> Everything runs entirely on your own infrastructure. Your data never leaves your system. <br>
+> 5 powerfull booru sources are provided by default. Those and more can be found <a href="https://github.com/SaltedShroom/Booru-Studio/discussions/3">here</a>
 
-
-
-https://github.com/user-attachments/assets/475c1a3e-b419-45de-a31b-2d2fc5ce7609
-
-https://github.com/user-attachments/assets/bff3417d-b538-4766-bb01-e482e9309573
-
-https://github.com/user-attachments/assets/a886b8ba-869d-4fc7-b781-467c204d1e8e
-
-
-## Overview
-
-- Electron app with a local UI for booru browsing, search, and gallery management
-- Supports packaging for Windows and Linux
-- Built with native modules like `better-sqlite3` and packaging helpers via `electron-builder`
-- Includes support for auto-updates via `electron-updater`
+---
 
 ## Features
 
-- Local modern desktop-App interface
-- Multiple booru source and gallery management
-- Vast customization settings
-- Proxy support via HTTP/SOCKS agents
-- Fast image handling and dynamic gallery layouts
-- Integrated download management interface & tools
-
-## Installation
-
-No prerequisites other than a Windows PC are required.
-
-1. Download the latest installer from the GitHub releases page:
-   -  <a href="https://github.com/SaltedShroom/Booru-Studio/releases">`https://github.com/SaltedShroom/Booru-Studio/releases`</a>
-3. Run `Booru-Studio-Setup-x.x.x.exe` and follow the install prompts
-
-## Updates / Releases
-
-- Releases are published through GitHub releases
-- The app will display an update button automatically when a newer release is available
-- User data, downloaded files, and custom settings are preserved during updates and will not be overwritten
-
-<br>
+| | |
+|---|---|
+| **Clean, Customizable UI** | A modern and adjustable interface. Change themes, toggle elements and share presets. |
+| **Multi-Source Management** | Add, configure, and switch between multiple booru sources. |
+| **Smart Tag & Artist Recognition** | Automatic tagging and artist identification as you browse, keeping your library organized without manual effort. |
+| **Download Tools** | Downloaded posts with tags and metadata, queue management, download history and much more |
+| **Tor & Proxy** | Browse privately with out-of-the-box Tor support and HTTP/SOCKS proxy configuration. |
+| **Modes** | Run as a native desktop app, or access the interface directly from your browser of choice. |
+| **Updates** | The app notifies you of new releases and only updates if you choose to. |
 
 ---
 
+## Preview
 
+https://github.com/user-attachments/assets/2f462b68-4103-4348-85b6-c2927522014a
 
-<br>
+https://github.com/user-attachments/assets/7d38ea15-1935-49eb-9d22-97d2ac1216b7
+
+https://github.com/user-attachments/assets/392e93c9-b743-44d7-ae7f-e2afd0b8e2b8
+
+---
+
+## Download
+
+No prerequisites required. Download, install, and run.
+
+<a href="https://github.com/SaltedShroom/Booru-Studio/releases/latest">
+  <img src="https://img.shields.io/badge/Download_Latest_Release-blue?style=for-the-badge&logo=github&logoColor=white" alt="Download Latest Release" />
+</a>
+
+**Windows:** Download `Booru-Studio-Setup-x.x.x.exe` and run the installer.
+
+<img width="1673" height="676" alt="GitHub Releases page" src="https://github.com/user-attachments/assets/d4fed3a0-f1bb-4552-9b48-9ed20dfcde19" />
+
+Your data, downloads, and custom settings are always preserved across updates.
+
+---
 
 ## Notes
 
-> This is a solo-maintained project by SaltedShroom and will remain as such for the time beeing
-> 
-> Monetization options may be maintained or be added to make continued development sustainable
+> Solo-maintained by [SaltedShroom](https://github.com/SaltedShroom).
+> If you find Booru Studio useful, consider [supporting development](https://buymeacoffee.com/saltedshroom).
 
 ## License
 
-Apache-2.0 license see more on License Tab
+[Apache 2.0](LICENSE)
