@@ -7,7 +7,7 @@
 <br>
 
 <a href="https://github.com/SaltedShroom/Booru-Studio/releases/latest">
-  <img width="356" height="41" alt="download-badge" src="https://github.com/user-attachments/assets/08808c9c-572a-4849-8f6c-ac36b870296b" />
+  <img width="356" height="41" alt="download_badge" src="https://github.com/user-attachments/assets/b383617a-8f5c-42e1-80a1-2e4a9ebc8c8f" />
 </a>
 
 <br><br>
