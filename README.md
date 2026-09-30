@@ -15,7 +15,7 @@
 <br>
 <br>
 
-<a href="https://github.com/SaltedShroom/Booru-Studio#preview">
+<a href="#preview">
   <img width="210" height="25" alt="previews_badge" src="https://github.com/user-attachments/assets/d426f686-9cae-4b01-b7b1-0c8637abe8bd" />
 </a>
 
