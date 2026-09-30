@@ -3478,6 +3478,10 @@ body, html {
   opacity: 1;
 }
 
+.booru-rating-wrapper:has(.fa-circle-notch) {
+  opacity: 1;
+}
+
 .booru-image-item:hover .booru-download-btn {
   opacity: 1;
 }
@@ -5407,6 +5411,7 @@ textarea.settings-input {
   display: flex;
   flex-direction: column;
   align-items: center;
+  pointer-events: all;
   z-index: 999999;
   transition: opacity 1.2s ease;
 }
@@ -7193,6 +7198,10 @@ input[type="checkbox"]:checked::after {
   border: solid 1px var(--border);
   border-top: none;
   background: var(--bg-dark);
+}
+
+.downloads-sidebar.collapsed .export-preview-image {
+  display: none;
 }
 
 .export-preview-img {

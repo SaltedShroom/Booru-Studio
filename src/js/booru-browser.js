@@ -3061,8 +3061,8 @@ function renderDownloadsExport(sidebar) {
   xInput.type = 'number';
   xInput.placeholder = '16';
   xInput.value = '16';
-  xInput.step = '0.1';
-  xInput.min = '0.1';
+  xInput.step = '1';
+  xInput.min = '1';
   xyInputDiv.appendChild(xInput);
 
   const yInput = document.createElement('input');
@@ -3071,8 +3071,8 @@ function renderDownloadsExport(sidebar) {
   yInput.type = 'number';
   yInput.placeholder = '9';
   yInput.value = '9';
-  yInput.step = '0.1';
-  yInput.min = '0.1';
+  yInput.step = '1';
+  yInput.min = '1';
   xyInputDiv.appendChild(yInput);
 
   aspectRatioContent.appendChild(xyInputDiv);
@@ -5454,7 +5454,11 @@ async function showDownloadsGallery(forceReload = false) {
             const tokens = group.split(/\s+/);
             // Within each group, all tokens must match (AND logic)
             return tokens.every(token => {
-              return tags.some(tag => tag.toLowerCase().startsWith(token)) || artist.startsWith(token);
+              const isExcluded = token.startsWith('!') || token.startsWith('-');
+              const bareToken = isExcluded ? token.slice(1) : token;
+              if (!bareToken) return true;
+              const matches = tags.some(tag => tag.toLowerCase().startsWith(bareToken)) || artist.startsWith(bareToken);
+              return isExcluded ? !matches : matches;
             });
           });
         });
@@ -9971,13 +9975,11 @@ function createRatingWrapper(post, container, downloadBtn) {
         }
       });
       download.classList.add('hover');
-      starBtn.classList.add('active');
     });
     
     starBtn.addEventListener('mouseleave', () => {
       const download = wrapper.querySelector('.booru-download-btn');
       download.classList.remove('hover');
-      starBtn.classList.remove('active');
     });
     
     // Click handler - update rating or trigger download
