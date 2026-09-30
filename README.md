@@ -7,7 +7,7 @@
 <br>
 
 <a href="https://github.com/SaltedShroom/Booru-Studio/releases/latest">
-  <img src="https://img.shields.io/badge/Download_Latest_Release-blue?style=for-the-badge&logo=github&logoColor=white" alt="Download Latest Release" />
+  <img width="356" height="41" alt="download-badge" src="https://github.com/user-attachments/assets/08808c9c-572a-4849-8f6c-ac36b870296b" />
 </a>
 
 <br><br>
