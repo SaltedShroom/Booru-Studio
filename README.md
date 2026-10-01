@@ -9,14 +9,14 @@
 <br>
 
 <a href="https://github.com/SaltedShroom/Booru-Studio/releases/latest">
-  <img width="356" height="41" alt="download_badge" src="https://github.com/user-attachments/assets/b383617a-8f5c-42e1-80a1-2e4a9ebc8c8f" />
+  <img width="380" height="44" alt="download_badge" src="https://github.com/user-attachments/assets/2ced318d-37e4-47e2-92c9-41891cb07998" />
 </a>
 
 <br>
 <br>
 
 <a href="#preview">
-  <img width="210" height="25" alt="previews_badge" src="https://github.com/user-attachments/assets/d426f686-9cae-4b01-b7b1-0c8637abe8bd" />
+  <img width="160" height="34" alt="previews_badge" src="https://github.com/user-attachments/assets/096eeb58-bbb8-487c-b1e6-62da022c8d87" />
 </a>
 
 <br>
