@@ -76,7 +76,8 @@ Your data, downloads, and custom settings are always preserved across updates.
 ## Attention
 
 ### Customizing the download path:
-If you do want to change the downloads folder use the button on the top right displaying a folder icon. <br>
+If you do want to change the downloads folder use the button on the top right displaying a folder icon. <img width="16" height="15" alt="image" src="https://github.com/user-attachments/assets/8bf882fe-c2ae-4ac4-8027-1ff101bb772f" />
+<br>
 When you change the downloads directory, you must also move all contents from your previous downloads folder to the new one.
 
 ---
