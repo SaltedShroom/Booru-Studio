@@ -81,6 +81,12 @@ If you do want to change the downloads folder use the button on the top right di
 <br>
 When you change the downloads directory, you must also move all contents from your previous downloads folder to the new one.
 
+### Syntax:
+Example of a prompt for posts that contain "smiling" but do not contain "vibrant": <br>
+[ ```smiling -vibrant``` ] <br>
+also works like so <br>
+[ ```smiling !vibrant``` ]
+
 ---
 
 ## Notes
