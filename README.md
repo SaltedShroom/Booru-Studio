@@ -44,6 +44,7 @@ At its core it's more than just a downloader, it saves complete posts together w
 | **Tor & Proxy** | Browse privately with out-of-the-box Tor support and HTTP/SOCKS proxy configuration. |
 | **Modes** | Run as a native desktop app, or access the interface directly from your browser of choice. |
 | **Updates** | The app notifies you of new releases and only updates if you choose to. |
+| **Community** | Share, collect and exchange <a href="https://github.com/SaltedShroom/Booru-Studio/discussions/4">presets</a> and <a href="https://github.com/SaltedShroom/Booru-Studio/discussions/3">boorus</a> with others in the community. |
 
 ---
 
