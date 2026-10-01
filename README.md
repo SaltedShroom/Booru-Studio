@@ -73,6 +73,13 @@ Your data, downloads, and custom settings are always preserved across updates.
 
 ---
 
+## Attention
+
+If you do want to change the downloads folder use the button on the top right displaying a folder icon. <br>
+When you change the downloads directory, you must also move all contents from your previous downloads folder to the new one.
+
+---
+
 ## Notes
 
 > Solo-maintained by [SaltedShroom](https://github.com/SaltedShroom).
