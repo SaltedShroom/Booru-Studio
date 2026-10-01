@@ -714,7 +714,7 @@ let isLoadingBooru = false;
 let aiFilterEnabled = false; // AI filter OFF by default
 let animateGifs = false; // GIF animation OFF by default (show first frame only)
 let maxRecommendedTags = 20;
-let activeDownloadsSidebarTab = 'export'; // or 'mosaic' or 'export'
+let activeDownloadsSidebarTab = 'analytics'; // or 'mosaic' or 'export'
 let homepageIsFetching = false;
 
 // Gallery quality state
@@ -1989,7 +1989,14 @@ function renderDownloadsSidebar() {
 
   const navbarContainer = document.createElement('div');
   navbarContainer.className = 'sidebar-navbar-container';
-  navbarContainer.innerHTML = `<button id="downloads-sidebar-analytics-btn" onclick="selectDownloadsSidebarTab('analytics')" class="sidebar-nav-btn ${analyticsActive}">Analytics</button> <button id="downloads-sidebar-mosaic-btn" class="sidebar-nav-btn ${mosaicActive}" disabled style="opacity: 0.5; cursor: not-allowed;">Mosaic</button> <button id="downloads-sidebar-export-btn" onclick="selectDownloadsSidebarTab('export')" class="sidebar-nav-btn ${exportActive}">Export</button>`;
+  
+  // Disable export in browser mode (no electron API)
+  const isElectronMode = !!(window.electronAPI && window.electronAPI.copyFiles);
+  const exportDisabled = isElectronMode ? '' : 'disabled';
+  const exportStyle = isElectronMode ? '' : 'style="opacity: 0.5; cursor: not-allowed;"';
+  const exportTitle = isElectronMode ? '' : 'title="Only available in Desktop mode"';
+  
+  navbarContainer.innerHTML = `<button id="downloads-sidebar-analytics-btn" onclick="selectDownloadsSidebarTab('analytics')" class="sidebar-nav-btn ${analyticsActive}">Analytics</button> <button id="downloads-sidebar-mosaic-btn" class="sidebar-nav-btn ${mosaicActive}" disabled style="opacity: 0.5; cursor: not-allowed;">Mosaic</button> <button id="downloads-sidebar-export-btn" onclick="selectDownloadsSidebarTab('export')" class="sidebar-nav-btn ${exportActive}" ${exportDisabled} ${exportStyle} ${exportTitle}>Export</button>`;
   sidebar.appendChild(navbarContainer);
 
   if (activeDownloadsSidebarTab === 'analytics') {
@@ -2904,8 +2911,7 @@ function filterPostsForOutputFileType(posts) {
 async function performExport(posts, exportFolder, progressFill, progressText, cropConfig = null, outputFormatConfig = null, outputFileTypeConfig = null) {
   
   if (!window.electronAPI || !window.electronAPI.copyFiles) {
-    console.error('[performExport] electronAPI.copyFiles not available');
-    throw new Error('File copy functionality not available');
+    throw new Error('Export is only available in Desktop mode');
   }
   
   const total = posts.length;
@@ -3547,13 +3553,17 @@ function renderDownloadsExport(sidebar) {
     let totalFileSize = 0;
     if (window.downloadFolder && filteredPosts.length > 0) {
       try {
-        const filePaths = filteredPosts.map(post => {
-          const filename = getFilenameFromUrl(post.imageUrl, post.id);
-          return window.downloadFolder + '\\' + filename;
-        });
-        
-        const fileSizes = await window.electronAPI.getFileSizes(filePaths);
-        totalFileSize = fileSizes.reduce((sum, result) => sum + result.size, 0);
+        if (window.electronAPI?.getFileSizes) {
+          // Electron mode: get actual file sizes
+          const filePaths = filteredPosts.map(post => {
+            const filename = getFilenameFromUrl(post.imageUrl, post.id);
+            return window.downloadFolder + '\\' + filename;
+          });
+          
+          const fileSizes = await window.electronAPI.getFileSizes(filePaths);
+          totalFileSize = fileSizes.reduce((sum, result) => sum + result.size, 0);
+        }
+        // Browser mode: skip file size calculation (no file system access)
       } catch (e) {
         showToast(`Could not calculate file sizes: ${e.message}`);
       }
@@ -3831,7 +3841,21 @@ function renderDownloadsExport(sidebar) {
     // Select export folder - use last export folder as default
     const lastExportFolder = localStorage.getItem('booru-last-export-folder');
     const defaultFolder = lastExportFolder || window.downloadFolder || 'C:\\Downloads';
-    const exportFolder = await window.electronAPI.selectFolder(defaultFolder);
+    let exportFolder;
+    
+    if (window.electronAPI?.selectFolder) {
+      // Electron: use native folder-picker dialog
+      exportFolder = await window.electronAPI.selectFolder(defaultFolder);
+    } else {
+      // Browser fallback: show a simple inline prompt modal
+      if (typeof showFolderPrompt === 'function') {
+        exportFolder = await showFolderPrompt(defaultFolder);
+      } else {
+        showToast('Export folder selection not available in browser mode', 'error');
+        return;
+      }
+    }
+    
     if (!exportFolder) return; // User cancelled
     
     // Save the selected folder for next time

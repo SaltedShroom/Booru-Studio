@@ -285,6 +285,15 @@ function updateProxyFieldsDisabled() {
   if (typeof anonTorRotateNow !== 'undefined') anonTorRotateNow.disabled = isDisabled;
 }
 
+// Remove data-text in browser mode to prevent duplicate text from ::after pseudo-element
+if (!window.electronAPI) {
+  const appTitle = document.querySelector('.app-title');
+  if (appTitle) {
+    appTitle.removeAttribute('data-text');
+  }
+  console.log(appTitle);
+}
+
 // Initialize collapsible settings sections
 function initializeCollapsibleSettings() {
   const collapsibleHeaders = document.querySelectorAll('.settings-collapsible-header');
