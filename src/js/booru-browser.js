@@ -8436,7 +8436,7 @@ async function loadGenericBooru(sourceId, append) {
     const apiKey = apiKeyInput ? apiKeyInput.value.trim() : '';
     
     if (!userId || !apiKey) {
-      booruGallery.innerHTML = `<div style="color: var(--text-secondary); text-align: center; padding: 40px;">Please enter your API key and User ID for ${sourceConfig.name}<br><small>${sourceConfig.auth.helpText || 'Get yours from your account settings'}</small></div>`;
+      booruGallery.innerHTML = `<div style="align-self: center; color: var(--text-secondary); text-align: center; padding: 40px;">Please enter your API key and User ID for ${sourceConfig.name}<br><small>${sourceConfig.auth.helpText || 'Get yours from your account settings'}</small></div>`;
       document.getElementById('load-more-icon')?.remove();
       showToast(`Authentication required for ${sourceConfig.name}: enter User ID and API key`, 'warning');
       return;
