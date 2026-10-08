@@ -1186,16 +1186,6 @@ function switchToTab(tabId) {
         // Update favorite icon based on current search query
         updateFavoriteIcon();
         
-        // If this tab needs initial load, trigger it
-        if (tab.needsInitialLoad) {
-          tab.needsInitialLoad = false;
-          setTimeout(() => {
-            if (typeof loadBooruImages === 'function') {
-              loadBooruImages(false);
-            }
-          }, 100);
-        }
-        
         // Update currentImageSize for rendering
         if (typeof window.currentImageSize !== 'undefined') {
           window.currentImageSize = tab.state.imageSize || 250;

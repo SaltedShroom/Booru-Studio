@@ -171,6 +171,30 @@ class DBStore {
     }
   }
 
+  async searchDownloadedPostsWithFTS(query = '', filters = {}) {
+    try {
+      const params = new URLSearchParams();
+      params.append('q', query);
+      
+      if (filters.source) params.append('source', filters.source);
+      if (filters.minRating !== undefined) params.append('minRating', filters.minRating);
+      if (filters.limit) params.append('limit', filters.limit);
+      if (filters.offset) params.append('offset', filters.offset);
+      
+      const response = await fetch(`${DB_API_BASE}/posts/search-fts?${params.toString()}`);
+      
+      if (!response.ok) {
+        const error = await response.json();
+        throw new Error(error.error || 'Failed to search posts');
+      }
+      
+      return await response.json();
+    } catch (error) {
+      console.error('DBStore.searchDownloadedPostsWithFTS error:', error);
+      throw error;
+    }
+  }
+
   // ============== Downloaded Artists ==============
 
   async getDownloadedArtist(artist) {

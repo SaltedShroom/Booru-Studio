@@ -1466,7 +1466,21 @@ window.incrementDownloadFolderSizeOdometer = function(downloadedBytes) {
   }
   await setLoadingStatus('Loading configs…', 'Fetching config presets and available checkpoints…');
   await Promise.allSettled([loadJsonConfigs(), loadCheckpoints()]);
+  // Initialize downloads posts cache FIRST (before restoring tabs)
+  // This ensures the cache is ready when showDownloadsGallery() is called
+  // during tab restoration in _initBooruTabs()
+  await setLoadingStatus('Loading downloads…', 'Preparing downloaded posts cache…');
+  if (window.initializeDownloadsCache) {
+    await window.initializeDownloadsCache();
+  }
+  
+  // Pre-calculate sidebar analytics data for instant rendering
   await setLoadingStatus('Loading gallery…', 'Setting up booru browser and tabs…');
+  if (window.initializeDownloadsSidebarAnalyticsCache) {
+    await window.initializeDownloadsSidebarAnalyticsCache();
+  }
+  
+  // Now initialize booru tabs (this may call showDownloadsGallery with ready cache)
   if (window._initBooruTabs) await window._initBooruTabs();
   
   // Initialize collapsible settings sections

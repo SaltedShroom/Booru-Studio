@@ -714,7 +714,7 @@ let isLoadingBooru = false;
 let aiFilterEnabled = false; // AI filter OFF by default
 let animateGifs = false; // GIF animation OFF by default (show first frame only)
 let maxRecommendedTags = 20;
-let activeDownloadsSidebarTab = 'analytics'; // or 'mosaic' or 'export'
+let activeDownloadsSidebarTab = 'export'; // or 'mosaic' or 'export'
 let homepageIsFetching = false;
 
 // Gallery quality state
@@ -778,10 +778,6 @@ function clearTabHQCache(tabId) {
   
   // Remove the tab from the map
   window._tabHQCacheMap.delete(tabId);
-}
-
-if (localStorage.getItem('downloadsSidebarSelectedTab')) {
-  activeDownloadsSidebarTab = localStorage.getItem('downloadsSidebarSelectedTab');
 }
 
 let progressFillResetTimeout = null;
@@ -2032,7 +2028,11 @@ function renderDownloadsAnalytics(sidebar) {
 
   activityBlock.appendChild(activityChartWrapper);
   sidebar.appendChild(activityBlock);
-  renderDownloadsActivityChart();
+  
+  // Defer chart rendering to avoid blocking UI
+  requestAnimationFrame(() => {
+    renderDownloadsActivityChart();
+  });
 
   sidebar.appendChild(document.createElement('hr'));
 
@@ -2055,7 +2055,13 @@ function renderDownloadsAnalytics(sidebar) {
 
   sourceArtistBlock.appendChild(chartWrapper);
   sidebar.appendChild(sourceArtistBlock);
-  renderDownloadsStatsChart();
+  
+  // Defer with double requestAnimationFrame to render after activity chart starts
+  requestAnimationFrame(() => {
+    requestAnimationFrame(() => {
+      renderDownloadsStatsChart();
+    });
+  });
 
   sidebar.appendChild(document.createElement('hr'));
 
@@ -2080,7 +2086,15 @@ function renderDownloadsAnalytics(sidebar) {
 
   fileTypeBlock.appendChild(pieWrapper);
   sidebar.appendChild(fileTypeBlock);
-  renderDownloadsFileTypeChart();
+  
+  // Defer with triple requestAnimationFrame for last chart
+  requestAnimationFrame(() => {
+    requestAnimationFrame(() => {
+      requestAnimationFrame(() => {
+        renderDownloadsFileTypeChart();
+      });
+    });
+  });
 
   // sidebar.appendChild(document.createElement('hr'));
 
@@ -4100,18 +4114,30 @@ function renderDownloadsStatsChart() {
   const canvas = document.getElementById('downloads-source-artist-chart');
   if (!canvas) return;
 
-  // Always use ALL downloaded posts, not filtered by search
-  const posts = Array.isArray(window.allDownloadedPosts) ? window.allDownloadedPosts : [];
+  // Try to use sidebar analytics cache first (pre-calculated during startup)
+  let aggregated = null;
+  if (downloadsSidebarAnalyticsCacheReady && downloadsSidebarAnalyticsCache) {
+    aggregated = downloadsSidebarAnalyticsCache;
+  } else {
+    // Fallback: use regular posts if cache not ready (shouldn't happen)
+    const posts = Array.isArray(window.allDownloadedPosts) ? window.allDownloadedPosts : [];
+    if (!posts.length) {
+      const ctx = canvas.getContext('2d');
+      if (ctx) ctx.clearRect(0, 0, canvas.width, canvas.height);
+      return;
+    }
+    aggregated = aggregateChartDataFast(posts);
+  }
   
   // Initialize cache if needed
   if (!window._chartsRenderCache) {
     window._chartsRenderCache = {};
   }
   
-  // Skip re-render only if:
-  // 1. Post count hasn't changed
-  // 2. Chart exists AND is connected to the current canvas element
-  if (window._chartsRenderCache.statsChartPostCount === posts.length && 
+  // Skip re-render if data hasn't changed
+  const dataSize = (downloadsSidebarAnalyticsCache?.statsData?.sources?.length || 0) + 
+                   (downloadsSidebarAnalyticsCache?.statsData?.artists?.length || 0);
+  if (window._chartsRenderCache.statsChartDataSize === dataSize && 
       window.downloadsSourceArtistChart && 
       window.downloadsSourceArtistChart.canvas === canvas) {
     return;
@@ -4123,21 +4149,16 @@ function renderDownloadsStatsChart() {
     window.downloadsSourceArtistChart = null;
   }
 
-  if (!posts.length) {
+  const { sources, artists, sourceArtistCounts, artistTotals } = aggregated.statsData;
+
+  if (!sources.length || !artists.length) {
     const ctx = canvas.getContext('2d');
-    if (ctx) {
-      ctx.clearRect(0, 0, canvas.width, canvas.height);
-    }
-    window._chartsRenderCache.statsChartPostCount = 0;
+    if (ctx) ctx.clearRect(0, 0, canvas.width, canvas.height);
+    window._chartsRenderCache.statsChartDataSize = 0;
     return;
   }
-  
-  // Update cache with current post count
-  window._chartsRenderCache.statsChartPostCount = posts.length;
 
-  // Use optimized aggregation with caching - only aggregates once
-  const aggregated = aggregateChartDataFast(posts);
-  const { sources, artists, sourceArtistCounts, artistTotals } = aggregated.statsData;
+  window._chartsRenderCache.statsChartDataSize = sources.length + artists.length;
 
   const palette = [
     '#ff5a5f', '#ffb400', '#00a699', '#7b0051', '#3b8ea5', '#ff6f61', '#7fc8a9', '#f5a623', '#6f4a8e', '#ef476f',
@@ -4202,18 +4223,28 @@ function renderDownloadsActivityChart() {
   const canvas = document.getElementById('downloads-activity-chart');
   if (!canvas) return;
 
-  // Always use ALL downloaded posts, not filtered by search
-  const posts = Array.isArray(window.allDownloadedPosts) ? window.allDownloadedPosts : [];
+  // Try to use sidebar analytics cache first (pre-calculated during startup)
+  let aggregated = null;
+  if (downloadsSidebarAnalyticsCacheReady && downloadsSidebarAnalyticsCache) {
+    aggregated = downloadsSidebarAnalyticsCache;
+  } else {
+    // Fallback: use regular posts if cache not ready (shouldn't happen)
+    const posts = Array.isArray(window.allDownloadedPosts) ? window.allDownloadedPosts : [];
+    if (!posts.length) {
+      const ctx = canvas.getContext('2d');
+      if (ctx) ctx.clearRect(0, 0, canvas.width, canvas.height);
+      return;
+    }
+    aggregated = aggregateChartDataFast(posts);
+  }
   
   // Initialize cache if needed
   if (!window._chartsRenderCache) {
     window._chartsRenderCache = {};
   }
   
-  // Skip re-render only if:
-  // 1. Post count hasn't changed
-  // 2. Chart exists AND is connected to the current canvas element
-  if (window._chartsRenderCache.activityChartPostCount === posts.length && 
+  // Skip re-render if data hasn't changed
+  if (window._chartsRenderCache.activityChartPostCount === (downloadsSidebarAnalyticsCache?.activityData?.dates?.length || 0) && 
       window.downloadsActivityChart && 
       window.downloadsActivityChart.canvas === canvas) {
     return;
@@ -4225,21 +4256,16 @@ function renderDownloadsActivityChart() {
     window.downloadsActivityChart = null;
   }
 
-  if (!posts.length) {
+  const { dates: sortedDates, counts: activityCounts } = aggregated.activityData;
+
+  if (!sortedDates.length) {
     const ctx = canvas.getContext('2d');
-    if (ctx) {
-      ctx.clearRect(0, 0, canvas.width, canvas.height);
-    }
+    if (ctx) ctx.clearRect(0, 0, canvas.width, canvas.height);
     window._chartsRenderCache.activityChartPostCount = 0;
     return;
   }
-  
-  // Update cache with current post count
-  window._chartsRenderCache.activityChartPostCount = posts.length;
 
-  // Use optimized aggregation with caching - only aggregates once
-  const aggregated = aggregateChartDataFast(posts);
-  const { dates: sortedDates, counts: activityCounts } = aggregated.activityData;
+  window._chartsRenderCache.activityChartPostCount = sortedDates.length;
 
   const chartData = {
     labels: sortedDates,
@@ -4293,17 +4319,29 @@ function renderDownloadsFileTypeChart() {
   const canvas = document.getElementById('downloads-filetype-chart');
   if (!canvas) return;
 
-  const posts = Array.isArray(window.allDownloadedPosts) ? window.allDownloadedPosts : [];
+  // Try to use sidebar analytics cache first (pre-calculated during startup)
+  let aggregated = null;
+  if (downloadsSidebarAnalyticsCacheReady && downloadsSidebarAnalyticsCache) {
+    aggregated = downloadsSidebarAnalyticsCache;
+  } else {
+    // Fallback: use regular posts if cache not ready (shouldn't happen)
+    const posts = Array.isArray(window.allDownloadedPosts) ? window.allDownloadedPosts : [];
+    if (!posts.length) {
+      const ctx = canvas.getContext('2d');
+      if (ctx) ctx.clearRect(0, 0, canvas.width, canvas.height);
+      return;
+    }
+    aggregated = aggregateChartDataFast(posts);
+  }
   
   // Initialize cache if needed
   if (!window._chartsRenderCache) {
     window._chartsRenderCache = {};
   }
   
-  // Skip re-render only if:
-  // 1. Post count hasn't changed
-  // 2. Chart exists AND is connected to the current canvas element
-  if (window._chartsRenderCache.fileTypeChartPostCount === posts.length && 
+  // Skip re-render if data hasn't changed
+  const fileTypeDataSize = (downloadsSidebarAnalyticsCache?.fileTypeData?.types?.length || 0);
+  if (window._chartsRenderCache.fileTypeChartDataSize === fileTypeDataSize && 
       window.downloadsFileTypeChart && 
       window.downloadsFileTypeChart.canvas === canvas) {
     return;
@@ -4315,19 +4353,17 @@ function renderDownloadsFileTypeChart() {
     window.downloadsFileTypeChart = null;
   }
 
-  if (!posts.length) {
+  const { types: labels, counts: typeCounts } = aggregated.fileTypeData;
+
+  if (!labels.length) {
     const ctx = canvas.getContext('2d');
     if (ctx) ctx.clearRect(0, 0, canvas.width, canvas.height);
-    window._chartsRenderCache.fileTypeChartPostCount = 0;
+    window._chartsRenderCache.fileTypeChartDataSize = 0;
     return;
   }
-  
-  // Update cache with current post count
-  window._chartsRenderCache.fileTypeChartPostCount = posts.length;
 
-  // Use optimized aggregation with caching - only aggregates once
-  const aggregated = aggregateChartDataFast(posts);
-  const { types: labels, counts: typeCounts } = aggregated.fileTypeData;
+  window._chartsRenderCache.fileTypeChartDataSize = labels.length;
+
   const data = labels.map(label => typeCounts[label]);
   const total = data.reduce((sum, value) => sum + value, 0);
   const palette = [
@@ -4640,6 +4676,17 @@ function updateDownloadFolderDisplay() {
 
 let searchHandlerTimeout = null;
 
+// Abort controller specifically for downloads gallery search and preview image fetches
+let downloadsSearchAbortController = null;
+
+// Cache for downloaded posts (loaded once during app startup)
+let downloadsPostsCache = null;
+let downloadsPostsCacheReady = false;
+
+// Cache for sidebar analytics (pre-calculated during app startup)
+let downloadsSidebarAnalyticsCache = null;
+let downloadsSidebarAnalyticsCacheReady = false;
+
 function getDownloadsDateSortOrder() {
   if (window.sessionDownloadsDateSortOrder !== undefined) {
     return window.sessionDownloadsDateSortOrder;
@@ -4671,6 +4718,128 @@ function sortDownloadedPosts(posts) {
   });
   return posts;
 }
+
+// Helper to abort all downloads gallery searches and preview image fetches
+function abortDownloadsSearch() {
+  if (downloadsSearchAbortController) {
+    downloadsSearchAbortController.abort();
+    console.log('[Downloads] Aborted previous search/fetch operations');
+  }
+  // Create new controller for the next operation
+  downloadsSearchAbortController = new AbortController();
+  return downloadsSearchAbortController;
+}
+
+// Initialize downloaded posts cache during app startup
+// This loads all downloaded posts once during boot, avoiding repeated server calls
+async function initializeDownloadsCache() {
+  try {
+    console.log('[Downloads] Loading posts cache during app startup...');
+    const posts = await dbStore.getAllDownloadedPosts();
+    downloadsPostsCache = posts || [];
+    downloadsPostsCacheReady = true;
+    console.log(`[Downloads] Cache initialized with ${downloadsPostsCache.length} posts`);
+  } catch (error) {
+    console.error('[Downloads] Failed to initialize cache:', error);
+    downloadsPostsCache = [];
+    downloadsPostsCacheReady = true;
+  }
+}
+
+// Refresh the downloads cache (use after adding/removing posts)
+async function refreshDownloadsCache() {
+  try {
+    console.log('[Downloads] Refreshing posts cache...');
+    const posts = await dbStore.getAllDownloadedPosts();
+    downloadsPostsCache = posts || [];
+    console.log(`[Downloads] Cache refreshed with ${downloadsPostsCache.length} posts`);
+    
+    // Also refresh sidebar analytics cache
+    if (window.refreshDownloadsSidebarAnalyticsCache) {
+      await window.refreshDownloadsSidebarAnalyticsCache();
+    }
+  } catch (error) {
+    console.error('[Downloads] Failed to refresh cache:', error);
+  }
+}
+
+// Get cached downloaded posts (returns a copy to prevent accidental mutations)
+function getCachedDownloadedPosts() {
+  if (!downloadsPostsCacheReady) {
+    console.warn('[Downloads] Cache not ready yet, returning empty array');
+    return [];
+  }
+  return [...(downloadsPostsCache || [])];
+}
+
+// Expose cache functions globally
+window.initializeDownloadsCache = initializeDownloadsCache;
+window.refreshDownloadsCache = refreshDownloadsCache;
+window.getCachedDownloadedPosts = getCachedDownloadedPosts;
+
+// Initialize sidebar analytics cache during app startup
+// This pre-calculates all charts data so sidebar renders instantly
+async function initializeDownloadsSidebarAnalyticsCache() {
+  try {
+    console.log('[Downloads Sidebar] Pre-calculating analytics data...');
+    const posts = getCachedDownloadedPosts();
+    if (!posts || posts.length === 0) {
+      console.log('[Downloads Sidebar] No posts in cache, skipping analytics');
+      downloadsSidebarAnalyticsCache = { 
+        activityData: { dates: [], counts: [] },
+        statsData: { sources: [], artists: [], sourceArtistCounts: {}, artistTotals: {}, sourceTotals: {} },
+        fileTypeData: { types: [], counts: {} }
+      };
+      downloadsSidebarAnalyticsCacheReady = true;
+      return;
+    }
+    
+    // Pre-calculate all analytics data
+    downloadsSidebarAnalyticsCache = aggregateChartDataFast(posts);
+    downloadsSidebarAnalyticsCacheReady = true;
+    console.log('[Downloads Sidebar] Analytics cache initialized');
+  } catch (error) {
+    console.error('[Downloads Sidebar] Failed to initialize analytics cache:', error);
+    downloadsSidebarAnalyticsCache = { 
+      activityData: { dates: [], counts: [] },
+      statsData: { sources: [], artists: [], sourceArtistCounts: {}, artistTotals: {}, sourceTotals: {} },
+      fileTypeData: { types: [], counts: {} }
+    };
+    downloadsSidebarAnalyticsCacheReady = true;
+  }
+}
+
+// Refresh sidebar analytics cache (use after cache is refreshed)
+async function refreshDownloadsSidebarAnalyticsCache() {
+  try {
+    console.log('[Downloads Sidebar] Refreshing analytics cache...');
+    const posts = getCachedDownloadedPosts();
+    downloadsSidebarAnalyticsCache = posts && posts.length > 0 
+      ? aggregateChartDataFast(posts)
+      : { 
+          activityData: { dates: [], counts: [] },
+          statsData: { sources: [], artists: [], sourceArtistCounts: {}, artistTotals: {}, sourceTotals: {} },
+          fileTypeData: { types: [], counts: {} }
+        };
+    console.log('[Downloads Sidebar] Analytics cache refreshed');
+  } catch (error) {
+    console.error('[Downloads Sidebar] Failed to refresh analytics cache:', error);
+  }
+}
+
+// Get cached sidebar analytics data
+function getCachedDownloadsSidebarAnalytics() {
+  if (!downloadsSidebarAnalyticsCacheReady) {
+    console.warn('[Downloads Sidebar] Analytics cache not ready yet');
+    return null;
+  }
+  return downloadsSidebarAnalyticsCache;
+}
+
+// Expose sidebar analytics functions globally
+window.initializeDownloadsSidebarAnalyticsCache = initializeDownloadsSidebarAnalyticsCache;
+window.refreshDownloadsSidebarAnalyticsCache = refreshDownloadsSidebarAnalyticsCache;
+window.getCachedDownloadsSidebarAnalytics = getCachedDownloadsSidebarAnalytics;
 
 // Function to show homepage gallery (basic booru window without search and source)
 async function showHomepage(forceReload = false) {
@@ -5281,7 +5450,12 @@ async function showDownloadsGallery(forceReload = false) {
     }
   }
 
-  let downloadedPosts = await dbStore.getAllDownloadedPosts();
+  // Use cached posts for normal loads, force reload from server if needed
+  console.log(`[Downloads] Loaded`);
+  let downloadedPosts = forceReload
+    ? await dbStore.getAllDownloadedPosts()
+    : getCachedDownloadedPosts();
+  console.log(`[Downloads] Using ${downloadedPosts.length} posts for rendering`);
 
   // 4. Render downloads gallery
   if (typeof dbStore !== 'undefined' && dbStore) {
@@ -5389,6 +5563,9 @@ async function showDownloadsGallery(forceReload = false) {
     // For scraper posts without aspect ratio, preload from thumbnails to extract correct aspect ratio
     const scraperPostsToPreload = initialPosts.filter(p => p._isScraperPost && !p.aspectRatio);
     if (scraperPostsToPreload.length > 0) {
+      // Initialize abort controller for initial preload
+      abortDownloadsSearch();
+      
       // Group scraper posts by source and preload each group
       const postsBySource = {};
       scraperPostsToPreload.forEach(p => {
@@ -5397,7 +5574,7 @@ async function showDownloadsGallery(forceReload = false) {
       });
       // Preload for each source
       for (const [sourceId, posts] of Object.entries(postsBySource)) {
-        await preloadScraperThumbnailsForAspectRatio(posts, sourceId);
+        await preloadScraperThumbnailsForAspectRatio(posts, sourceId, downloadsSearchAbortController?.signal);
       }
     }
     
@@ -5415,6 +5592,10 @@ async function showDownloadsGallery(forceReload = false) {
       const downloadsSearchHandler = function() {
         window.downloadsSearchText = searchInput.value;
         window.debouncedSave();
+        
+        // Abort any pending search/fetch operations from previous searches
+        abortDownloadsSearch();
+        
         const val = searchInput.value.trim().toLowerCase();
         const selectedSource = document.getElementById('downloads-source-select')?.value;
         const sourcePosts = window.downloadsGalleryOriginalPosts || downloadedPosts;
@@ -5542,6 +5723,8 @@ async function showDownloadsGallery(forceReload = false) {
     document.getElementById('search-filter-input')?.dispatchEvent(new Event('blur', { bubbles: true }));
   }
 
+  console.log('[Downloads] Rendering downloads sidebar');
+
   if (appContent) {
     const existingSidebar = document.getElementById('downloads-sidebar');
     if (existingSidebar) {
@@ -5556,6 +5739,8 @@ async function showDownloadsGallery(forceReload = false) {
 
   // Save the state
   if (window.debouncedSave) window.debouncedSave();
+
+  console.log('[Downloads] Finished rendering downloads sidebar');
 }
 
 // Make it global
@@ -7057,6 +7242,9 @@ function initBooruBrowser() {
         // For scraper posts, always preload from local files to get correct aspect ratio on reload
         const scraperPostsToPreload = initialPosts.filter(p => p._isScraperPost);
         if (scraperPostsToPreload.length > 0) {
+          // Abort any pending operations and create new abort controller for reload
+          abortDownloadsSearch();
+          
           // Group scraper posts by source and preload each group
           const postsBySource = {};
           scraperPostsToPreload.forEach(p => {
@@ -7067,7 +7255,7 @@ function initBooruBrowser() {
           for (const [sourceId, posts] of Object.entries(postsBySource)) {
             // Clear existing aspect ratios to force fresh calculation
             posts.forEach(p => delete p.aspectRatio);
-            await preloadScraperThumbnailsForAspectRatio(posts, sourceId);
+            await preloadScraperThumbnailsForAspectRatio(posts, sourceId, downloadsSearchAbortController?.signal);
           }
         }
         
@@ -7761,7 +7949,7 @@ window.updateSortOptions = updateSortOptions;
 // Preload scraper thumbnails to extract aspect ratios BEFORE rendering gallery
 // This ensures createBooruImageElement is called with correct aspect ratio data
 // instead of having to default to 1:1 and wait for images to load
-async function preloadScraperThumbnailsForAspectRatio(posts, sourceId) {
+async function preloadScraperThumbnailsForAspectRatio(posts, sourceId, abortSignal = null) {
   if (!posts || posts.length === 0) return;
   
   // Get source config to check if aspect ratio should be inverted
@@ -7773,6 +7961,13 @@ async function preloadScraperThumbnailsForAspectRatio(posts, sourceId) {
   // Create promises to preload all thumbnail images/videos
   const preloadPromises = posts.map(post => {
     return new Promise((resolve) => {
+      // Check if aborted before starting
+      if (abortSignal && abortSignal.aborted) {
+        console.log('[Preload] Aborted - skipping post', post.id);
+        resolve();
+        return;
+      }
+      
       if (!post.thumbnailUrl || post.aspectRatio) {
         // Skip if no thumbnail URL or already has aspect ratio
         resolve();
@@ -7821,6 +8016,12 @@ async function preloadScraperThumbnailsForAspectRatio(posts, sourceId) {
         // For images, use image element (existing logic)
         const img = new Image();
         img.onload = () => {
+          // Check if aborted before updating post
+          if (abortSignal && abortSignal.aborted) {
+            resolve();
+            return;
+          }
+          
           // Extract and store aspect ratio from natural dimensions
           if (img.naturalWidth && img.naturalHeight) {
             let aspectRatio = img.naturalWidth / img.naturalHeight;

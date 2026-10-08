@@ -152,6 +152,13 @@ async function initDatabase() {
   
   ensureDefaultCSSPresets();
   
+  // Initialize FTS5 index for downloads gallery search
+  try {
+    createDownloadedPostsFTS();
+  } catch (error) {
+    console.warn('⚠️  FTS5 initialization skipped (index may already exist):', error.message);
+  }
+  
   console.log('✓ SQLite database initialized at:', DB_PATH);
   return db;
 }
@@ -336,6 +343,12 @@ function saveDownloadedPost(post) {
       JSON.stringify(Array.isArray(post.tag_info) ? post.tag_info : [])
     );
     
+    // Update FTS5 index
+    if (postId) {
+      const tagsStr = Array.isArray(post.tags) ? post.tags.join(' ') : '';
+      updateFTSIndexForPost(postId, tagsStr, newArtist || '');
+    }
+    
     // Handle artist statistics
     const postCreatedAt = post.createdAt || post.created_at || null;
     const postSource = post.source || undefined;
@@ -387,6 +400,9 @@ function removeDownloadedPost(id) {
     // Get the artist of the post being deleted
     const post = db.prepare('SELECT artist FROM downloaded_posts WHERE id = ?').get(id);
     const artist = post ? post.artist : null;
+    
+    // Delete from FTS5 index first
+    removeFTSIndexForPost(id);
     
     // Delete the post
     const stmt = db.prepare('DELETE FROM downloaded_posts WHERE id = ?');
@@ -1072,25 +1088,6 @@ function removeHomepagePostsUntilDownloaded(downloadedPost) {
     console.error('[removeHomepagePostsUntilDownloaded] Error:', error.message);
     throw error;
   }
-}
-
-// Helper function to convert database row to post object
-function rowToPost(row) {
-  return {
-    id: row.id,
-    imageUrl: row.image_url,
-    thumbnailUrl: row.thumbnail_url,
-    tags: JSON.parse(row.tags || '[]'),
-    tag_info: JSON.parse(row.tag_info || '[]'),
-    author: row.artist,
-    artist: row.artist,
-    score: row.score,
-    source: row.source,
-    aspectRatio: row.aspect_ratio,
-    createdAt: row.created_at,
-    downloadedAt: row.downloaded_at,
-    rating: row.rating || 0
-  };
 }
 
 // ============== Session operations ==============
@@ -1929,6 +1926,210 @@ function getAllFavoriteTags() {
   return stmt.all();
 }
 
+// ============== FTS5 Full-Text Search operations ==============
+
+function createDownloadedPostsFTS() {
+  if (!db) throw new Error('Database not initialized');
+  
+  try {
+    // Create FTS5 virtual table
+    db.exec(`
+      CREATE VIRTUAL TABLE IF NOT EXISTS downloaded_posts_fts USING fts5(
+        id UNINDEXED,
+        tags,
+        artist,
+        content='downloaded_posts',
+        content_rowid='rowid'
+      )
+    `);
+    
+    // Populate FTS table with existing posts
+    const posts = db.prepare('SELECT rowid, id, tags, artist FROM downloaded_posts').all();
+    if (posts.length > 0) {
+      const insertStmt = db.prepare(`
+        INSERT OR REPLACE INTO downloaded_posts_fts(rowid, id, tags, artist)
+        VALUES (?, ?, ?, ?)
+      `);
+      
+      for (const post of posts) {
+        insertStmt.run(
+          post.rowid,
+          post.id,
+          post.tags || '',
+          post.artist || ''
+        );
+      }
+    }
+    
+    console.log('✓ FTS5 index created for downloaded_posts');
+    return true;
+  } catch (error) {
+    console.error('❌ createDownloadedPostsFTS FAILED:', error.message);
+    throw error;
+  }
+}
+
+function rebuildDownloadedPostsFTS() {
+  if (!db) throw new Error('Database not initialized');
+  
+  try {
+    // Rebuild FTS index
+    db.prepare('INSERT INTO downloaded_posts_fts(downloaded_posts_fts, rank) VALUES("rebuild", 0)').run();
+    console.log('✓ FTS5 index rebuilt for downloaded_posts');
+    return true;
+  } catch (error) {
+    console.error('❌ rebuildDownloadedPostsFTS FAILED:', error.message);
+    throw error;
+  }
+}
+
+function updateFTSIndexForPost(id, tags = '', artist = '') {
+  if (!db) throw new Error('Database not initialized');
+  if (!id) throw new Error('Post id is required');
+  
+  try {
+    // Get the rowid for this post
+    const result = db.prepare('SELECT rowid FROM downloaded_posts WHERE id = ?').get(id);
+    
+    if (!result) {
+      console.warn('⚠️  Post not found for FTS update:', id);
+      return false;
+    }
+    
+    // Update or insert into FTS table
+    db.prepare(`
+      INSERT OR REPLACE INTO downloaded_posts_fts(rowid, id, tags, artist)
+      VALUES (?, ?, ?, ?)
+    `).run(result.rowid, id, tags || '', artist || '');
+    
+    return true;
+  } catch (error) {
+    console.error('❌ updateFTSIndexForPost FAILED for post', id, ':', error.message);
+    throw error;
+  }
+}
+
+function removeFTSIndexForPost(id) {
+  if (!db) throw new Error('Database not initialized');
+  if (!id) throw new Error('Post id is required');
+  
+  try {
+    // Get the rowid
+    const result = db.prepare('SELECT rowid FROM downloaded_posts WHERE id = ?').get(id);
+    
+    if (result) {
+      db.prepare('DELETE FROM downloaded_posts_fts WHERE rowid = ?').run(result.rowid);
+    }
+    
+    return true;
+  } catch (error) {
+    console.error('❌ removeFTSIndexForPost FAILED for post', id, ':', error.message);
+    throw error;
+  }
+}
+
+function searchDownloadedPostsWithFTS(query = '', filters = {}) {
+  if (!db) throw new Error('Database not initialized');
+  
+  try {
+    // If query is empty, get all posts with filters applied
+    let sql;
+    const params = [];
+    
+    if (!query || query.trim() === '') {
+      // No FTS search, just use regular filters
+      sql = 'SELECT dp.* FROM downloaded_posts dp WHERE 1=1';
+    } else {
+      // Use FTS search
+      sql = `
+        SELECT dp.* FROM downloaded_posts dp
+        WHERE dp.rowid IN (
+          SELECT rowid FROM downloaded_posts_fts
+          WHERE downloaded_posts_fts MATCH ?
+        )
+      `;
+      params.push(query);
+    }
+    
+    // Apply optional filters
+    if (filters.source) {
+      sql += ' AND dp.source = ?';
+      params.push(filters.source);
+    }
+    
+    if (filters.minRating !== undefined) {
+      sql += ' AND dp.rating >= ?';
+      params.push(filters.minRating);
+    }
+    
+    // Apply sorting
+    sql += ' ORDER BY dp.downloaded_at DESC';
+    
+    // Apply pagination
+    if (filters.limit) {
+      sql += ' LIMIT ?';
+      params.push(filters.limit);
+    }
+    
+    if (filters.offset) {
+      sql += ' OFFSET ?';
+      params.push(filters.offset);
+    }
+    
+    const stmt = db.prepare(sql);
+    const rows = stmt.all(...params);
+    
+    return rows.map(rowToPost);
+  } catch (error) {
+    console.error('❌ searchDownloadedPostsWithFTS FAILED:', error.message);
+    throw error;
+  }
+}
+
+// Helper function to convert database row to post object
+function rowToPost(row) {
+  if (!row) return null;
+  
+  // Parse tags from JSON if stored as JSON string, otherwise split by whitespace
+  let tags = [];
+  if (row.tags) {
+    try {
+      // Try to parse as JSON first
+      const parsed = JSON.parse(row.tags);
+      tags = Array.isArray(parsed) ? parsed : [];
+    } catch (e) {
+      // If JSON parsing fails, fall back to whitespace splitting
+      tags = row.tags.split(/\s+/).filter(t => t.length > 0);
+    }
+  }
+  
+  // Parse tag_info from JSON
+  let tagInfo = [];
+  if (row.tag_info) {
+    try {
+      const parsed = JSON.parse(row.tag_info);
+      tagInfo = Array.isArray(parsed) ? parsed : [];
+    } catch (e) {
+      tagInfo = [];
+    }
+  }
+  
+  return {
+    id: row.id,
+    imageUrl: row.image_url,
+    thumbnailUrl: row.thumbnail_url,
+    tags: tags,
+    artist: row.artist,
+    score: row.score,
+    source: row.source,
+    aspectRatio: row.aspect_ratio,
+    createdAt: row.created_at,
+    downloadedAt: row.downloaded_at,
+    rating: row.rating || 0,
+    tagInfo: tagInfo
+  };
+}
+
 module.exports = {
   initDatabase,
   closeDatabase,
@@ -1979,5 +2180,10 @@ module.exports = {
   addFavoriteTag,
   removeFavoriteTag,
   isFavoriteTag,
-  getAllFavoriteTags
+  getAllFavoriteTags,
+  createDownloadedPostsFTS,
+  rebuildDownloadedPostsFTS,
+  updateFTSIndexForPost,
+  removeFTSIndexForPost,
+  searchDownloadedPostsWithFTS
 };

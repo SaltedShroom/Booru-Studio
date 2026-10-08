@@ -2586,6 +2586,29 @@ const server = isWorkerMode ? null : http.createServer((req, res) => {
     return;
   }
 
+  // FTS5 Search posts (full-text search with filters)
+  if (req.method === 'GET' && req.url.startsWith('/api/db/posts/search-fts?')) {
+    try {
+      const urlParams = new URL(req.url, 'http://localhost').searchParams;
+      const query = urlParams.get('q') || '';
+      
+      const filters = {
+        source: urlParams.get('source') || undefined,
+        minRating: urlParams.get('minRating') ? parseInt(urlParams.get('minRating')) : undefined,
+        limit: urlParams.get('limit') ? parseInt(urlParams.get('limit')) : 100,
+        offset: urlParams.get('offset') ? parseInt(urlParams.get('offset')) : 0
+      };
+      
+      const posts = database.searchDownloadedPostsWithFTS(query, filters);
+      res.writeHead(200, { 'Content-Type': 'application/json' });
+      res.end(JSON.stringify(posts));
+    } catch (error) {
+      res.writeHead(500, { 'Content-Type': 'application/json' });
+      res.end(JSON.stringify({ error: error.message }));
+    }
+    return;
+  }
+
   // Get posts by artist (must be before generic /api/db/posts/ route)
   if (req.method === 'GET' && req.url.startsWith('/api/db/posts/artist/')) {
     try {
