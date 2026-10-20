@@ -867,6 +867,7 @@ async function loadImageWithProgress(url, onProgress) {
     const totalBytes = parseInt(response.headers.get('content-length') || '0', 10);
     
     let loadedBytes = 0;
+    let hasReportedTotalBytes = false;
     
     const reader = response.body.getReader();
     const chunks = [];
@@ -883,8 +884,14 @@ async function loadImageWithProgress(url, onProgress) {
       
       // Report progress in real-time
       if (totalBytes > 0 && onProgress) {
-        const remaining = Math.max(0, totalBytes - loadedBytes);
-        onProgress(remaining, totalBytes);
+        const percentage = Math.round((loadedBytes / totalBytes) * 100);
+        // On first callback, pass totalBytes as third parameter
+        if (!hasReportedTotalBytes) {
+          onProgress(percentage, 'Loading HQ', totalBytes);
+          hasReportedTotalBytes = true;
+        } else {
+          onProgress(percentage, 'Loading HQ');
+        }
       }
     }
     
@@ -966,7 +973,7 @@ async function loadAndDownloadPost(task) {
       
       try {
         // Report loading state
-        if (task.toast) task.toast.update(10, 'Downloading');
+        if (task.toast) task.toast.update(0, 'Downloading');
         
         // Fetch high-quality image
         const imageUrl = mediaElement.dataset.imageUrl || task.imageUrl;
@@ -987,37 +994,22 @@ async function loadAndDownloadPost(task) {
         }
         
         // Load the HQ image with progress tracking
-        const imageLoadResult = await loadImageWithProgress(proxyImageUrl, (remainingBytes, totalBytes) => {
-          // Update contentLength on first callback if totalBytes is provided
-          if (contentLength === 0 && totalBytes > 0) {
-            contentLength = totalBytes;
+        const imageLoadResult = await loadImageWithProgress(proxyImageUrl, (percentage, status, totalBytes) => {
+          // Note: percentage is the actual percentage (0-100), status is 'Loading HQ'
+          // totalBytes is provided only on the first call
+          
+          // Call setSize on first callback (when totalBytes is available)
+          if (totalBytes && task.toast) {
+            task.toast.setSize(totalBytes);
           }
           
-          // Initialize progress tracking on first callback if we have a content length
-          if (!hasInitializedProgress && contentLength > 0) {
-            updateHqLoadingCounter(1, taskId, null, contentLength);
-            hasInitializedProgress = true;
-          }
+          // Map HQ loading progress (0-100%) to 0-99% of total download progress
+          // (leaving 99-100% for the blob save)
+          const hqProgress = Math.round(percentage * 0.99);
           
-          const loadedBytes = contentLength - remainingBytes;
-          const progressPercent = Math.max(0, Math.min(100, (loadedBytes / contentLength) * 100));
-          
-          // Update progress counter with real-time bytes progress
-          if (contentLength > 0) {
-            updateHqLoadingCounter(0, taskId, remainingBytes);
-          }
-          
-          // Update toast with HQ load progress
+          // Update toast with HQ load progress (only update percentage, not size)
           if (task.toast) {
-            task.toast.update(Math.round(progressPercent * 0.3), 'Downloading');
-            if (contentLength > 0) task.toast.setSize(contentLength);
-          }
-          
-          // Store progress in mediaElement dataset for reference
-          if (mediaElement) {
-            mediaElement.dataset.hqLoadProgress = String(Math.round(progressPercent));
-            mediaElement.dataset.hqLoadedBytes = String(loadedBytes);
-            mediaElement.dataset.hqTotalBytes = String(contentLength);
+            task.toast.update(hqProgress, 'Loading HQ');
           }
         });
         
@@ -1063,16 +1055,11 @@ async function loadAndDownloadPost(task) {
   
   // Execute download with retries
   const downloadResult = await runDownloadWithRetries(task, 3, (pct, status) => {
-    // progress callback -> update toast and gallery progress bar (if present)
+    // Update toast with progress (already works perfectly)
     if (task.toast) task.toast.update(pct, status);
-    try {
-      if (task.progressBar) {
-        task.progressBar.style.width = Math.max(0, Math.min(100, pct)) + '%';
-        if (task.progressContainer) {
-          task.progressContainer.style.display = (pct > 0 && pct < 100) ? 'block' : (pct >= 100 ? 'none' : task.progressContainer.style.display);
-        }
-      }
-    } catch (e) { /* ignore DOM errors */ }
+    
+    // Gallery progress bar is now updated by the toast.update() call above
+    // (see createDownloadToast in index.js - update function also updates the gallery progress)
   });
   
   // Clean up HQ progress tracking properties after download completes
@@ -1185,10 +1172,8 @@ const scraperDetailQueue = {
 async function runDownloadWithRetries(task, maxAttempts = 3, onProgress) {
   let lastError = null;
   for (let attempt = 1; attempt <= maxAttempts; attempt++) {
-    if (onProgress) onProgress( (attempt - 1) / maxAttempts * 20, `Attempt ${attempt}/${maxAttempts}` );
     try {
       // perform download (server request)
-      if (onProgress) onProgress(10, 'Starting');
       
       // Check if we have a cached blob to use instead of web fetch
       if (task.blobData && typeof task.blobData.arrayBuffer === 'function') {
@@ -1196,6 +1181,12 @@ async function runDownloadWithRetries(task, maxAttempts = 3, onProgress) {
         
         const arrayBuffer = await task.blobData.arrayBuffer();
         const taskId = `dl-blob-${Date.now()}-${Math.random().toString(36).substr(2, 9)}`;
+        
+        // Set file size immediately since we know it from the blob
+        task.totalBytes = task.blobData.size;
+        if (task.toast && task.toast.setSize) {
+          task.toast.setSize(task.blobData.size);
+        }
         
         // Send blob via fetch to /download-from-blob endpoint
         try {
@@ -1211,11 +1202,9 @@ async function runDownloadWithRetries(task, maxAttempts = 3, onProgress) {
           
           const data = await resp.json();
           if (data && data.success) {
-            task.totalBytes = task.blobData.size;
-            // Update toast with file size
-            if (task.toast && task.toast.setSize) {
-              task.toast.setSize(task.blobData.size);
-            }
+            // Report progress in the 99-100% range (HQ was 0-99%)
+            if (onProgress) onProgress(99, 'Saving blob');
+            await new Promise(r => setTimeout(r, 100)); // Brief delay for visual feedback
             if (onProgress) onProgress(100, 'Saved');
             return data;
           } else {
@@ -1223,7 +1212,7 @@ async function runDownloadWithRetries(task, maxAttempts = 3, onProgress) {
           }
         } catch (err) {
           // Blob upload failed - fall through to normal download retry
-          if (onProgress) onProgress(35, 'Blob upload failed, retrying normal download');
+          if (onProgress) onProgress(50, 'Blob upload failed, retrying normal download');
           lastError = err;
           continue;
         }
@@ -4693,6 +4682,12 @@ async function showHomepage(forceReload = false) {
     aiFilterBtn.style.display = 'none';
   }
   
+  // Remove downloads sidebar if it exists
+  const downloadsSidebar = document.getElementById('downloads-sidebar');
+  if (downloadsSidebar) {
+    downloadsSidebar.remove();
+  }
+  
   // Hide scroller if visible
   const scrollerContent = document.getElementById('scroller-content');
   if (scrollerContent) {
@@ -5102,6 +5097,10 @@ async function showDownloadsGallery(forceReload = false) {
 
   if (searchInput) {
     searchInput.value = window.downloadsSearchText || '';
+    // Dispatch event to trigger search if value was set
+    if (window.downloadsSearchText) {
+      searchInput.dispatchEvent(new Event('input', { bubbles: true }));
+    }
   }
 
   // Set up control bar for downloads mode
@@ -6243,7 +6242,7 @@ function initBooruBrowser() {
                 const currentSearchInput = document.getElementById('search-filter-input')?.value;
                 // User requested a download — create toast immediately (before any awaits)
                 let toast = null;
-                try { toast = window.createDownloadToast(`dl-${post.id}-${Date.now()}`, String(post.id)); if (toast) toast.update(2, 'Queued'); } catch (e) { /* ignore if not available */ }
+                try { toast = window.createDownloadToast(`dl-${post.id}-${Date.now()}`, String(post.id)); if (toast) toast.update(0, 'Queued'); } catch (e) { /* ignore if not available */ }
 
                 // For scraper sources: ALWAYS fetch fresh full details and quality image before downloading
                 // Detect by: (1) flag set, OR (2) source is configured as scraper type
@@ -6253,7 +6252,7 @@ function initBooruBrowser() {
                 
                 if (isScraperPost) {
                   try {
-                    if (toast) toast.update(2, 'Fetching details...');
+                    if (toast) toast.update(0, 'Fetching details...');
                     const detail = await fetchScraperPostDetails(post.id, post.source);
                     
                     // Use returned detail data to update post object
@@ -6275,7 +6274,7 @@ function initBooruBrowser() {
                     }
                   } catch (err) {
                     console.error('[Download] Error fetching scraper post details:', err);
-                    if (toast) toast.update(2, 'Failed to fetch details');
+                    if (toast) toast.update(0, 'Failed to fetch details');
                     // Continue anyway with what we have
                   }
                 }
@@ -6415,8 +6414,17 @@ function initBooruBrowser() {
                   progressBar.style.width = '0%';
                   if (task.toast) task.toast.done(false, 'Failed');
                   const _dlErrMsg = error && error.message ? error.message : 'unknown';
-                  const _dlProxyHint = getProxyDownHint(null, _dlErrMsg);
-                  showToast(_dlProxyHint ? `Download failed: ${_dlProxyHint}` : `Download failed: ${_dlErrMsg}`, 'error');
+                  
+                  // Show download failure toast with retry and discard options
+                  showDownloadFailureToast(
+                    () => {
+                      // Retry callback - click download button again
+                      downloadBtn.click();
+                    },
+                    () => {
+                      // Discard callback - nothing needed, user dismissed it
+                    }
+                  );
                 }
               }
             });
@@ -6851,6 +6859,8 @@ function initBooruBrowser() {
       if (downloadsDateSortSection) downloadsDateSortSection.remove();
       const downloadsMediaTypeSection = document.querySelector('.control-section-downloads-media-type');
       if (downloadsMediaTypeSection) downloadsMediaTypeSection.remove();
+      const downloadsSidebar = document.getElementById('downloads-sidebar');
+      if (downloadsSidebar) downloadsSidebar.remove();
       window.downloadsGalleryOriginalPosts = null;
       
       // Reset downloads pagination state
@@ -6886,6 +6896,10 @@ function initBooruBrowser() {
           if (searchInput) {
             searchInput.value = tab.state?.searchTags || '';
             if (searchInput.value.toLowerCase() == 'search' || searchInput.value.toLowerCase() == 'new tab') searchInput.value = '';
+            // Dispatch event to trigger search when restoring tab state
+            if (searchInput.value) {
+              searchInput.dispatchEvent(new Event('input', { bubbles: true }));
+            }
           }
           // Restore source select
           const sourceSelect = document.getElementById('booru-source-select');
@@ -10527,7 +10541,7 @@ function createBooruImageElement(post, maxHeight = null, imageWidth = null) {
 
       // User requested download — create toast immediately
       let toast = null;
-      try { toast = window.createDownloadToast(`dl-${post.id}-${Date.now()}`, String(post.id)); if (toast) toast.update(2, 'Queued'); } catch (e) { /* ignore */ }
+      try { toast = window.createDownloadToast(`dl-${post.id}-${Date.now()}`, String(post.id)); if (toast) toast.update(0, 'Queued'); } catch (e) { /* ignore */ }
 
       downloadBtn.innerHTML = '<i class="fas fa-circle-notch fa-spin loading-artist"></i>';
       downloadBtn.disabled = true;
@@ -10541,7 +10555,7 @@ function createBooruImageElement(post, maxHeight = null, imageWidth = null) {
       
       if (isScraperPost) {
         try {
-          if (toast) toast.update(2, 'Fetching details...');
+          if (toast) toast.update(0, 'Fetching details...');
           const detail = await fetchScraperPostDetails(post.id, post.source);
           
           // Use returned detail data to update post object
@@ -10564,7 +10578,7 @@ function createBooruImageElement(post, maxHeight = null, imageWidth = null) {
             }
           }
         } catch (err) {
-          if (toast) toast.update(2, 'Failed to fetch details');
+          if (toast) toast.update(0, 'Failed to fetch details');
           // Continue anyway with what we have
         }
       }
@@ -10750,13 +10764,23 @@ function createBooruImageElement(post, maxHeight = null, imageWidth = null) {
           }, 300);    
       } catch (error) {
         console.error('Download failed:', error);
-        showToast('Download failed: ' + (error.message || error), 'error');
         downloadBtn.innerHTML = '<i class="fas fa-download"></i>';
         downloadBtn.disabled = false;
         progressContainer.style.display = 'none';
         progressBar.style.width = '0%';
         // finalize toast as failed
         if (toast) toast.done(false, 'Failed');
+        
+        // Show download failure toast with retry and discard options
+        showDownloadFailureToast(
+          () => {
+            // Retry callback - click download button again
+            downloadBtn.click();
+          },
+          () => {
+            // Discard callback - nothing needed, user dismissed it
+          }
+        );
       }
     }
   });
@@ -10989,9 +11013,11 @@ document.addEventListener('keyup', (e) => {
       pauseAllPreviewVideos();
     }
     
-    if (tagsChangedWhileFrozen) {
-      tagsChangedWhileFrozen = false;
-      loadBooruImages(false);
+    if (!window.isViewingDownloadsGallery) {
+      if (tagsChangedWhileFrozen) {
+        tagsChangedWhileFrozen = false;
+        loadBooruImages(false);
+      }
     }
     commitPreviewFrozenTagChanges();
   }
@@ -11032,9 +11058,11 @@ document.addEventListener('mouseup', (e) => {
       pauseAllPreviewVideos();
     }
     
-    if (tagsChangedWhileFrozen) {
-      tagsChangedWhileFrozen = false;
-      loadBooruImages(false);
+    if (!window.isViewingDownloadsGallery) {
+      if (tagsChangedWhileFrozen) {
+        tagsChangedWhileFrozen = false;
+        loadBooruImages(false);
+      }
     }
     commitPreviewFrozenTagChanges();
   }
@@ -11295,6 +11323,16 @@ function updatePreviewMetadata(mediaElement) {
   const tags = mediaElement.dataset.tags.split(' ').filter(t => t.length > 0);
   booruPreviewTags.innerHTML = '';
   
+  // Collect all tags that are already displayed in custom meta to exclude them from regular tags
+  const customMetaTags = new Set();
+  const customMetaSections = booruPreviewCustomMeta.querySelectorAll('.booru-hover-preview-metasection');
+  customMetaSections.forEach(section => {
+    const metaTags = section.querySelectorAll('.booru-preview-meta-tag');
+    metaTags.forEach(tag => {
+      customMetaTags.add(tag.textContent.toLowerCase());
+    });
+  });
+  
   // Get current search tags for highlighting
   const rawSearchTags = searchFilterInput ? searchFilterInput.value.trim() : '';
   const { searchTagsArray } = parseTagsAndBlacklist(rawSearchTags);
@@ -11302,16 +11340,23 @@ function updatePreviewMetadata(mediaElement) {
   
   tags.forEach(tag => {
     const decodedTag = decodeHtmlEntities(tag);
+    const decodedTagLower = decodedTag.toLowerCase();
+    
+    // Skip if this tag is already in custom meta
+    if (customMetaTags.has(decodedTagLower)) {
+      return;
+    }
+    
     const tagSpan = document.createElement('span');
     tagSpan.className = 'booru-tag';
     
     // Highlight if it matches a searched tag
-    if (searchTagsLower.includes(decodedTag.toLowerCase())) {
+    if (searchTagsLower.includes(decodedTagLower)) {
       tagSpan.classList.add('searched');
     }
     
     tagSpan.textContent = decodedTag;
-    const tagKey = decodedTag.toLowerCase();
+    const tagKey = decodedTagLower;
     if (previewMiddleClickedTags.has(tagKey)) {
       tagSpan.classList.add('middle-selected');
     }
@@ -11961,6 +12006,23 @@ function showPreviewForElement(mediaElement, forceVideoLoad = false, hidden = fa
           }
         }
         booruPreviewMediaContainer.appendChild(img);
+        
+        // Show loading overlay while video loads
+        let loadingOverlay = booruPreviewMediaContainer.querySelector('.preview-loading-overlay');
+        if (!loadingOverlay) {
+          loadingOverlay = document.createElement('div');
+          loadingOverlay.className = 'preview-loading-overlay';
+          loadingOverlay.innerHTML = `
+            <svg class="preview-progress-circle" viewBox="0 0 100 100" width="45" height="45">
+              <circle class="preview-progress-bg" cx="50" cy="50" r="42" />
+              <circle class="preview-progress-fill" cx="50" cy="50" r="42" />
+            </svg>
+            <div class="preview-loading-percent">0%</div>
+          `;
+          booruPreviewMediaContainer.style.position = 'relative';
+          booruPreviewMediaContainer.appendChild(loadingOverlay);
+        }
+        
         updatePreviewMetadata(mediaElement);
         if (!hidden) booruHoverPreview.classList.add('active');
         return; // Don't start a new load, wait for the existing one
@@ -12911,6 +12973,9 @@ function togglePreviewTagSelection(tag) {
   }
 
   searchFilterInput.value = currentTags.join(' ');
+
+  // Dispatch 'input' event so search is triggered
+  searchFilterInput.dispatchEvent(new Event('input', { bubbles: true }));
 
   if (previewFrozen) {
     tagsChangedWhileFrozen = true;

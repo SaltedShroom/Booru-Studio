@@ -381,10 +381,11 @@ let downloadCount = 0;
 const downloadProgress = new Map();
 
 function setDownloadProgress(taskId, bytesReceived, totalBytes, status) {
+  const percentage = totalBytes > 0 ? Math.round((bytesReceived / totalBytes) * 100) : 0;
   downloadProgress.set(taskId, {
     bytesReceived,
     totalBytes,
-    percentage: totalBytes > 0 ? Math.round((bytesReceived / totalBytes) * 100) : 0,
+    percentage: isNaN(percentage) ? 0 : Math.max(0, Math.min(100, percentage)),
     status,
     timestamp: Date.now()
   });
@@ -4642,7 +4643,7 @@ const server = isWorkerMode ? null : http.createServer((req, res) => {
       res.writeHead(200, { 'Content-Type': 'application/json' });
       res.end(JSON.stringify({ 
         success: true,
-        percentage: progress.percentage,
+        percentage: isNaN(progress.percentage) ? 0 : progress.percentage,
         bytesReceived: progress.bytesReceived,
         totalBytes: progress.totalBytes,
         status: progress.status
@@ -4738,22 +4739,23 @@ const server = isWorkerMode ? null : http.createServer((req, res) => {
             // Get total file size from Content-Length header
             let totalBytes = parseInt(response.headers['content-length']) || 0;
             let bytesReceived = 0;
-            let maxBytesReceived = 0; // Track highest bytes for fallback estimate
+            let estimatedTotal = totalBytes || null;
             
             console.log(`Starting download of ${filename} from ${downloadUrl} with total size: ${totalBytes} bytes`);
+            
             // Track progress as data arrives
             response.on('data', (chunk) => {
               bytesReceived += chunk.length;
-              maxBytesReceived = Math.max(maxBytesReceived, bytesReceived);
               
               if (taskId) {
-                // If Content-Length is missing (e.g., chunked encoding on video servers),
-                // estimate total size to show meaningful progress
+                // If we have Content-Length, use it; otherwise stabilize the estimate once
                 let reportedTotal = totalBytes;
-                if (totalBytes === 0 && bytesReceived > 0) {
-                  // Estimate total as 1.3x what we've received so far
-                  // This allows progress bar to show meaningful updates for chunked downloads
-                  reportedTotal = Math.max(bytesReceived * 1.3, maxBytesReceived * 1.1);
+                if (totalBytes === 0) {
+                  // On first chunk, estimate total as 1.5x received and keep it stable
+                  if (estimatedTotal === null) {
+                    estimatedTotal = Math.max(bytesReceived * 1.5, 512 * 1024);
+                  }
+                  reportedTotal = estimatedTotal;
                 }
                 setDownloadProgress(taskId, bytesReceived, reportedTotal, 'Downloading');
               }
@@ -4800,11 +4802,6 @@ const server = isWorkerMode ? null : http.createServer((req, res) => {
           
           downloadReq.end();
         };
-        
-        // Initialize progress tracking if taskId provided
-        if (taskId) {
-          setDownloadProgress(taskId, 0, 0, 'Starting');
-        }
         
         await activeRequestJitter();
         downloadWithRedirects(imageUrl);

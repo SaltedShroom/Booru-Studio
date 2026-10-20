@@ -606,6 +606,8 @@ async function initBooruTabs() {
         searchInput.value = suggestionField.value; // Accept the suggestion
         suggestionField.value = ""; // Clear the suggestion
         searchInput.scrollLeft = searchInput.scrollWidth; // Move cursor to end
+        // Dispatch 'input' event so any listeners are notified of the change
+        searchInput.dispatchEvent(new Event('input', { bubbles: true }));
         if (activeTabId) {
           const newName = searchInput.value || 'Search';
           updateTabName(activeTabId, newName);

@@ -1149,6 +1149,45 @@ function showConfirmToast(message, onYes, onNo) {
   setTimeout(() => toast.classList.add('show'), 10);
 }
 
+// Download failure toast with retry and discard buttons (with Font Awesome icons, no text)
+function showDownloadFailureToast(onRetry, onDiscard) {
+  const container = document.getElementById('toast-container');
+  const toast = document.createElement('div');
+  toast.className = 'toast toast-error toast-failure';
+  toast.innerHTML = `
+    <div class="toast-failure-message">Download Failed... Try again?</div>
+    <div class="toast-failure-buttons">
+      <button class="toast-failure-btn toast-btn-retry" title="Retry download">
+        <i class="fas fa-redo"></i>
+      </button>
+      <button class="toast-failure-btn toast-btn-discard" title="Discard download">
+        <i class="fas fa-arrow-right"></i>
+      </button>
+    </div>
+  `;
+  
+  const retryBtn = toast.querySelector('.toast-btn-retry');
+  const discardBtn = toast.querySelector('.toast-btn-discard');
+  
+  const dismiss = () => {
+    toast.classList.remove('show');
+    setTimeout(() => toast.remove(), 300);
+  };
+  
+  retryBtn.addEventListener('click', () => {
+    dismiss();
+    if (onRetry) onRetry();
+  });
+  
+  discardBtn.addEventListener('click', () => {
+    dismiss();
+    if (onDiscard) onDiscard();
+  });
+  
+  container.appendChild(toast);
+  setTimeout(() => toast.classList.add('show'), 10);
+}
+
 function showSupportToast() {
   if (!supportToastEnabled || !supportToastEnabled.checked) return;
   const container = document.getElementById('toast-container');
@@ -2053,7 +2092,7 @@ async function loadSession() {
     const percentageDisplay = document.createElement('div');
     percentageDisplay.className = 'dt-percentage';
     percentageDisplay.textContent = '0%';
-    percentageDisplay.style.display = 'none';
+    percentageDisplay.style.display = '';
 
     const sizeDisplay = document.createElement('div');
     sizeDisplay.className = 'dt-size';
@@ -2075,6 +2114,26 @@ async function loadSession() {
         progress.style.width = Math.max(0, Math.min(100, pct)) + '%';
         percentageDisplay.textContent = Math.round(Math.max(0, Math.min(100, pct))) + '%';
         if (st) status.textContent = st;
+        
+        // Also update the gallery progress bar for the corresponding post
+        if (toast.dataset.key) {
+          // Extract post ID from key like "dl-{postId}-{timestamp}"
+          const parts = toast.dataset.key.split('-');
+          if (parts.length >= 2) {
+            const postId = parts[1];
+            // Find the gallery item with this post ID
+            const galleryItem = document.querySelector(`[data-post-id="${postId}"]`);
+            if (galleryItem) {
+              const galleryProgressBar = galleryItem.querySelector('.booru-download-progress-bar');
+              const galleryProgressContainer = galleryItem.querySelector('.booru-download-progress');
+              if (galleryProgressBar && galleryProgressContainer) {
+                const widthValue = Math.max(0, Math.min(100, pct)) + '%';
+                galleryProgressBar.style.width = widthValue;
+                galleryProgressContainer.style.opacity = (pct > 0 && pct < 100) ? '1' : (pct >= 100 ? '0' : galleryProgressContainer.style.opacity);
+              }
+            }
+          }
+        }
       },
       setSize(bytes) {
         if (bytes > 0) {
@@ -2084,6 +2143,7 @@ async function loadSession() {
         }
       },
       done(success, msg, imageUrl) {
+        
         // update final state
         this.update(100, msg || (success ? 'Completed' : 'Failed'));
         // toast disappears quickly regardless of success
