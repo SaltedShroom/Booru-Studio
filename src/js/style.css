@@ -2503,13 +2503,13 @@ body, html {
   gap: 8px;
   margin-bottom: 6px;
 }
-.download-toast .dt-title { font-weight: 600; color: var(--text-primary); }
-.download-toast .dt-status { font-size: 12px; color: var(--text-secondary); }
+.download-toast .dt-title { font-weight: 600; color: var(--text-primary); line-break: nowrap; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.download-toast .dt-status { font-size: 12px; color: var(--text-secondary); line-break: nowrap; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 .download-toast .dt-progress-track { background: rgba(255, 255, 255, 0.1); height: 3px; border-radius: 4px; overflow: hidden; }
 .download-toast .dt-progress { height: 100%; width: 0%; background: linear-gradient(90deg, var(--accent), var(--accent-secondary)); transition: width 200ms linear; }
 .download-toast .dt-progress-data { display: flex; margin-top: 2px; white-space: nowrap; }
-.download-toast .dt-percentage { flex: 1; font-size: 8px; color: var(--text-secondary); text-align: start; font-weight: 500; }
-.download-toast .dt-size { flex: 1; font-size: 8px; color: var(--text-secondary); text-align: end; font-weight: 500; }
+.download-toast .dt-percentage { flex: 1; font-size: 8px; color: var(--text-secondary); text-align: start; font-weight: 500; line-break: nowrap; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.download-toast .dt-size { flex: 1; font-size: 8px; color: var(--text-secondary); text-align: end; font-weight: 500; line-break: nowrap; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 
 .download-toast {
   transform: translateX(-400px);

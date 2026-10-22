@@ -1623,8 +1623,8 @@ const server = isWorkerMode ? null : http.createServer((req, res) => {
             const batchPromises = batch.map(async (artist) => {
 
               const artistStartTime = Date.now();
+              const source = booruSources.find(s => s.id === artist.last_download_source);
               try {
-                const source = booruSources.find(s => s.id === artist.last_download_source);
                 if (!source) {
                   console.warn(`  ⚠️ Source not found for ${artist.artist}`);
                   return { artist: artist.artist, posts: [], postsFoundCount: 0, source: null, error: 'Source not found', duration: Date.now() - artistStartTime };
@@ -1655,7 +1655,7 @@ const server = isWorkerMode ? null : http.createServer((req, res) => {
 
                 return { artist: artist.artist, posts, postsFoundCount: posts.length, source, error: null, duration: Date.now() - artistStartTime };
               } catch (error) {
-                console.error(`  ❌ Error fetching ${artist.artist}: ${error.message}`);
+                console.error(`❌ Error fetching Artist:`, `${error.message.includes("403") ? "FORBIDDEN - try updating \"" + source.name + "\" API credentials" : source.name + " - " + error.message}`);
                 return { artist: artist.artist, posts: [], postsFoundCount: 0, source: null, error: error.message, duration: Date.now() - artistStartTime };
               }
             });
@@ -2222,7 +2222,6 @@ const server = isWorkerMode ? null : http.createServer((req, res) => {
               try {
                 // Check for HTTP errors
                 if (proxyRes.statusCode >= 400) {
-                  console.error(`   ✗ HTTP error: ${proxyRes.statusCode} (${responseTime}ms, ${bytesReceived} bytes)`);
                   reject(new Error(`HTTP ${proxyRes.statusCode}`));
                   return;
                 }
@@ -2285,7 +2284,7 @@ const server = isWorkerMode ? null : http.createServer((req, res) => {
 
           proxyReq.end();
         } catch (error) {
-          console.error(`❌ Error fetching ${artist.artist}:`, error.message);
+          console.error(`❌ Error fetching Artist:`, `${error.message.includes("403") ? "FORBIDDEN - try updating \"" + source.name + "\" API credentials" : source.name + " - " + error.message}`);
           reject(error);
         }
       };
@@ -3614,15 +3613,27 @@ const server = isWorkerMode ? null : http.createServer((req, res) => {
                 await page.goto(fetchUrl, { waitUntil: 'networkidle2', timeout: 30000 });
                 
                 // Get response body
-                const puppeteerBody = await page.content();
+                let puppeteerBody = await page.content();
                 await browser.close();
+
+                // change puppeteerBody to everything between but excluding <body> and </body>
+                const bodyMatch = puppeteerBody.match(/<body[^>]*>([\s\S]*?)<\/body>/i);
+                if (bodyMatch) {
+                  puppeteerBody = bodyMatch[1];
+                }
+
+                // change puppeteerBody to everything between but excluding <pre> and </pre>
+                const preMatch = puppeteerBody.match(/<pre[^>]*>([\s\S]*?)<\/pre>/i);
+                if (preMatch) {
+                  puppeteerBody = preMatch[1];
+                }
                 
                 console.log(`✓ Cloudflare bypass successful, returning response`);
+                console.log(`Puppeteer body content: ${puppeteerBody}`);
                 const responseHeaders = {
                   'Content-Type': 'text/html; charset=utf-8',
                   'Access-Control-Allow-Origin': '*'
                 };
-                console.log(`Returning Puppeteer response: ${puppeteerBody}`);
                 res.writeHead(200, responseHeaders);
                 res.end(puppeteerBody);
                 return;

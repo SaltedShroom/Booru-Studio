@@ -887,10 +887,10 @@ async function loadImageWithProgress(url, onProgress) {
         const percentage = Math.round((loadedBytes / totalBytes) * 100);
         // On first callback, pass totalBytes as third parameter
         if (!hasReportedTotalBytes) {
-          onProgress(percentage, 'Loading HQ', totalBytes);
+          onProgress(percentage, 'Downloading', totalBytes);
           hasReportedTotalBytes = true;
         } else {
-          onProgress(percentage, 'Loading HQ');
+          onProgress(percentage, 'Downloading');
         }
       }
     }
@@ -1009,7 +1009,7 @@ async function loadAndDownloadPost(task) {
           
           // Update toast with HQ load progress (only update percentage, not size)
           if (task.toast) {
-            task.toast.update(hqProgress, 'Loading HQ');
+            task.toast.update(hqProgress, 'Downloading');
           }
         });
         
