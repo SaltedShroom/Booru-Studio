@@ -2220,6 +2220,13 @@ const server = isWorkerMode ? null : http.createServer((req, res) => {
               const responseTime = Date.now() - requestStartTime;
               
               try {
+
+                // Check for CAPTCHA requirement
+                // TODO bypass captcha instead of rejecting the request
+                if (responseBody.includes("Please enter the CAPTCHA to continue")) {
+                  reject(new Error(`CAPTCHA required`));
+                }
+
                 // Check for HTTP errors
                 if (proxyRes.statusCode >= 400) {
                   reject(new Error(`HTTP ${proxyRes.statusCode}`));
@@ -3202,6 +3209,7 @@ const server = isWorkerMode ? null : http.createServer((req, res) => {
           proxyRes.on('data', chunk => errorBody += chunk);
           proxyRes.on('end', async () => {
             const isCfBlock = isHtml ||
+              (errorBody.includes("Please enter the CAPTCHA to continue")) ||
               (errorBody.includes('Cloudflare') &&
               (errorBody.includes('blocked') || errorBody.includes('Attention Required') || errorBody.includes('cf-error')));
 
@@ -3629,7 +3637,6 @@ const server = isWorkerMode ? null : http.createServer((req, res) => {
                 }
                 
                 console.log(`✓ Cloudflare bypass successful, returning response`);
-                console.log(`Puppeteer body content: ${puppeteerBody}`);
                 const responseHeaders = {
                   'Content-Type': 'text/html; charset=utf-8',
                   'Access-Control-Allow-Origin': '*'
