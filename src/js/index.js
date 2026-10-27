@@ -104,6 +104,7 @@ if (coinAnimationEnabled) {
     if (coinAnimationEnabled.checked && showDownloadCounterEnabled) {
       showDownloadCounterEnabled.checked = true;
       localStorage.setItem('showDownloadCounterEnabled', 'true');
+      showDownloadCounterEnabled.dispatchEvent(new Event('change'));
     }
     debouncedSettingsSave();
   });
