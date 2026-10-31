@@ -718,6 +718,10 @@ function flushPendingConsoleLines() {
     }
 
     p.textContent = line;
+
+    if (line.includes('Ignoring Source in future attempts')) {
+      showToast(line, 'warn');
+    }
     fragment.appendChild(p);
   }
 

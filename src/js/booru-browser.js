@@ -10888,6 +10888,7 @@ document.addEventListener('mousemove', (e) => {
   const booruPanel = document.querySelector('#booru-panel')?.getBoundingClientRect();
   const booruPanelToggle = document.querySelector('#booru-panel-toggle')?.getBoundingClientRect();
   const ratingWrapper = document.querySelector('.booru-rating-wrapper')?.getBoundingClientRect();
+  const toastContainer = document.querySelector('.toast-container')?.getBoundingClientRect();
   if (selectRect && e.clientX >= selectRect.left && e.clientX <= selectRect.right &&
       e.clientY >= selectRect.top && e.clientY <= selectRect.bottom ||
       suppportRect && e.clientX >= suppportRect.left && e.clientX <= suppportRect.right &&
@@ -10899,7 +10900,10 @@ document.addEventListener('mousemove', (e) => {
       booruPanelToggle && e.clientX >= booruPanelToggle.left && e.clientX <= booruPanelToggle.right &&
       e.clientY >= booruPanelToggle.top && e.clientY <= booruPanelToggle.bottom ||
       ratingWrapper && e.clientX >= ratingWrapper.left && e.clientX <= ratingWrapper.right &&
-      e.clientY >= ratingWrapper.top && e.clientY <= ratingWrapper.bottom) {
+      e.clientY >= ratingWrapper.top && e.clientY <= ratingWrapper.bottom ||
+      toastContainer && e.clientX >= toastContainer.left && e.clientX <= toastContainer.right &&
+      e.clientY >= toastContainer.top && e.clientY <= toastContainer.bottom
+    ) {
     const previewMedia = document.querySelector('.booru-hover-preview');
     if (previewMedia) {
       previewMedia.classList.remove('active');

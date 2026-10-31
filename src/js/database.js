@@ -676,13 +676,13 @@ function updateArtistScore(artist) {
 }
 
 // Update last_checked_out timestamp for an artist
-function updateArtistLastCheckedOut(artist, timestamp = null) {
+function updateArtistLastCheckedOut(artist, timestamp) {
   if (!db) throw new Error('Database not initialized');
   if (!artist || !artist.trim()) return;
   
   try {
     const trimmedArtist = artist.trim();
-    const checkedOutTime = timestamp || Date.now();
+    const checkedOutTime = timestamp;
     
     db.prepare(
       'UPDATE downloaded_artists SET last_checked_out = ? WHERE artist = ?'

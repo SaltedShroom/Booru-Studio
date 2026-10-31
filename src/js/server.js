@@ -1606,6 +1606,7 @@ const server = isWorkerMode ? null : http.createServer((req, res) => {
         let existingPosts = database.loadHomepageData() || [];
         let existingIds = new Set(existingPosts.map(p => p.id));
         let totalPostsAdded = 0;
+        let ignoredSources = new Set();
 
         // Helper to fetch from a batch of artists
         const fetchArtistBatch = async (artistsToFetch, label = '') => {
@@ -1624,6 +1625,9 @@ const server = isWorkerMode ? null : http.createServer((req, res) => {
 
               const artistStartTime = Date.now();
               const source = booruSources.find(s => s.id === artist.last_download_source);
+              if (ignoredSources.has(source?.id)) {
+                return { artist: artist.artist, posts: [], postsFoundCount: 0, source: null, error: 'Source ignored', duration: Date.now() - artistStartTime };
+              }
               try {
                 if (!source) {
                   console.warn(`  ⚠️ Source not found for ${artist.artist}`);
@@ -1656,6 +1660,8 @@ const server = isWorkerMode ? null : http.createServer((req, res) => {
                 return { artist: artist.artist, posts, postsFoundCount: posts.length, source, error: null, duration: Date.now() - artistStartTime };
               } catch (error) {
                 console.error(`❌ Error fetching Artist:`, `${error.message.includes("403") ? "FORBIDDEN - try updating \"" + source.name + "\" API credentials" : source.name + " - " + error.message}`);
+                console.error(`❌ Artist fetch failed for ${source.name} -> Ignoring Source in future attempts`);
+                ignoredSources.add(source?.id);
                 return { artist: artist.artist, posts: [], postsFoundCount: 0, source: null, error: error.message, duration: Date.now() - artistStartTime };
               }
             });
@@ -1717,7 +1723,7 @@ const server = isWorkerMode ? null : http.createServer((req, res) => {
         // Pre-filter artists: exclude those that should be skipped
         const eligibleArtists = [];
         for (const artist of artists) {
-          if (artist.last_checked_out !== null && artist.last_checked_out !== undefined) {
+          if (artist.last_checked_out != null && artist.last_checked_out != undefined) {
             const thirtyDaysAgo = Date.now() - (30 * 24 * 60 * 60 * 1000);
             if (artist.last_checked_out > thirtyDaysAgo) continue;
           }
