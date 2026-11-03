@@ -74,6 +74,18 @@ Your data, downloads, and custom settings are always preserved across updates.
 
 ---
 
+## Star History
+
+<a href="https://www.star-history.com/?repos=SaltedShroom%2FBooru-Studio&type=date&releases=&legend=bottom-right">
+ <picture>
+   <source media="(prefers-color-scheme: dark)" srcset="https://api.star-history.com/chart?repos=SaltedShroom/Booru-Studio&type=date&theme=dark&legend=bottom-right" />
+   <source media="(prefers-color-scheme: light)" srcset="https://api.star-history.com/chart?repos=SaltedShroom/Booru-Studio&type=date&legend=bottom-right" />
+   <img alt="Star History Chart" src="https://api.star-history.com/chart?repos=SaltedShroom/Booru-Studio&type=date&legend=bottom-right" />
+ </picture>
+</a>
+
+---
+
 ## Attention
 
 ### Customizing the download path:
