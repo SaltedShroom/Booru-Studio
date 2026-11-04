@@ -10100,6 +10100,95 @@ function createRatingWrapper(post, container, downloadBtn) {
   return wrapper;
 }
 
+function queueCorruptedDownloadsPrompt(post) {
+  if (!window.isViewingDownloadsGallery || !post || !post.id || typeof showConfirmToast !== 'function') {
+    return;
+  }
+
+  if (!window._corruptDownloadsPromptedKeys) {
+    window._corruptDownloadsPromptedKeys = new Set();
+  }
+  if (!window._corruptDownloadsQueue) {
+    window._corruptDownloadsQueue = new Map();
+  }
+
+  const postKey = `${post.source || ''}:${normalizePostId(post.id)}`;
+  if (window._corruptDownloadsPromptedKeys.has(postKey)) {
+    return;
+  }
+
+  window._corruptDownloadsQueue.set(postKey, post);
+
+  if (window._corruptDownloadsPromptTimer) {
+    return;
+  }
+
+  window._corruptDownloadsPromptTimer = setTimeout(() => {
+    window._corruptDownloadsPromptTimer = null;
+    const queued = window._corruptDownloadsQueue ? Array.from(window._corruptDownloadsQueue.values()) : [];
+    window._corruptDownloadsQueue = new Map();
+
+    if (queued.length === 0) {
+      return;
+    }
+
+    queued.forEach(item => {
+      const key = `${item.source || ''}:${normalizePostId(item.id)}`;
+      window._corruptDownloadsPromptedKeys.add(key);
+    });
+
+    const count = queued.length;
+    const noun = count === 1 ? 'post' : 'posts';
+    showConfirmToast(
+      `Cannot read ${count} downloaded ${noun} (likely corrupted). Remove from database and delete local files?`,
+      async () => {
+        if (typeof dbStore === 'undefined' || !dbStore) {
+          showToast('Database is unavailable; cannot remove corrupted posts', 'error');
+          return;
+        }
+        let removedCount = 0;
+        for (const item of queued) {
+          const filename = getFilenameFromUrl(item.imageUrl, item.id);
+          try {
+            const response = await fetch('http://localhost:3001/delete-downloaded-image', {
+              method: 'POST',
+              headers: { 'Content-Type': 'application/json' },
+              body: JSON.stringify({ filename, id: item.id })
+            });
+            const data = await response.json();
+            if (!response.ok || !data.success) {
+              throw new Error(data.error || `HTTP ${response.status}`);
+            }
+            removedCount++;
+          } catch (error) {
+            console.error(`Failed to delete corrupted file for post ${item.id}:`, error);
+            try {
+              await dbStore.removeDownloadedPost(item.id);
+              removedCount++;
+            } catch (dbError) {
+              console.error(`Failed to remove corrupted post ${item.id} from database:`, dbError);
+            }
+          }
+        }
+        if (removedCount > 0) {
+          showToast(`Removed ${removedCount} corrupted downloaded ${noun}`, 'success');
+        } else {
+          showToast('Could not remove corrupted posts', 'error');
+        }
+        if (typeof window.updateAppLoadingDownloadCount === 'function') {
+          window.updateAppLoadingDownloadCount();
+        }
+        if (window.isViewingDownloadsGallery && typeof showDownloadsGallery === 'function') {
+          window.location.reload();
+        }
+      },
+      () => {
+        console.log('User chose not to remove corrupted downloaded posts');
+      }
+    );
+  }, 150);
+}
+
 function createBooruImageElement(post, maxHeight = null, imageWidth = null) {
 
   const loader = document.createElement('i');
@@ -10282,6 +10371,23 @@ function createBooruImageElement(post, maxHeight = null, imageWidth = null) {
   mediaElement.addEventListener('error', (e) => {
     loader.style.display = 'none';
     mediaElement.style.display = 'none';
+
+    try {
+      const attemptedThumbUrl = mediaElement.dataset.thumbnailToLoad || mediaElement.currentSrc || mediaElement.src || '';
+      const isVideoThumbnailRequest = attemptedThumbUrl.includes('/video-thumbnail?url=');
+      let isLocalDownloadedFile = false;
+      if (isVideoThumbnailRequest) {
+        const thumbUrl = new URL(attemptedThumbUrl);
+        const originalVideoUrl = thumbUrl.searchParams.get('url') || '';
+        isLocalDownloadedFile = /\/serve-local-file\//i.test(originalVideoUrl);
+      }
+      if (window.isViewingDownloadsGallery && isVideoThumbnailRequest && isLocalDownloadedFile && container.dataset.downloaded === 'true') {
+        queueCorruptedDownloadsPrompt(post);
+      }
+    } catch (err) {
+      console.warn('Failed to determine if thumbnail error came from local downloaded video:', err);
+    }
+
     const errorDiv = document.createElement('div');
     errorDiv.style.cssText = `
       width: 100%;

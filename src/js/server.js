@@ -3150,12 +3150,10 @@ const server = isWorkerMode ? null : http.createServer((req, res) => {
       const imageUrl = urlParams.get('url');
 
       if (!imageUrl) {
-        console.log('GET IMAGE request URL: MISSING - Aborting!');
+        console.warn('GET IMAGE request URL: MISSING - Aborting!');
         res.writeHead(400, { 'Content-Type': 'application/json' });
         res.end(JSON.stringify({ error: 'Missing URL parameter' }));
         return;
-      } else {
-        console.log('GET IMAGE request URL:', imageUrl);
       }
 
       await activeRequestJitter();
@@ -4301,6 +4299,7 @@ const server = isWorkerMode ? null : http.createServer((req, res) => {
     res.setHeader('Access-Control-Allow-Origin', '*');
     const urlParams = new url.URL(req.url, `http://localhost:${PORT}`);
     const videoUrl = urlParams.searchParams.get('url');
+    const isLocalDownloadedVideo = typeof videoUrl === 'string' && /\/serve-local-file\//i.test(videoUrl);
 
     if (!videoUrl) {
       res.writeHead(400, { 'Content-Type': 'application/json' });
@@ -4309,12 +4308,14 @@ const server = isWorkerMode ? null : http.createServer((req, res) => {
     }
 
     (async () => {
+      const VIDEO_THUMBNAIL_TIMEOUT_MS = 3000;
       let page = null;
       let contentType = 'image/jpeg';
       let buffer = null;
       try {
         const browser = await getBrowser();
         page = await browser.newPage();
+        page.setDefaultTimeout(VIDEO_THUMBNAIL_TIMEOUT_MS);
         await page.setViewport({ width: 1280, height: 720 });
         await page.setContent(`
           <!DOCTYPE html>
@@ -4347,54 +4348,91 @@ const server = isWorkerMode ? null : http.createServer((req, res) => {
           video.load();
         }, videoUrl);
 
-        await page.waitForFunction(() => {
+        const mediaState = await page.evaluate((timeoutMs) => {
           const video = document.getElementById('video');
-          return video && video.readyState >= 2;
-        }, { timeout: 12000 }).catch((err) => {
-          console.warn('Video readyState did not reach >=2 in time, continuing with fallback:', err.message || err);
-        });
-
-        await page.evaluate(() => {
-          const video = document.getElementById('video');
-          if (!video) return;
-
-          const targetTime = Math.min(0.2, Math.max(0.05, (video.duration || 0.2) * 0.02));
-          const seekVideo = () => {
-            try {
-              video.currentTime = targetTime;
-            } catch (e) {
-              console.warn('Unable to seek video to target time:', e.message || e);
-            }
-          };
+          if (!video) return { status: 'no-video' };
 
           return new Promise((resolve) => {
-            if (video.readyState >= 3) {
-              seekVideo();
-              resolve();
+            let settled = false;
+            const finish = (status) => {
+              if (settled) return;
+              settled = true;
+              resolve({
+                status,
+                readyState: video.readyState,
+                duration: Number.isFinite(video.duration) ? video.duration : 0,
+                currentTime: video.currentTime || 0,
+                mediaErrorCode: video.error ? video.error.code : 0
+              });
+            };
+
+            const timer = setTimeout(() => finish('timeout'), timeoutMs);
+
+            const onLoaded = () => {
+              clearTimeout(timer);
+              finish('loaded');
+            };
+            const onError = () => {
+              clearTimeout(timer);
+              finish('error');
+            };
+
+            if (video.error) {
+              clearTimeout(timer);
+              finish('error');
               return;
             }
-            const onReady = () => {
-              seekVideo();
-              resolve();
-            };
-            video.addEventListener('loadeddata', onReady, { once: true });
-            video.addEventListener('error', onReady, { once: true });
+            if (video.readyState >= 2) {
+              clearTimeout(timer);
+              finish('loaded');
+              return;
+            }
+
+            video.addEventListener('loadeddata', onLoaded, { once: true });
+            video.addEventListener('error', onError, { once: true });
           });
-        });
+        }, VIDEO_THUMBNAIL_TIMEOUT_MS);
 
-        await page.waitForFunction(() => {
-          const video = document.getElementById('video');
-          return video && video.readyState >= 3 && video.currentTime > 0;
-        }, { timeout: 12000 }).catch((err) => {
-          console.warn('Video did not seek to a playable frame in time, continuing with fallback:', err.message || err);
-        });
+        if (mediaState.status === 'error' && isLocalDownloadedVideo) {
+          res.writeHead(422, {
+            'Content-Type': 'application/json',
+            'Access-Control-Allow-Origin': '*'
+          });
+          res.end(JSON.stringify({
+            error: 'corrupted_downloaded_video',
+            message: 'Downloaded video appears to be corrupted or unreadable',
+            mediaErrorCode: mediaState.mediaErrorCode || 0
+          }));
+          return;
+        }
 
-        const videoHandle = await page.$('#video');
-        if (videoHandle) {
+        if (mediaState.status !== 'loaded') {
+          console.warn('Video thumbnail generation did not fully load media in time; using fallback placeholder.', mediaState);
+          buffer = FALLBACK_THUMBNAIL_PNG;
+          contentType = 'image/png';
+        }
+
+        if (!buffer) {
           try {
-            buffer = await videoHandle.screenshot({ type: 'jpeg', quality: 80 });
-          } catch (screenshotError) {
-            console.warn('Video element screenshot failed, falling back to page screenshot:', screenshotError.message || screenshotError);
+            await page.evaluate(() => {
+              const video = document.getElementById('video');
+              if (!video || video.readyState < 2) return;
+              const targetTime = Math.min(0.2, Math.max(0.05, (video.duration || 0.2) * 0.02));
+              video.currentTime = targetTime;
+            });
+          } catch (seekErr) {
+            console.warn('Video seek failed; continuing with best-effort thumbnail capture:', seekErr.message || seekErr);
+          }
+        }
+
+        if (!buffer) {
+          const videoHandle = await page.$('#video');
+          if (videoHandle) {
+            try {
+              buffer = await videoHandle.screenshot({ type: 'jpeg', quality: 80 });
+            } catch (screenshotError) {
+              console.warn('Video element screenshot failed, falling back to page screenshot:', screenshotError.message || screenshotError);
+            }
           }
         }
 
