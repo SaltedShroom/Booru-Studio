@@ -697,6 +697,8 @@ const apiSettingsModal = document.getElementById('api-settings-modal');
 const closeApiModalBtn = document.getElementById('close-api-modal');
 const apiKeyInput = document.getElementById('api-key-input');
 const userIdInput = document.getElementById('user-id-input');
+const sourceAuthUserIdInput = document.getElementById('source-auth-userId');
+const sourceAuthApiKeyInput = document.getElementById('source-auth-apiKey');
 const saveApiCredentialsBtn = document.getElementById('save-api-credentials-btn');
 const reloadBooruBtn = document.getElementById('reload-booru-btn');
 const aiFilterToggleBtn = document.getElementById('ai-filter-toggle');
@@ -6952,6 +6954,36 @@ function initBooruBrowser() {
   if (saveApiCredentialsBtn) {
     saveApiCredentialsBtn.addEventListener('click', saveApiCredentials);
   }
+
+  if (userIdInput) {
+    userIdInput.addEventListener('input', () => {
+      syncAuthInputsFromApiSettings();
+    });
+  }
+  if (apiKeyInput) {
+    apiKeyInput.addEventListener('input', () => {
+      syncAuthInputsFromApiSettings();
+    });
+  }
+  if (sourceAuthUserIdInput) {
+    sourceAuthUserIdInput.addEventListener('input', () => {
+      syncAuthInputsFromSourceModal();
+    });
+  }
+  if (sourceAuthApiKeyInput) {
+    sourceAuthApiKeyInput.addEventListener('input', () => {
+      syncAuthInputsFromSourceModal();
+    });
+  }
+
+  document.addEventListener('booru-sources-updated', (event) => {
+    const sourceId = event?.detail?.sourceId;
+    if (sourceId && sourceId !== window.currentBooruSource) {
+      return;
+    }
+    handleSourceChange();
+    loadApiCredentials();
+  });
   
   // Load saved API credentials
   loadApiCredentials();
@@ -7358,10 +7390,34 @@ function updateJustifiedGalleries() {
 
 window.updateJustifiedGalleries = updateJustifiedGalleries;
 
+function syncAuthInputsFromApiSettings() {
+  if (sourceAuthUserIdInput && userIdInput) {
+    sourceAuthUserIdInput.value = userIdInput.value;
+  }
+  if (sourceAuthApiKeyInput && apiKeyInput) {
+    sourceAuthApiKeyInput.value = apiKeyInput.value;
+  }
+}
+
+function syncAuthInputsFromSourceModal() {
+  if (userIdInput && sourceAuthUserIdInput) {
+    userIdInput.value = sourceAuthUserIdInput.value;
+  }
+  if (apiKeyInput && sourceAuthApiKeyInput) {
+    apiKeyInput.value = sourceAuthApiKeyInput.value;
+  }
+}
+
 // Toggle API settings modal
 function toggleApiSettings() {
   if (apiSettingsModal) {
-    apiSettingsModal.style.display = apiSettingsModal.style.display === 'none' ? 'flex' : 'none';
+    const isClosed = apiSettingsModal.style.display === 'none' || !apiSettingsModal.style.display;
+    if (isClosed) {
+      loadApiCredentials();
+      apiSettingsModal.style.display = 'flex';
+      return;
+    }
+    apiSettingsModal.style.display = 'none';
   }
 }
 
@@ -7434,8 +7490,9 @@ function loadApiCredentials() {
       if (sessionCreds?.apiKey && !apiKey) apiKey = sessionCreds.apiKey;
     }
 
-    if (userId && userIdInput) userIdInput.value = userId;
-    if (apiKey && apiKeyInput) apiKeyInput.value = apiKey;
+    if (userIdInput) userIdInput.value = userId || '';
+    if (apiKeyInput) apiKeyInput.value = apiKey || '';
+    syncAuthInputsFromApiSettings();
 
     // Keep window.booruApiCredentials in sync
     if (userId && apiKey) {

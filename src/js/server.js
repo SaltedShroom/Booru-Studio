@@ -1659,7 +1659,7 @@ const server = isWorkerMode ? null : http.createServer((req, res) => {
 
                 return { artist: artist.artist, posts, postsFoundCount: posts.length, source, error: null, duration: Date.now() - artistStartTime };
               } catch (error) {
-                console.error(`❌ Error fetching Artist:`, `${error.message.includes("403") ? "FORBIDDEN - try updating \"" + source.name + "\" API credentials" : source.name + " - " + error.message}`);
+                console.error(`❌ Error fetching Artist ${artist.artist}:`, `${error.message.includes("403") ? "FORBIDDEN - try updating \"" + source.name + "\" API credentials" : source.name + " - " + error.message}`);
                 console.error(`❌ Artist fetch failed for ${source.name} -> Ignoring Source in future attempts`);
                 ignoredSources.add(source?.id);
                 return { artist: artist.artist, posts: [], postsFoundCount: 0, source: null, error: error.message, duration: Date.now() - artistStartTime };
@@ -2297,7 +2297,7 @@ const server = isWorkerMode ? null : http.createServer((req, res) => {
 
           proxyReq.end();
         } catch (error) {
-          console.error(`❌ Error fetching Artist:`, `${error.message.includes("403") ? "FORBIDDEN - try updating \"" + source.name + "\" API credentials" : source.name + " - " + error.message}`);
+          console.error(`❌ Error fetching Artist ${artist.artist}:`, `${error.message.includes("403") ? "FORBIDDEN - try updating \"" + source.name + "\" API credentials" : source.name + " - " + error.message}`);
           reject(error);
         }
       };

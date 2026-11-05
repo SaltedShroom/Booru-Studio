@@ -1347,6 +1347,9 @@ class BooruSourcesManager {
         
         // Also update the dropdown in the booru browser
         this.updateBooruSourceDropdown();
+        document.dispatchEvent(new CustomEvent('booru-sources-updated', {
+          detail: { sourceId: data.id }
+        }));
         
         // Show success message
         console.log('Source saved successfully:', data.id);

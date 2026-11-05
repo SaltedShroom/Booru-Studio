@@ -707,6 +707,24 @@ function openNewQueryTab(query, source) {
   createNewBooruTab(query, true, query, true);
 }
 
+function isArtistOnlyPreviewTabQuery(query) {
+  if (!query) return false;
+
+  const previewArtists = Array.from(booruPreviewAuthor?.querySelectorAll('.author-tag') || [])
+    .map((el) => el.textContent?.trim())
+    .filter((name) => !!name && name !== '?' && name !== 'Unknown')
+    .map((name) => name.toLowerCase());
+  if (previewArtists.length === 0) return false;
+
+  const { searchTagsArray } = typeof parseTagsAndBlacklist === 'function'
+    ? parseTagsAndBlacklist(query)
+    : { searchTagsArray: [query.trim()] };
+
+  if (searchTagsArray.length !== 1) return false;
+
+  return previewArtists.includes(searchTagsArray[0].trim().toLowerCase());
+}
+
 // Create a new booru tab
 function createNewBooruTab(name = 'Search', switchToIt = false, initialSearch = '', scrollToTab = true, source = null) {
   const existingEndMessage = booruContent.querySelector('.booru-end-message');
@@ -714,6 +732,8 @@ function createNewBooruTab(name = 'Search', switchToIt = false, initialSearch = 
 
   booruSource = source;
 
+  const tabQuery = String(initialSearch || name || '').trim();
+  const isArtistTab = isArtistOnlyPreviewTabQuery(tabQuery);
   const tabId = `booru-tab-${tabIdCounter++}`;
   
   const tab = {
@@ -724,7 +744,8 @@ function createNewBooruTab(name = 'Search', switchToIt = false, initialSearch = 
     booruPosts: [],
     totalResultCount: null,
     hasMoreResults: true,
-    needsInitialLoad: !!initialSearch
+    needsInitialLoad: !!initialSearch,
+    isArtistTab: isArtistTab
   };
 
   // Override search tags if provided
@@ -928,12 +949,19 @@ function createTabButton(tab) {
   
   const tabButton = document.createElement('div');
   tabButton.className = 'booru-tab-item';
+  if (tab.isArtistTab) {
+    tabButton.classList.add('booru-tab-item-artist');
+  }
   tabButton.draggable = true;
   tabButton.dataset.tabId = tab.id;
   
   const tabName = document.createElement('span');
   tabName.className = 'booru-tab-name';
-  tabName.textContent = tab.name;
+  if ((tab.isArtistTab)) {
+    tabName.innerHTML = '<i class="fa-solid fa-circle-user"></i> ' + tab.name;
+  } else {
+    tabName.textContent = tab.name;
+  }
   tabName.title = tab.name;
   
   const closeBtn = document.createElement('span');
@@ -1374,8 +1402,11 @@ function updateTabName(tabId, newName) {
     if (tabButton) {
       const nameSpan = tabButton.querySelector('.booru-tab-name');
       if (nameSpan) {
-        nameSpan.textContent = newName;
-        nameSpan.title = newName;
+        if (newName.trim() != nameSpan.textContent.trim()) {
+          nameSpan.textContent = newName;
+          nameSpan.title = newName;
+          tabButton.classList.remove('booru-tab-item-artist');
+        }
       }
     }
     saveBooruTabsToSession();
@@ -1540,4 +1571,3 @@ async function loadBooruTabsFromSession() {
 // Don't auto-initialize — the startup IIFE in index.js calls this explicitly
 // after showing a loading status update, so the user sees feedback during init.
 window._initBooruTabs = initBooruTabs;
-
