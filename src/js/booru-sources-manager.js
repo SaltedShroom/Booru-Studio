@@ -1,5 +1,67 @@
 // Booru Sources Manager - Handles CRUD operations for booru source configurations
 
+function appendUrlParam(url, key, value) {
+  if (!url || !key || value === undefined || value === null) return url;
+  const hasParam = new RegExp(`([?&])${key}=`).test(url);
+  if (hasParam) return url;
+  const separator = url.includes('?') ? '&' : '?';
+  return `${url}${separator}${encodeURIComponent(key)}=${encodeURIComponent(String(value))}`;
+}
+
+function resolveSourceUrl(source, value) {
+  if (!value) return '';
+  if (/^https?:\/\//i.test(value)) return value;
+  const base = source.apiUrl || source.baseUrl || '';
+  if (!base) return value;
+  const parsedBase = base.endsWith('/') ? base.slice(0, -1) : base;
+  const normalizedValue = value.startsWith('/') ? value.slice(1) : value;
+  return `${parsedBase}/${normalizedValue}`;
+}
+
+function getSourceAuthCredentials(source) {
+  const sourceUserId = source?.auth?.userId || '';
+  const sourceApiKey = source?.auth?.apiKey || '';
+
+  if (sourceUserId || sourceApiKey) {
+    return {
+      userId: sourceUserId,
+      apiKey: sourceApiKey
+    };
+  }
+
+  return {
+    userId: (window.userIdInput ? window.userIdInput.value.trim() : ''),
+    apiKey: (window.apiKeyInput ? window.apiKeyInput.value.trim() : '')
+  };
+}
+
+function buildArtistTagLookupUrl(source, tags = 'solo 1girl') {
+  if (!source?.artist?.tagApiUrl) return '';
+
+  let template = source.artist.tagApiUrl.replace('{tags}', encodeURIComponent(tags));
+  if (!/^https?:\/\//i.test(template)) {
+    template = resolveSourceUrl(source, template);
+  }
+
+  if (source.auth?.required) {
+    const { userId, apiKey } = getSourceAuthCredentials(source);
+    if (userId && apiKey) {
+      const userIdKey = source.auth.userIdKey || 'user_id';
+      const apiKeyKey = source.auth.apiKeyKey || 'api_key';
+      template = appendUrlParam(template, userIdKey, userId);
+      template = appendUrlParam(template, apiKeyKey, apiKey);
+    }
+  }
+
+  return template;
+}
+
+function isAuthFailureResponse(text) {
+  const normalizedText = String(text || '').replace(/\s+/g, ' ').trim();
+  return /(missing authentication|invalid authentication|invalid api key|unauthorized|not logged in|access denied|error.*authentication)/i.test(normalizedText)
+    || /<error[^>]*>.*(authentication|unauthorized|access denied|not logged in).*<\/error>/i.test(normalizedText);
+}
+
 class BooruSourcesManager {
   constructor() {
     this.sources = [];
@@ -454,6 +516,16 @@ class BooruSourcesManager {
     
     document.getElementById('cancel-booru-source-btn')?.addEventListener('click', () => {
       this.closeModal();
+    });
+
+    document.getElementById('close-source-test-modal')?.addEventListener('click', () => {
+      this.closeSourceTestModal();
+    });
+
+    document.getElementById('source-test-modal')?.addEventListener('click', (e) => {
+      if (e.target.classList.contains('modal-overlay')) {
+        this.closeSourceTestModal();
+      }
     });
 
     // Save source button
@@ -1771,6 +1843,821 @@ class BooruSourcesManager {
         showToast('Source test finished with errors – see logs', 'error');
       }
     }
+  }
+
+  async testSource(source, cardElement) {
+    this.openSourceTestModal(source);
+  }
+
+  getSourceTestCatalog(source) {
+    const tests = [
+      {
+        id: 'basic',
+        label: 'Basic configuration',
+        checks: [
+          'Source ID',
+          'Source name',
+          'Base URL',
+          'Core config fields'
+        ]
+      }
+    ];
+
+    if (source.type === 'scraper') {
+      tests.push(
+        {
+          id: 'scraper-list',
+          label: 'Scraper list page',
+          checks: [
+            'List page URL',
+            'List post-link selector',
+            'List image selector'
+          ]
+        },
+        {
+          id: 'scraper-detail',
+          label: 'Scraper detail page',
+          checks: [
+            'Sample detail page URL',
+            'Detail image selector',
+            'Detail tags selector'
+          ]
+        }
+      );
+    } else {
+      tests.push(
+        {
+          id: 'auth',
+          label: 'Authentication',
+          checks: [
+            'Auth key names',
+            'User ID value',
+            'API key value',
+            'Credentials accepted by API'
+          ]
+        },
+        {
+          id: 'count',
+          label: 'Count endpoint',
+          checks: [
+            'Count request URL',
+            'Count response status',
+            'Count parser result'
+          ]
+        },
+        {
+          id: 'data',
+          label: 'Data endpoint',
+          checks: [
+            'Data request URL',
+            'Data response status',
+            'Parsed post list'
+          ]
+        },
+        {
+          id: 'fields',
+          label: 'Field mappings',
+          checks: [
+            'Required: imageUrl',
+            'Required: previewUrl',
+            'Required: tags',
+            'Optional: sampleUrl',
+            'Optional: artistTag',
+            'Optional: createdAt',
+            'Optional: width',
+            'Optional: height'
+          ]
+        }
+      );
+
+      if (source.safeMode?.required) {
+        tests.push({
+          id: 'safe-mode',
+          label: 'Safe mode check',
+          checks: [
+            'Safe-mode URL',
+            'Safe-mode response status'
+          ]
+        });
+      }
+
+      if (source.artist?.tagApiUrl) {
+        tests.push({
+          id: 'artist',
+          label: 'Artist tag lookup',
+          checks: [
+            'Artist tag URL template',
+            'Artist auth params',
+            'Artist tag response status'
+          ]
+        });
+      }
+    }
+
+    return tests;
+  }
+
+  openSourceTestModal(source) {
+    const modal = document.getElementById('source-test-modal');
+    const list = document.getElementById('source-test-list');
+    const title = document.getElementById('source-test-modal-title');
+    const info = document.getElementById('source-test-modal-source');
+    const log = document.getElementById('source-test-log');
+    const runBtn = document.getElementById('run-selected-source-tests-btn');
+    const runAllBtn = document.getElementById('run-all-source-tests-btn');
+
+    if (!modal || !list) return;
+
+    this.activeSourceTest = source;
+    const catalog = this.getSourceTestCatalog(source);
+
+    if (title) {
+      title.innerHTML = `<i class="fas fa-vial"></i> Test source: ${source.name || source.id}`;
+    }
+    if (info) {
+      info.textContent = `${source.id || 'unknown'} • ${source.type === 'scraper' ? 'HTML scraper' : 'API source'}`;
+    }
+
+    list.innerHTML = catalog.map((test) => `
+      <label class="source-test-option is-pending" data-test-id="${test.id}">
+        <input type="checkbox" data-test-id="${test.id}" checked />
+        <span class="source-test-option-content">
+          <strong>${test.label}</strong>
+          <div class="source-test-checks">
+            ${(test.checks || [test.description || '']).map((check) => `<div class="source-test-check-row">${check}</div>`).join('')}
+          </div>
+        </span>
+      </label>
+    `).join('');
+
+    if (log) {
+      log.innerHTML = '<div class="source-test-log-entry info">Select a test and run it.</div>';
+    }
+
+    if (runBtn) {
+      runBtn.onclick = () => this.runSelectedSourceTests();
+    }
+    if (runAllBtn) {
+      runAllBtn.onclick = () => {
+        list.querySelectorAll('input[data-test-id]').forEach((input) => input.checked = true);
+        this.runSelectedSourceTests();
+      };
+    }
+
+    modal.style.display = 'flex';
+  }
+
+  resetSourceTestRows(listElement) {
+    if (!listElement) return;
+    const allRows = listElement.querySelectorAll('.source-test-option[data-test-id]');
+    allRows.forEach((row) => {
+      row.classList.remove('is-running', 'is-success', 'is-error');
+      row.classList.add('is-pending');
+    });
+  }
+
+  setSourceTestRowStatus(listElement, testId, status) {
+    if (!listElement || !testId) return;
+    const row = listElement.querySelector(`.source-test-option[data-test-id="${testId}"]`);
+    if (!row) return;
+    row.classList.remove('is-pending', 'is-running', 'is-success', 'is-error');
+    if (status === 'running') row.classList.add('is-running');
+    else if (status === 'success') row.classList.add('is-success');
+    else if (status === 'error') row.classList.add('is-error');
+    else row.classList.add('is-pending');
+  }
+
+  closeSourceTestModal() {
+    const modal = document.getElementById('source-test-modal');
+    if (modal) {
+      modal.style.display = 'none';
+    }
+    this.activeSourceTest = null;
+  }
+
+  appendSourceTestLog(message, status = 'info', details = null) {
+    const log = document.getElementById('source-test-log');
+    if (!log) return;
+
+    const escapeHtml = (value) => String(value)
+      .replace(/&/g, '&amp;')
+      .replace(/</g, '&lt;')
+      .replace(/>/g, '&gt;')
+      .replace(/\"/g, '&quot;')
+      .replace(/'/g, '&#39;');
+
+    const formatDetails = (value) => {
+      if (value === undefined || value === null) return '';
+      if (typeof value === 'string') return value;
+      if (value instanceof Error) return value.stack || value.message;
+      if (typeof value === 'object') {
+        if (value && typeof value.request === 'object') {
+          const request = value.request || {};
+          const response = value.response || {};
+          const bodyText = typeof response.body === 'string' ? response.body : '';
+          let formattedBody = bodyText;
+          if (bodyText) {
+            try {
+              const parsedBody = JSON.parse(bodyText);
+              formattedBody = JSON.stringify(parsedBody, null, 2);
+            } catch (_) {
+              formattedBody = bodyText;
+            }
+          }
+
+          return [
+            `Request: ${request.method || 'GET'} ${request.url || ''}`,
+            `Response: ${response.status || ''} ${response.statusText || ''}`,
+            '',
+            formattedBody || JSON.stringify(value, null, 2)
+          ].join('\n\n');
+        }
+
+        try {
+          return JSON.stringify(value, null, 2);
+        } catch (error) {
+          return String(value);
+        }
+      }
+      return String(value);
+    };
+
+    const row = document.createElement('div');
+    row.className = `source-test-log-entry ${status}`;
+    const formatted = formatDetails(details);
+    row.innerHTML = `
+      <div class="source-test-log-title">${escapeHtml(message)}</div>
+      ${formatted ? `
+        <details class="source-test-log-details-wrap" open>
+          <summary>Request + response</summary>
+          <pre class="source-test-log-details">${escapeHtml(formatted)}</pre>
+        </details>
+      ` : ''}
+    `;
+    log.appendChild(row);
+    log.scrollTop = log.scrollHeight;
+  }
+
+  async runSelectedSourceTests() {
+    const source = this.activeSourceTest;
+    if (!source) return;
+
+    const list = document.getElementById('source-test-list');
+    const log = document.getElementById('source-test-log');
+    if (!list || !log) return;
+
+    const selected = [...list.querySelectorAll('input[data-test-id]:checked')].map((el) => el.dataset.testId);
+    const catalog = this.getSourceTestCatalog(source);
+    const chosen = catalog.filter((test) => selected.includes(test.id));
+    this.resetSourceTestRows(list);
+
+    log.innerHTML = '';
+    this.appendSourceTestLog(`Testing ${source.name || source.id} (${source.type === 'scraper' ? 'scraper' : 'api'})`, 'info');
+
+    if (!chosen.length) {
+      this.appendSourceTestLog('No tests selected. Choose at least one check and try again.', 'warning');
+      return;
+    }
+
+    let passed = 0;
+    let failed = 0;
+
+    for (const test of chosen) {
+      const logger = (message, details = null, status = 'info') => {
+        this.appendSourceTestLog(message, status, details);
+      };
+
+      try {
+        this.setSourceTestRowStatus(list, test.id, 'running');
+        let ok = false;
+        switch (test.id) {
+          case 'basic':
+            ok = await this.runSourceBasicTest(source, logger);
+            break;
+          case 'auth':
+            ok = await this.runSourceAuthTest(source, logger);
+            break;
+          case 'count':
+            ok = await this.runSourceCountTest(source, logger);
+            break;
+          case 'data':
+            ok = await this.runSourceDataTest(source, logger);
+            break;
+          case 'fields':
+            ok = await this.runSourceFieldTest(source, logger);
+            break;
+          case 'safe-mode':
+            ok = await this.runSourceSafeModeTest(source, logger);
+            break;
+          case 'artist':
+            ok = await this.runSourceArtistTest(source, logger);
+            break;
+          case 'scraper-list':
+            ok = await this.runSourceScraperListTest(source, logger);
+            break;
+          case 'scraper-detail':
+            ok = await this.runSourceScraperDetailTest(source, logger);
+            break;
+          default:
+            logger(`Unknown test: ${test.id}`, null, 'warning');
+            ok = false;
+        }
+        if (ok) {
+          this.setSourceTestRowStatus(list, test.id, 'success');
+          passed += 1;
+        } else {
+          this.setSourceTestRowStatus(list, test.id, 'error');
+          failed += 1;
+        }
+      } catch (error) {
+        logger(`❌ ${test.label} failed: ${error.message || error}`, error, 'error');
+        this.setSourceTestRowStatus(list, test.id, 'error');
+        failed += 1;
+      }
+    }
+
+    const summary = passed > 0 || failed > 0 ? `Finished: ${passed} passed, ${failed} failed.` : 'No tests were run.';
+    this.appendSourceTestLog(summary, failed === 0 ? 'success' : 'warning');
+
+    if (typeof showToast === 'function') {
+      showToast(failed === 0 ? 'Source tests passed.' : 'Source tests finished with failures.', failed === 0 ? 'success' : 'error');
+    }
+  }
+
+  async fetchConfiguredUrl(source, url, options = {}) {
+    let requestUrl = url;
+    if (source?.auth?.required) {
+      const { userId, apiKey } = getSourceAuthCredentials(source);
+      const userIdKey = source.auth.userIdKey || 'user_id';
+      const apiKeyKey = source.auth.apiKeyKey || 'api_key';
+
+      if (userId && apiKey) {
+        requestUrl = appendUrlParam(requestUrl, userIdKey, userId);
+        requestUrl = appendUrlParam(requestUrl, apiKeyKey, apiKey);
+      }
+    }
+
+    const requestOptions = {
+      ...options,
+      headers: {
+        ...(options.headers || {})
+      }
+    };
+
+    if (source.cookies) {
+      requestOptions.headers.Cookie = source.cookies;
+    }
+    if (source.userAgent) {
+      requestOptions.headers['User-Agent'] = source.userAgent;
+    }
+
+    if (typeof proxyFetch === 'function') {
+      return proxyFetch(requestUrl, requestOptions);
+    }
+
+    return fetch(requestUrl, requestOptions);
+  }
+
+  async runSourceBasicTest(source, logger) {
+    const issues = [];
+    const type = source.type || 'api';
+
+    if (!source.id) issues.push('Missing source ID');
+    if (!source.name) issues.push('Missing display name');
+    if (!source.baseUrl || !/^https?:\/\//i.test(source.baseUrl)) issues.push('Base URL is missing or invalid');
+
+    if (type === 'scraper') {
+      const scraper = source.scraper || {};
+      const required = ['listPageUrl', 'listPageSelector', 'postLinkSelector', 'imageUrlSelector', 'detailImageSelector'];
+      required.forEach((field) => {
+        if (!scraper[field]) issues.push(`Missing scraper field: ${field}`);
+      });
+    } else {
+      if (!source.api?.basePath) issues.push('Missing API basePath');
+      if (!source.response?.countParser) issues.push('Missing response.countParser');
+      if (!source.fields?.imageUrl || !source.fields?.previewUrl || !source.fields?.tags) {
+        issues.push('Required field mappings are missing');
+      }
+    }
+
+    if (source.auth?.required && (!source.auth.userIdKey || !source.auth.apiKeyKey)) {
+      issues.push('Authentication is enabled but userIdKey/apiKeyKey are not configured');
+    }
+
+    if (issues.length) {
+      logger('❌ Basic configuration check failed', issues.join('\n'), 'error');
+      return false;
+    }
+
+    logger('✅ Basic configuration looks valid', { sourceId: source.id, type }, 'success');
+    return true;
+  }
+
+  async runSourceAuthTest(source, logger) {
+    if (!source.auth?.required) {
+      logger('ℹ️ This source does not require authentication.', null, 'info');
+      return true;
+    }
+
+    const { userId, apiKey } = getSourceAuthCredentials(source);
+
+    if (!source.auth.userIdKey || !source.auth.apiKeyKey) {
+      logger('❌ Auth is required, but the API parameter names are missing from the source config.', null, 'error');
+      return false;
+    }
+
+    if (!userId || !apiKey) {
+      logger('❌ Auth is required, but no credentials are currently available in the app or source config.', null, 'error');
+      return false;
+    }
+
+    const countUrl = buildCountUrl ? buildCountUrl(source, '') : `${source.apiUrl || source.baseUrl}${source.api.basePath}`;
+    const response = await this.fetchConfiguredUrl(source, countUrl, { method: 'GET' });
+    const text = await response.text();
+    const payload = {
+      request: { method: 'GET', url: countUrl },
+      response: {
+        status: response.status,
+        statusText: response.statusText || 'OK',
+        body: text
+      }
+    };
+    const statusText = response.statusText || 'OK';
+    if (!response.ok) {
+      logger(`❌ Auth check failed: ${response.status} ${statusText}`, payload, 'error');
+      return false;
+    }
+
+    if (isAuthFailureResponse(text)) {
+      logger('❌ Authentication check failed: the endpoint rejected the supplied credentials.', payload, 'error');
+      return false;
+    }
+
+    logger('✅ Authentication parameters are present and the count endpoint accepted the request.', payload, 'success');
+    return true;
+  }
+
+  async runSourceCountTest(source, logger) {
+    const api = source.api || {};
+    if (!api.basePath) {
+      logger('❌ Count test cannot run because API basePath is missing.', null, 'error');
+      return false;
+    }
+
+    const countUrl = buildCountUrl(source, '');
+    const response = await this.fetchConfiguredUrl(source, countUrl, { method: 'GET' });
+    const text = await response.text();
+    const payload = {
+      request: { method: 'GET', url: countUrl },
+      response: {
+        status: response.status,
+        statusText: response.statusText || 'OK',
+        body: text
+      }
+    };
+
+    if (!response.ok) {
+      logger(`❌ Count endpoint failed with ${response.status}.`, payload, 'error');
+      return false;
+    }
+
+    if (isAuthFailureResponse(text)) {
+      logger('❌ Count endpoint rejected the request because authentication is missing or invalid.', payload, 'error');
+      return false;
+    }
+
+    const parsed = parseCount ? parseCount(text, source) : null;
+    if (parsed === null || Number.isNaN(parsed)) {
+      logger('❌ Count endpoint returned data but the configured parser could not resolve a numeric count.', payload, 'error');
+      return false;
+    }
+
+    logger(`✅ Count endpoint works: parsed total = ${parsed}.`, { ...payload, parsedCount: parsed }, 'success');
+    return true;
+  }
+
+  async runSourceDataTest(source, logger) {
+    const pageIndex = Number.isFinite(source.api?.pageStart) ? source.api.pageStart : 0;
+    const dataUrl = buildDataUrl(source, '', 1, pageIndex, source.ui?.defaultSort || 'date');
+    const response = await this.fetchConfiguredUrl(source, dataUrl, { method: 'GET' });
+    const text = await response.text();
+    const payload = {
+      request: { method: 'GET', url: dataUrl },
+      response: {
+        status: response.status,
+        statusText: response.statusText || 'OK',
+        body: text
+      }
+    };
+
+    if (!response.ok) {
+      logger(`❌ Data request failed with ${response.status}.`, payload, 'error');
+      return false;
+    }
+
+    const posts = parsePosts ? parsePosts(text, source) : [];
+    if (!Array.isArray(posts) || posts.length === 0) {
+      logger('❌ Data endpoint returned no posts.', payload, 'error');
+      return false;
+    }
+
+    const normalized = normalizePosts ? normalizePosts(posts.slice(0, 3), source) : [];
+    logger(`✅ Data endpoint works: ${posts.length} posts returned.`, {
+      ...payload,
+      samplePost: posts[0],
+      normalizedCount: normalized.length
+    }, 'success');
+    return true;
+  }
+
+  async runSourceFieldTest(source, logger) {
+    const pageIndex = Number.isFinite(source.api?.pageStart) ? source.api.pageStart : 0;
+    const dataUrl = buildDataUrl(source, '', 1, pageIndex, source.ui?.defaultSort || 'date');
+    const response = await this.fetchConfiguredUrl(source, dataUrl, { method: 'GET' });
+    const text = await response.text();
+    const payload = {
+      request: { method: 'GET', url: dataUrl },
+      response: {
+        status: response.status,
+        statusText: response.statusText || 'OK',
+        body: text
+      }
+    };
+
+    if (!response.ok) {
+      logger(`❌ Field mapping test could not fetch data: ${response.status}.`, payload, 'error');
+      return false;
+    }
+
+    const posts = parsePosts ? parsePosts(text, source) : [];
+    if (!Array.isArray(posts) || posts.length === 0) {
+      logger('❌ Field mapping test stopped: the endpoint returned no posts.', payload, 'error');
+      return false;
+    }
+
+    const first = posts[0];
+    const fieldMap = source.fields || {};
+    const fieldChecks = {};
+    const requiredKeys = ['imageUrl', 'previewUrl', 'tags'];
+    const optionalKeys = ['sampleUrl', 'artistTag', 'createdAt', 'width', 'height'];
+
+    [...requiredKeys, ...optionalKeys].forEach((key) => {
+      const field = fieldMap[key];
+      if (!field) return;
+      const value = resolveField ? resolveField(first, field) : undefined;
+      fieldChecks[key] = value;
+    });
+
+    const missingRequired = requiredKeys
+      .filter((key) => fieldMap[key] && (fieldChecks[key] === undefined || fieldChecks[key] === null || fieldChecks[key] === ''))
+      .map((key) => key);
+
+    const missingOptional = optionalKeys
+      .filter((key) => fieldMap[key] && (fieldChecks[key] === undefined || fieldChecks[key] === null || fieldChecks[key] === ''))
+      .map((key) => key);
+
+    if (missingRequired.length > 0) {
+      logger(`❌ Missing required field mappings: ${missingRequired.join(', ')}.`, { ...payload, missingRequired, fieldChecks }, 'error');
+      return false;
+    }
+
+    if (missingOptional.length > 0) {
+      logger('ℹ️ Some optional field mappings are not present in this sample payload, but the required ones resolved correctly.', { ...payload, missingOptional, fieldChecks }, 'info');
+    }
+
+    logger('✅ Required field mappings resolve to data on a real post.', { ...payload, fieldChecks }, 'success');
+    return true;
+  }
+
+  async runSourceSafeModeTest(source, logger) {
+    if (!source.safeMode?.required) {
+      logger('ℹ️ Safe mode is not required for this source.', null, 'info');
+      return true;
+    }
+
+    const safeUrl = source.safeMode.url;
+    if (!safeUrl) {
+      logger('❌ Safe mode is enabled but no safe mode URL is configured.', null, 'error');
+      return false;
+    }
+
+    const response = await this.fetchConfiguredUrl(source, safeUrl, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+      body: ''
+    });
+    const text = await response.text();
+    const payload = {
+      request: { method: 'POST', url: safeUrl },
+      response: {
+        status: response.status,
+        statusText: response.statusText || 'OK',
+        body: text
+      }
+    };
+
+    if (!response.ok) {
+      logger(`❌ Safe mode verification failed: ${response.status}.`, payload, 'error');
+      return false;
+    }
+
+    logger('✅ Safe mode request succeeded.', payload, 'success');
+    return true;
+  }
+
+  async runSourceArtistTest(source, logger) {
+    if (!source.artist?.tagApiUrl) {
+      logger('ℹ️ No artist tag API URL is configured for this source.', null, 'info');
+      return true;
+    }
+
+    const artistUrl = buildArtistTagLookupUrl(source, 'solo 1girl');
+    const response = await this.fetchConfiguredUrl(source, artistUrl, { method: 'GET' });
+    const text = await response.text();
+    const payload = {
+      request: { method: 'GET', url: artistUrl },
+      response: {
+        status: response.status,
+        statusText: response.statusText || 'OK',
+        body: text
+      }
+    };
+
+    if (!response.ok) {
+      logger(`❌ Artist tag lookup failed: ${response.status}.`, payload, 'error');
+      return false;
+    }
+
+    logger('✅ Artist tag lookup URL is reachable and responded successfully.', payload, 'success');
+    return true;
+  }
+
+  async runSourceScraperListTest(source, logger) {
+    if (!source.scraper?.listPageUrl) {
+      logger('❌ Scraper list test is missing a listPageUrl.', null, 'error');
+      return false;
+    }
+
+    const response = await this.fetchConfiguredUrl(source, source.scraper.listPageUrl, { method: 'GET' });
+    const html = await response.text();
+    const payload = {
+      request: { method: 'GET', url: source.scraper.listPageUrl },
+      response: {
+        status: response.status,
+        statusText: response.statusText || 'OK',
+        body: html
+      }
+    };
+
+    if (!response.ok) {
+      logger(`❌ List page request failed with ${response.status}.`, payload, 'error');
+      return false;
+    }
+
+    const scraperResponse = await fetch('http://localhost:3001/api/scraper/fetch-page', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        html,
+        selectors: {
+          listPageSelector: source.scraper.listPageSelector,
+          postLinkSelector: source.scraper.postLinkSelector,
+          imageUrlSelector: source.scraper.imageUrlSelector,
+          imageUrlAttribute: source.scraper.imageUrlAttribute || 'src',
+          thumbnailWidthAttribute: source.scraper.thumbnailWidthAttribute || 'width',
+          thumbnailHeightAttribute: source.scraper.thumbnailHeightAttribute || 'height',
+          paginationLastPageSelector: source.scraper.paginationLastPageSelector,
+          postsPerPage: source.scraper.postsPerPage || 42
+        }
+      })
+    });
+
+    const scraperBody = await scraperResponse.text();
+    if (!scraperResponse.ok) {
+      logger(`❌ Scraper endpoint returned ${scraperResponse.status}.`, {
+        request: { method: 'POST', url: 'http://localhost:3001/api/scraper/fetch-page' },
+        response: { status: scraperResponse.status, statusText: scraperResponse.statusText || 'OK', body: scraperBody }
+      }, 'error');
+      return false;
+    }
+
+    const data = JSON.parse(scraperBody);
+    const posts = Array.isArray(data?.data?.posts) ? data.data.posts : [];
+    if (!posts.length) {
+      logger('❌ The configured scraper selectors did not produce any list items.', { ...payload, scraperResponse: data }, 'error');
+      return false;
+    }
+
+    logger(`✅ Scraper list selectors produced ${posts.length} post entries.`, { sourceUrl: source.scraper.listPageUrl, scraperResponse: data, samplePost: posts[0] }, 'success');
+    return true;
+  }
+
+  async runSourceScraperDetailTest(source, logger) {
+    if (!source.scraper?.detailImageSelector) {
+      logger('❌ Detail scraper test cannot run without a detailImageSelector.', null, 'error');
+      return false;
+    }
+
+    const response = await this.fetchConfiguredUrl(source, source.scraper.listPageUrl, { method: 'GET' });
+    const html = await response.text();
+    const listPayload = {
+      request: { method: 'GET', url: source.scraper.listPageUrl },
+      response: {
+        status: response.status,
+        statusText: response.statusText || 'OK',
+        body: html
+      }
+    };
+
+    if (!response.ok) {
+      logger(`❌ List page request failed with ${response.status}.`, listPayload, 'error');
+      return false;
+    }
+
+    const scraperResponse = await fetch('http://localhost:3001/api/scraper/fetch-page', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        html,
+        selectors: {
+          listPageSelector: source.scraper.listPageSelector,
+          postLinkSelector: source.scraper.postLinkSelector,
+          imageUrlSelector: source.scraper.imageUrlSelector,
+          imageUrlAttribute: source.scraper.imageUrlAttribute || 'src',
+          thumbnailWidthAttribute: source.scraper.thumbnailWidthAttribute || 'width',
+          thumbnailHeightAttribute: source.scraper.thumbnailHeightAttribute || 'height',
+          paginationLastPageSelector: source.scraper.paginationLastPageSelector,
+          postsPerPage: source.scraper.postsPerPage || 42
+        }
+      })
+    });
+
+    const listScrapeBody = await scraperResponse.text();
+    if (!scraperResponse.ok) {
+      logger(`❌ Detail scraper test could not fetch list data: ${scraperResponse.status}.`, {
+        request: { method: 'POST', url: 'http://localhost:3001/api/scraper/fetch-page' },
+        response: { status: scraperResponse.status, statusText: scraperResponse.statusText || 'OK', body: listScrapeBody }
+      }, 'error');
+      return false;
+    }
+
+    const data = JSON.parse(listScrapeBody);
+    const firstPost = Array.isArray(data?.data?.posts) ? data.data.posts[0] : null;
+    if (!firstPost || !firstPost.url) {
+      logger('❌ The scraper list page does not expose any usable post URL for detail validation.', { ...listPayload, scraperResponse: data }, 'error');
+      return false;
+    }
+
+    const detailUrl = firstPost.url.startsWith('http') ? firstPost.url : new URL(firstPost.url, source.scraper.listPageUrl).toString();
+    const detailResponse = await this.fetchConfiguredUrl(source, detailUrl, { method: 'GET' });
+    const detailHtml = await detailResponse.text();
+    const detailPayload = {
+      request: { method: 'GET', url: detailUrl },
+      response: {
+        status: detailResponse.status,
+        statusText: detailResponse.statusText || 'OK',
+        body: detailHtml
+      }
+    };
+
+    if (!detailResponse.ok) {
+      logger(`❌ Detail page request failed: ${detailResponse.status}.`, detailPayload, 'error');
+      return false;
+    }
+
+    const detailScrape = await fetch('http://localhost:3001/api/scraper/fetch-page', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        html: detailHtml,
+        selectors: {
+          detailImageSelector: source.scraper.detailImageSelector,
+          detailImageAttribute: source.scraper.detailImageAttribute || 'src',
+          detailTagsSelector: source.scraper.detailTagsSelector,
+          detailGeneralTagsSelector: source.scraper.detailGeneralTagsSelector,
+          detailArtistTagsSelector: source.scraper.detailArtistTagsSelector
+        }
+      })
+    });
+
+    const detailScrapeBody = await detailScrape.text();
+    if (!detailScrape.ok) {
+      logger(`❌ Detail scraper endpoint failed: ${detailScrape.status}.`, {
+        request: { method: 'POST', url: 'http://localhost:3001/api/scraper/fetch-page' },
+        response: { status: detailScrape.status, statusText: detailScrape.statusText || 'OK', body: detailScrapeBody }
+      }, 'error');
+      return false;
+    }
+
+    const detailData = JSON.parse(detailScrapeBody);
+    const result = detailData?.data || {};
+    if (!result.imageUrl && !result.image && !result.tags) {
+      logger('❌ The configured detail selectors did not resolve an image or tags.', { ...detailPayload, detailData }, 'error');
+      return false;
+    }
+
+    logger('✅ Scraper detail selectors resolved a real image/tags payload.', { ...detailPayload, detailData }, 'success');
+    return true;
   }
 
   _updateCardLogs(cardElement, lines) {

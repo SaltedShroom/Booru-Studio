@@ -8790,31 +8790,58 @@ async function loadGenericBooru(sourceId, append) {
 /**
  * Build count URL based on source configuration
  */
+function appendUrlParam(url, key, value) {
+  if (!url || !key) return url;
+  const hasParam = new RegExp(`([?&])${key}=`).test(url);
+  if (hasParam) return url;
+  const separator = url.includes('?') ? '&' : '?';
+  return `${url}${separator}${encodeURIComponent(key)}=${encodeURIComponent(value)}`;
+}
+
+function getSourceAuthCredentials(sourceConfig) {
+  const sourceUserId = sourceConfig?.auth?.userId || '';
+  const sourceApiKey = sourceConfig?.auth?.apiKey || '';
+
+  if (sourceUserId || sourceApiKey) {
+    return {
+      userId: sourceUserId,
+      apiKey: sourceApiKey
+    };
+  }
+
+  return {
+    userId: userIdInput ? userIdInput.value.trim() : '',
+    apiKey: apiKeyInput ? apiKeyInput.value.trim() : ''
+  };
+}
+
 function buildCountUrl(sourceConfig, tags) {
-  const userId = userIdInput ? userIdInput.value.trim() : '';
-  const apiKey = apiKeyInput ? apiKeyInput.value.trim() : '';
+  const { userId, apiKey } = getSourceAuthCredentials(sourceConfig);
+  const pageStart = Number.isFinite(sourceConfig.api?.pageStart) ? sourceConfig.api.pageStart : 0;
   
   // Use apiUrl if available, otherwise fall back to baseUrl
   const apiBaseUrl = sourceConfig.apiUrl || sourceConfig.baseUrl;
   const countPath = sourceConfig.api.countBasePath || sourceConfig.api.basePath;
   let url = `${apiBaseUrl}${countPath}`;
   
-  // Add json parameter if supported
-  if (sourceConfig.api.jsonSupport && sourceConfig.response.countParser === 'json') {
-    url += url.includes('?') ? '&json=1' : '?json=1';
+  // Add json parameter if supported but avoid duplicates when the base path already includes it
+  if (sourceConfig.api.jsonSupport && sourceConfig.response.countParser === 'json' && !/([?&])json=/.test(url)) {
+    url += `${url.includes('?') ? '&' : '?'}json=1`;
   }
   
-  // Add limit=0 and pid=0 for count endpoint
-  url += url.includes('?') ? `&${sourceConfig.api.limitParam}=0&${sourceConfig.api.pageParam}=0` : `?${sourceConfig.api.limitParam}=0&${sourceConfig.api.pageParam}=0`;
+  // Add limit=0 and the configured page start offset for count endpoint
+  url = appendUrlParam(url, sourceConfig.api.limitParam, 0);
+  url = appendUrlParam(url, sourceConfig.api.pageParam, pageStart);
   
   // Add authentication if required
   if (sourceConfig.auth.required) {
-    url += `&${sourceConfig.auth.userIdKey}=${encodeURIComponent(userId)}&${sourceConfig.auth.apiKeyKey}=${encodeURIComponent(apiKey)}`;
+    url = appendUrlParam(url, sourceConfig.auth.userIdKey, userId);
+    url = appendUrlParam(url, sourceConfig.auth.apiKeyKey, apiKey);
   }
   
   // Add tags if present
   if (tags) {
-    url += `&${sourceConfig.api.tagsParam}=${encodeURIComponent(tags)}`;
+    url = appendUrlParam(url, sourceConfig.api.tagsParam, tags);
   }
   
   return url;
@@ -8824,37 +8851,39 @@ function buildCountUrl(sourceConfig, tags) {
  * Build data URL based on source configuration
  */
 function buildDataUrl(sourceConfig, tags, limit, page, sort) {
-  const userId = userIdInput ? userIdInput.value.trim() : '';
-  const apiKey = apiKeyInput ? apiKeyInput.value.trim() : '';
+  const { userId, apiKey } = getSourceAuthCredentials(sourceConfig);
+  const pageNumber = Number.isFinite(page) ? page : Number.isFinite(sourceConfig.api?.pageStart) ? sourceConfig.api.pageStart : 0;
   
   // Use apiUrl if available, otherwise fall back to baseUrl
   const apiBaseUrl = sourceConfig.apiUrl || sourceConfig.baseUrl;
   let url = `${apiBaseUrl}${sourceConfig.api.basePath}`;
   
-  // Add json parameter if supported
-  if (sourceConfig.api.jsonSupport) {
-    url += url.includes('?') ? '&json=1' : '?json=1';
+  // Add json parameter if supported but avoid duplicates when the base path already includes it
+  if (sourceConfig.api.jsonSupport && !/([?&])json=/.test(url)) {
+    url += `${url.includes('?') ? '&' : '?'}json=1`;
   }
   
-  // Add limit and page
-  url += url.includes('?') ? `&${sourceConfig.api.limitParam}=${limit}&${sourceConfig.api.pageParam}=${page}` : `?${sourceConfig.api.limitParam}=${limit}&${sourceConfig.api.pageParam}=${page}`;
+  // Add limit and page using the configured base offset when needed
+  url = appendUrlParam(url, sourceConfig.api.limitParam, limit);
+  url = appendUrlParam(url, sourceConfig.api.pageParam, pageNumber);
   
   // Add authentication if required
   if (sourceConfig.auth.required) {
-    url += `&${sourceConfig.auth.userIdKey}=${encodeURIComponent(userId)}&${sourceConfig.auth.apiKeyKey}=${encodeURIComponent(apiKey)}`;
+    url = appendUrlParam(url, sourceConfig.auth.userIdKey, userId);
+    url = appendUrlParam(url, sourceConfig.auth.apiKeyKey, apiKey);
   }
   
   // Add sort parameter if using separate param method
   if (sort === 'score' && sourceConfig.sort.scoreMethod === 'param' && sourceConfig.sort.paramName) {
-    url += `&${sourceConfig.sort.paramName}=score`;
+    url = appendUrlParam(url, sourceConfig.sort.paramName, 'score');
   }
 
   // Attempt to get Artist tag if given
-  url += `&fields=tag_info`;
+  url = appendUrlParam(url, 'fields', 'tag_info');
   
   // Add tags if present
   if (tags) {
-    url += `&${sourceConfig.api.tagsParam}=${encodeURIComponent(tags)}`;
+    url = appendUrlParam(url, sourceConfig.api.tagsParam, tags);
   }
   
   return url;
@@ -8866,6 +8895,14 @@ function buildDataUrl(sourceConfig, tags, limit, page, sort) {
  * the entire response string for numbers and returning the largest one.
  */
 function parseCount(responseText, sourceConfig) {
+  const normalizedText = String(responseText || '').replace(/\s+/g, ' ').trim();
+  const isAuthFailure = /(missing authentication|invalid authentication|invalid api key|unauthorized|not logged in|access denied|error.*authentication)/i.test(normalizedText)
+    || /<error[^>]*>.*(authentication|unauthorized|access denied|not logged in).*<\/error>/i.test(normalizedText);
+
+  if (isAuthFailure) {
+    return null;
+  }
+
   // Helper: extract the largest number from any string
   function largestNumberIn(str) {
     const nums = String(str).match(/\d+/g);

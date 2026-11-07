@@ -882,9 +882,9 @@ function showCircuitSpinner() {
           return `<span class="country-tag">${country}</span>`;
         }).join('');
         
-        nodesContainer.innerHTML = countryCodes || '<span class="circuit-loading">No circuit</span>';
+        nodesContainer.innerHTML = countryCodes || '<span class="circuit-loading">Unable to display</span>';
       } else {
-        nodesContainer.innerHTML = '<span class="circuit-loading">No circuit</span>';
+        nodesContainer.innerHTML = '<span class="circuit-loading">Unable to display</span>';
       }
     } catch (error) {
       document.getElementById('ctx-circuit-nodes').innerHTML = '<span class="circuit-loading">Error loading</span>';

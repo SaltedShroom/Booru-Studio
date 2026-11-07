@@ -358,20 +358,27 @@ function isTorProxy() {
 }
 
 // Send SIGNAL NEWNYM to the Tor control port to rotate the exit circuit.
-// Silently no-ops if not using Tor or the control port is unavailable.
+// Returns true only when the control endpoint exists and accepts the command.
 function rotateTorCircuit() {
-  if (!isTorProxy()) return Promise.resolve();
+  if (!isTorProxy()) return Promise.resolve(false);
   return new Promise((resolve) => {
     const socket = new net.Socket();
     socket.setTimeout(2000);
     const controlPort = parseInt(proxySettings.torControlPort) || 9051;
+    let response = '';
     socket.connect(controlPort, '127.0.0.1', () => {
       socket.write(getTorAuthCommand() + 'SIGNAL NEWNYM\r\nQUIT\r\n');
     });
-    socket.on('data', () => {});
-    socket.on('close', resolve);
-    socket.on('error', () => resolve());
-    socket.on('timeout', () => { socket.destroy(); resolve(); });
+    socket.on('data', (data) => {
+      response += data.toString();
+    });
+    socket.on('close', () => {
+      const hasSuccessCode = /(^|\r?\n)250\b/.test(response);
+      const hasFailureCode = /(^|\r?\n)5\d\d\b/.test(response);
+      resolve(hasSuccessCode && !hasFailureCode);
+    });
+    socket.on('error', () => resolve(false));
+    socket.on('timeout', () => { socket.destroy(); resolve(false); });
   });
 }
 
@@ -416,9 +423,11 @@ function resetTorRotateTimer() {
   const ms = (parseInt(proxySettings.torRotateMins) || 0) * 1000;
   if (ms <= 0) return;
   torRotateTimer = setTimeout(() => {
-    rotateTorCircuit().then(() => {
-      console.log(`\uD83D\uDD04 Tor circuit rotated (${ms / 1000}s timer)`);
-      broadcastCircuitRotated();
+    rotateTorCircuit().then((rotated) => {
+      if (rotated) {
+        console.log(`\uD83D\uDD04 Tor circuit rotated (${ms / 1000}s timer)`);
+        broadcastCircuitRotated();
+      }
       resetTorRotateTimer();
     });
   }, ms);
@@ -429,9 +438,11 @@ function trackDownload() {
   downloadCount++;
   const every = parseInt(proxySettings.torRotateCount) || 0;
   if (every > 0 && downloadCount % every === 0) {
-    rotateTorCircuit().then(() => {
-      console.log(`\uD83D\uDD04 Tor circuit rotated after ${downloadCount} downloads`);
-      broadcastCircuitRotated();
+    rotateTorCircuit().then((rotated) => {
+      if (rotated) {
+        console.log(`\uD83D\uDD04 Tor circuit rotated after ${downloadCount} downloads`);
+        broadcastCircuitRotated();
+      }
       resetTorRotateTimer();
     });
   }
@@ -563,11 +574,16 @@ const server = isWorkerMode ? null : http.createServer((req, res) => {
 
   // Manual Tor circuit rotation endpoint (triggered from Settings UI)
   if (req.method === 'POST' && req.url === '/api/rotate-circuit') {
-    rotateTorCircuit().then(() => {
-      broadcastCircuitRotated();
+    rotateTorCircuit().then((rotated) => {
+      if (rotated) {
+        broadcastCircuitRotated();
+      }
       resetTorRotateTimer();
       res.writeHead(200, { 'Content-Type': 'application/json' });
-      res.end(JSON.stringify({ ok: true }));
+      res.end(JSON.stringify({
+        ok: rotated,
+        message: rotated ? undefined : 'Tor control endpoint unavailable or command rejected'
+      }));
     }).catch(err => {
       res.writeHead(200, { 'Content-Type': 'application/json' });
       res.end(JSON.stringify({ ok: false, message: err.message }));

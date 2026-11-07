@@ -874,6 +874,35 @@
       </div>
     </div>
 
+    <!-- Source Test Modal -->
+    <div id="source-test-modal" class="modal" style="display: none;">
+      <div class="modal-overlay"></div>
+      <div class="modal-content source-test-modal-content">
+        <div class="modal-header">
+          <h3 id="source-test-modal-title"><i class="fas fa-vial"></i> Test source</h3>
+          <button class="modal-close" id="close-source-test-modal"><i class="fas fa-times"></i></button>
+        </div>
+        <div class="modal-body source-test-modal-body">
+          <div class="source-test-modal-meta">
+            <div id="source-test-modal-source">Source</div>
+          </div>
+          <div class="source-test-layout">
+            <aside class="source-test-sidebar">
+              <div class="source-test-sidebar-header">Available checks</div>
+              <div id="source-test-list" class="source-test-list"></div>
+            </aside>
+            <div class="source-test-panel">
+              <div class="source-test-actions">
+                <button id="run-selected-source-tests-btn" class="btn-primary"><i class="fas fa-play"></i> Run selected</button>
+                <button id="run-all-source-tests-btn" class="btn-secondary"><i class="fas fa-forward"></i> Run all</button>
+              </div>
+              <div id="source-test-log" class="source-test-log"></div>
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
+
     <!-- Booru Source Editor Modal -->
     <div id="booru-source-modal" class="modal" style="display: none;">
       <div class="modal-overlay"></div>
@@ -1401,7 +1430,7 @@
     </div>
 
     <!-- Stable Diffusion Loading Overlay -->
-    <div id="sd-loading-overlay" class="sd-loading-overlay">
+    <!-- <div id="sd-loading-overlay" class="sd-loading-overlay">
       <div class="sd-loading-background"></div>
       <div class="sd-loading-content">
         <div class="sd-loading-title">Starting Stable Diffusion</div>
@@ -1419,7 +1448,7 @@
           This may take a minute while the model loads
         </div>
       </div>
-    </div>
+    </div> -->
   </div>
   <div id="adverts" class="active" style="display: none;">
     <button id="toggleAdverts">
