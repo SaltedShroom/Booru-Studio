@@ -397,7 +397,13 @@ body, html {
 
 .nav-tabs hr {
   border: none;
+  opacity: 0;
   border-right: 1px solid var(--text-secondary);
+  transition: opacity 0.05s ease;
+}
+
+.nav-tabs:hover hr {
+  opacity: 1;
 }
 
 .navbar .nav-brand {
@@ -3652,25 +3658,6 @@ body, html {
   border-color: rgba(233, 69, 96) !important;
 }
 
-.booru-image-item .image-loader {
-  position: absolute;
-  color: var(--accent);
-  font-size: calc(var(--booru-image-size) / 220 * 60);
-  width: 100%;
-  height: 100%;
-  display: flex;
-  text-align: center;
-  align-content: center;
-}
-
-.booru-image-item .image-loader::before {
-  width: 100%;
-  height: 100%;
-  display: flex;
-  align-items: center;
-  justify-content: center;
-}
-
 /* Rating filter stars in control bar */
 .rating-filter-star {
   background: none;
@@ -3740,6 +3727,25 @@ body, html {
 .booru-image-item img.loading,
 .booru-image-item video.loading {
   background: var(--bg-dark);
+}
+
+.booru-image-item.file-type-image .item-image-loader {
+  border-color: var(--border-image);
+}
+.booru-image-item.file-type-image .item-image-loader-inner {
+  background-color: var(--border-image);
+}
+.booru-image-item.file-type-gif .item-image-loader {
+  border-color: var(--border-gif);
+}
+.booru-image-item.file-type-gif .item-image-loader-inner {
+  background-color: var(--border-gif);
+}
+.booru-image-item.file-type-video .item-image-loader {
+  border-color: var(--border-video);
+}
+.booru-image-item.file-type-video .item-image-loader-inner {
+  background-color: var(--border-video);
 }
 
 .booru-image-item[data-downloaded="true"].file-type-image::after {
@@ -5258,6 +5264,7 @@ textarea.settings-input {
   font-size: 12px;
   font-weight: 700;
   height: 60px;
+  min-height: 60px;
   display: flex;
   align-items: center;
   justify-content: center;
@@ -5315,15 +5322,16 @@ textarea.settings-input {
 .source-test-option-content {
   display: flex;
   flex-direction: column;
-  gap: 4px;
   min-width: 0;
   width: 100%;
 }
 
 .source-test-option strong {
-  font-size: 11px;
+  padding: 1px 5px;
+  border: 1px solid var(--border);
+  border-bottom: none;
+  font-size: 10px;
   color: var(--text-primary);
-  line-height: 1.2;
 }
 
 .source-test-checks {
@@ -5332,7 +5340,7 @@ textarea.settings-input {
 }
 
 .source-test-check-row {
-  padding: 4px 6px;
+  padding: 1px 5px;
   border: 1px solid var(--border);
   color: var(--text-secondary);
   font-size: 10px;
@@ -7817,4 +7825,73 @@ input[type="checkbox"]:checked::after {
 }
 
 .export-button {
+}
+
+@view-transition {
+  navigation: auto;
+}
+  
+.item-image-loader {
+  display: inline-block;
+  align-items: center;
+  justify-self: center;
+  width: 30px;
+  height: 30px;
+  position: relative;
+  border: 4px solid transparent;
+  border-radius: 8px;
+  top: calc(50% - 15px);
+  left: calc(50% - 15px);
+  animation: item-image-loader 2s infinite ease;
+}
+
+.item-image-loader-inner {
+  vertical-align: top;
+  display: inline-block;
+  width: 100%;
+  animation: item-image-loader-inner 2s infinite ease-in;
+}
+
+@keyframes item-image-loader {
+  0% {
+    transform: rotate(0deg);
+  }
+  
+  25% {
+    transform: rotate(180deg);
+  }
+  
+  50% {
+    transform: rotate(180deg);
+  }
+  
+  75% {
+    transform: rotate(360deg);
+  }
+  
+  100% {
+    transform: rotate(360deg);
+  }
+}
+
+@keyframes item-image-loader-inner {
+  0% {
+    height: 0%;
+  }
+  
+  25% {
+    height: 0%;
+  }
+  
+  50% {
+    height: 100%;
+  }
+  
+  75% {
+    height: 100%;
+  }
+  
+  100% {
+    height: 0%;
+  }
 }
