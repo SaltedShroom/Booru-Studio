@@ -39,6 +39,7 @@ const showDownloadCounterEnabled = document.getElementById('show-download-counte
 const LOCAL_SERVER_ERROR_COOLDOWN_MS = 15000;
 let tallImageScrollSpeedMultiplier = 1.1; // seconds per 100px of image height
 let localServerUnavailableUntil = 0;
+let downloadCount = null;
 
 // Window zoom controls
 const increaseZoomBtn = document.getElementById('increase-zoom');
@@ -1322,26 +1323,34 @@ async function setLoadingStatus(text, detail) {
 window._setLoadingStatus = setLoadingStatus;
 
 const countContainer = document.getElementById('app-loading-download-count');
-async function updateAppLoadingDownloadCount() {
+async function updateAppLoadingDownloadCount(delta = 0) {
   if (!countContainer) return;
 
-  let count = 0;
-  try {
-    if (typeof dbStore !== 'undefined' && dbStore && typeof dbStore.getAllDownloadedPosts === 'function') {
-      const saved = await dbStore.getAllDownloadedPosts();
-      if (Array.isArray(saved)) {
-        count = saved.length;
-      } else if (typeof saved === 'number') {
-        count = saved;
-      } else if (saved && typeof saved.length === 'number') {
-        count = saved.length;
+  if (downloadCount === null) {
+    try {
+      if (typeof dbStore !== 'undefined' && dbStore && typeof dbStore.getDownloadedPostCount === 'function') {
+        downloadCount = await dbStore.getDownloadedPostCount();
+      } else if (typeof dbStore !== 'undefined' && dbStore && typeof dbStore.getAllDownloadedPosts === 'function') {
+        const saved = await dbStore.getAllDownloadedPosts();
+        if (Array.isArray(saved)) {
+          downloadCount = saved.length;
+        } else if (typeof saved === 'number') {
+          downloadCount = saved;
+        } else if (saved && typeof saved.length === 'number') {
+          downloadCount = saved.length;
+        }
       }
+    } catch (err) {
+      console.warn('Could not load download count for startup badge:', err);
+      downloadCount = 0;
     }
-  } catch (err) {
-    console.warn('Could not load download count for startup badge:', err);
   }
 
-  const digits = String(count).split('');
+  if (Number.isFinite(delta) && delta !== 0) {
+    downloadCount = Math.max(0, (Number(downloadCount) || 0) + Number(delta));
+  }
+
+  const digits = String(downloadCount || 0).split('');
   if (digits.length === 0) digits.push('0');
 
   const existingImages = Array.from(countContainer.querySelectorAll('img'));
@@ -1396,6 +1405,83 @@ function updateDownloadCounterVisibility() {
 }
 
 // Global function to update download folder size odometer
+const TODAY_DOWNLOAD_STORAGE_DATE_KEY = 'booru-downloads-today-date';
+const TODAY_DOWNLOAD_STORAGE_MB_KEY = 'booru-downloads-today-mb';
+
+function getTodayDateKey() {
+  const now = new Date();
+  const year = now.getFullYear();
+  const month = String(now.getMonth() + 1).padStart(2, '0');
+  const day = String(now.getDate()).padStart(2, '0');
+  return `${year}-${month}-${day}`;
+}
+
+function getTodayDownloadedMB() {
+  try {
+    const today = getTodayDateKey();
+    const storedDate = localStorage.getItem(TODAY_DOWNLOAD_STORAGE_DATE_KEY);
+    const storedValue = Number(localStorage.getItem(TODAY_DOWNLOAD_STORAGE_MB_KEY) || 0);
+
+    if (storedDate !== today) {
+      localStorage.setItem(TODAY_DOWNLOAD_STORAGE_DATE_KEY, today);
+      localStorage.setItem(TODAY_DOWNLOAD_STORAGE_MB_KEY, '0');
+      return 0;
+    }
+
+    return Number.isFinite(storedValue) ? Math.max(0, storedValue) : 0;
+  } catch (error) {
+    return 0;
+  }
+}
+
+function persistTodayDownloadedMB(value) {
+  try {
+    const today = getTodayDateKey();
+    localStorage.setItem(TODAY_DOWNLOAD_STORAGE_DATE_KEY, today);
+    localStorage.setItem(TODAY_DOWNLOAD_STORAGE_MB_KEY, String(Math.max(0, Number(value) || 0)));
+  } catch (error) {
+    // Ignore storage errors and keep runtime state in memory only.
+  }
+}
+
+window.sessionDownloadedMB = getTodayDownloadedMB();
+
+window.updateSessionDownloadedSizeOdometer = function(deltaMB) {
+  if (typeof deltaMB === 'number' && deltaMB > 0) {
+    window.sessionDownloadedMB = (window.sessionDownloadedMB || 0) + deltaMB;
+    persistTodayDownloadedMB(window.sessionDownloadedMB);
+  } else if (deltaMB === 0 || deltaMB === undefined) {
+    window.sessionDownloadedMB = getTodayDownloadedMB();
+    persistTodayDownloadedMB(window.sessionDownloadedMB);
+  }
+
+  const mb = Math.max(0, Math.round(window.sessionDownloadedMB || 0));
+  const digitString = String(mb).padStart(9, '0');
+  const digits = digitString.split('');
+  const hasTB = mb >= 1000000;
+
+  for (let i = 1; i <= 9; i++) {
+    const digitEl = document.getElementById(`today-download-digit-${i}`);
+    if (!digitEl) continue;
+    digitEl.style.display = (i <= 3 && !hasTB) ? 'none' : 'block';
+    if (i >= 4 || hasTB) {
+      const digit = Number(digits[i - 1]);
+      if (digitEl.odometer) {
+        digitEl.odometer.update(digit);
+      } else {
+        digitEl.odometer = new Odometer({ el: digitEl, value: digit });
+      }
+    }
+  }
+
+  const separator = document.getElementById('today-download-digit-separator-1');
+  if (separator) {
+    separator.style.display = hasTB ? 'inline' : 'none';
+  }
+};
+
+window.updateSessionDownloadedSizeOdometer(0);
+
 window.updateDownloadFolderSizeOdometer = async function() {
   try {
     const response = await fetch('http://localhost:3001/api/download-folder-size');
@@ -1445,6 +1531,10 @@ window.incrementDownloadFolderSizeOdometer = function(downloadedBytes) {
     
     // Convert downloaded bytes to MB
     const changeMB = Math.round(downloadedBytes / (1024 * 1024));
+
+    if (changeMB > 0) {
+      window.updateSessionDownloadedSizeOdometer(changeMB);
+    }
     
     // Get current total from odometer digits
     let currentMB = 0;
@@ -2156,7 +2246,7 @@ async function loadSession() {
           toast.classList.remove('show');
           setTimeout(() => toast.remove(), 300);
         }, 1500);
-        updateAppLoadingDownloadCount();
+        updateAppLoadingDownloadCount(1);
         if (success === true && supportToastEnabled && supportToastEnabled.checked) {
           supportToastSuccessCount += 1;
           if (supportToastSuccessCount >= 50) {

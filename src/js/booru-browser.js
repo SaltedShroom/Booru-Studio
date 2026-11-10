@@ -5325,7 +5325,7 @@ async function showDownloadsGallery(forceReload = false) {
                 }
               });
               showToast(`Removed ${count} posts with missing files`, 'success');
-              window.updateAppLoadingDownloadCount();
+              window.updateAppLoadingDownloadCount(-count);
             },
             () => {
               // No - Do nothing
@@ -6212,15 +6212,9 @@ function initBooruBrowser() {
                     console.warn('HTTP error deleting file', response.status, data.error || data);
                     showToast('Failed to delete file: ' + (data.error || `HTTP ${response.status}`), 'error');
                   } else if (data.success) {
-                    // remove file from disk succeeded; server will also drop DB entry if id was passed
-                    if (typeof dbStore !== 'undefined' && dbStore && post && post.id) {
-                      try {
-                        await dbStore.removeDownloadedPost(post.id);
-                        window.updateAppLoadingDownloadCount();
-                      } catch (e) {
-                        console.warn('Failed to remove downloaded post from dbStore', e);
-                        showToast('Could not remove record from database', 'error');
-                      }
+                    // Server already removes DB entry when id is provided to /delete-downloaded-image.
+                    if (typeof window.updateAppLoadingDownloadCount === 'function') {
+                      window.updateAppLoadingDownloadCount(-1);
                     }
 
                     postDiv.dataset.downloaded = 'false';
@@ -10270,7 +10264,7 @@ function queueCorruptedDownloadsPrompt(post) {
           showToast('Could not remove corrupted posts', 'error');
         }
         if (typeof window.updateAppLoadingDownloadCount === 'function') {
-          window.updateAppLoadingDownloadCount();
+          window.updateAppLoadingDownloadCount(-removedCount);
         }
         if (window.isViewingDownloadsGallery && typeof showDownloadsGallery === 'function') {
           window.location.reload();
@@ -10354,7 +10348,7 @@ function createBooruImageElement(post, maxHeight = null, imageWidth = null) {
   mediaElement.addEventListener('load', async () => {
     mediaElement.style.opacity = '1';
     mediaElement.classList.add('loaded');
-    loader.style.display = 'none';
+    loader.remove();
     
     // Update artist loaded dates when post is displayed in gallery
     try {
@@ -10686,23 +10680,8 @@ function createBooruImageElement(post, maxHeight = null, imageWidth = null) {
           console.warn('HTTP error deleting file', response.status, data.error || data);
           showToast('Failed to delete file: ' + (data.error || `HTTP ${response.status}`), 'error');
         } else if (data.success) {
-          // also attempt client‑side removal in case server-side failed silently
-          if (typeof dbStore !== 'undefined' && dbStore && post && post.id) {
-            try { await dbStore.removeDownloadedPost(post.id); window.updateAppLoadingDownloadCount(); } catch (e) { console.warn('Failed to remove downloaded post from dbStore', e); showToast('Could not remove record from database', 'error'); }
-          }
-          
-          // Clear blob caches for this post
-          if (window._postBlobCache) {
-            window._postBlobCache.delete(String(post.id));
-          }
-          if (window._previewBlobUrls && window._previewBlobUrls.has(String(post.id))) {
-            const blobUrl = window._previewBlobUrls.get(String(post.id));
-            try {
-              URL.revokeObjectURL(blobUrl);
-            } catch (e) {
-              console.warn('Failed to revoke blob URL:', e);
-            }
-            window._previewBlobUrls.delete(String(post.id));
+          if (typeof window.updateAppLoadingDownloadCount === 'function') {
+            window.updateAppLoadingDownloadCount(-1);
           }
           
           container.dataset.downloaded = 'false';
@@ -11933,7 +11912,7 @@ function showPreviewForElement(mediaElement, forceVideoLoad = false, hidden = fa
       if (needsDetailFetch && !detailFetchInProgress && !timerAlreadyRunning && !isDownloadsGallery) {
         // Set up delayed detail fetch (only if timer isn't already running)
         // Use the same delay as high-quality loading (from hqHoverDelay setting, default 150ms for preview delay, or 400ms for quality delay)
-        const scraperDetailDelay = window.scraperDetailDelay ?? 400; // Default to 400ms like HQ quality load
+        const scraperDetailDelay = window.hqHoverDelay ?? 400; // Default to 400ms like HQ quality load
         
         // Set up delayed detail fetch
         mediaElement._scraperDetailDelayTimer = setTimeout(() => {
@@ -12013,8 +11992,6 @@ function showPreviewForElement(mediaElement, forceVideoLoad = false, hidden = fa
             }
             
             // Always start HQ loading after detail fetch completes, regardless of hover state
-            // Set skip delay flag so HQ loading happens immediately (0ms delay)
-            mediaElement._skipHqDelay = true;
             
             // Verify user is still hovering
             const elementsUnderCursor = document.elementsFromPoint(lastMouseX, lastMouseY);
@@ -12084,7 +12061,7 @@ function showPreviewForElement(mediaElement, forceVideoLoad = false, hidden = fa
             const overlay = booruPreviewMediaContainer.querySelector('.preview-loading-overlay');
             if (overlay) overlay.remove();
             if (imageLoader) {
-              imageLoader.style.display = 'none';
+              imageLoader.remove();
             }
           });
         }, scraperDetailDelay);
@@ -12463,7 +12440,7 @@ function showPreviewForElement(mediaElement, forceVideoLoad = false, hidden = fa
       updateHqLoadingCounter(-1);
       const overlay = booruPreviewMediaContainer.querySelector('.preview-loading-overlay');
       if (overlay) overlay.remove();
-      if (galleryLoader) galleryLoader.style.display = 'none';
+      if (galleryLoader) galleryLoader.remove();
       if (downloadBtn && originalDownloadHTML !== null) downloadBtn.innerHTML = originalDownloadHTML;
     }, { once: true });
 
@@ -12478,7 +12455,7 @@ function showPreviewForElement(mediaElement, forceVideoLoad = false, hidden = fa
       updateHqLoadingCounter(-1);
       const overlay = booruPreviewMediaContainer.querySelector('.preview-loading-overlay');
       if (overlay) overlay.remove();
-      if (galleryLoader) galleryLoader.style.display = 'none';
+      if (galleryLoader) galleryLoader.remove();
       if (downloadBtn && originalDownloadHTML !== null) downloadBtn.innerHTML = originalDownloadHTML;
     }, { once: true });
   } else {
@@ -12575,8 +12552,7 @@ function showPreviewForElement(mediaElement, forceVideoLoad = false, hidden = fa
           mediaElement._hqDelayTimer = null;
         }
         // Start loading high quality after 400ms hover delay (or immediately if skipping delay)
-        const hqDelay = mediaElement._skipHqDelay ? 0 : 400;
-        mediaElement._skipHqDelay = false; // Reset flag for next time
+        const hqDelay = window.hqHoverDelay ?? 400;
         mediaElement._hqDelayTimer = setTimeout(() => {
           mediaElement._hqDelayTimer = null;
           // Guard: another call may have already started the load
@@ -12630,7 +12606,7 @@ function showPreviewForElement(mediaElement, forceVideoLoad = false, hidden = fa
             }
             downloadBtn.innerHTML = '<i class="fas fa-circle-notch fa-spin"></i>';
           }
-          galleryItem.querySelector('.item-image-loader').style.display = 'none';
+          galleryItem.querySelector('.item-image-loader')?.remove();
           
           // Enqueue HQ load task to unified download queue for concurrency management
           const hqLoadTask = async () => {
@@ -12873,7 +12849,7 @@ function showPreviewForElement(mediaElement, forceVideoLoad = false, hidden = fa
                   });
                   updateHqLoadingCounter(-1, taskId);
                   const loader = mediaElement.parentElement?.querySelector('.item-image-loader');
-                  if (loader) loader.style.display = 'none';
+                  if (loader) loader.remove();
                   // Restore download button on error
                   const currentGalleryItem = mediaElement.closest('.booru-image-item');
                   const currentDownloadBtn = currentGalleryItem?.querySelector('.booru-download-btn');
@@ -12946,7 +12922,7 @@ function showPreviewForElement(mediaElement, forceVideoLoad = false, hidden = fa
                 });
                 updateHqLoadingCounter(-1, taskId);
                 const loader = mediaElement.parentElement?.querySelector('.item-image-loader');
-                if (loader) loader.style.display = 'none';
+                if (loader) loader.remove();
                 const currentGalleryItem = mediaElement.closest('.booru-image-item');
                 const currentDownloadBtn = currentGalleryItem?.querySelector('.booru-download-btn');
                 if (currentDownloadBtn && originalDownloadHTML !== null) {

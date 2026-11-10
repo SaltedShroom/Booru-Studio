@@ -453,19 +453,40 @@
           <div class="app-loading-download-container" id="app-loading-download-container">
             <div id="app-loading-download-count" class="app-loading-download-count"></div>
             <div class="app-download-size" id="app-download-size">
-              <span class="app-download-size-icon"><i class="fa-solid fa-database"></i> </span>
-              <div id="download-digit-1" class="download-digit odometer" style="display: none;">0</div>
-              <div id="download-digit-2" class="download-digit odometer" style="display: none;">0</div>
-              <div id="download-digit-3" class="download-digit odometer" style="display: none;">0</div>
-              <span id="download-digit-separator-1" class="download-digit-separator" style="display: none;">.</span>
-              <div id="download-digit-4" class="download-digit odometer">0</div>
-              <div id="download-digit-5" class="download-digit odometer">0</div>
-              <div id="download-digit-6" class="download-digit odometer">0</div>
-              <span class="download-digit-separator">.</span>
-              <div id="download-digit-7" class="download-digit odometer">0</div>
-              <div id="download-digit-8" class="download-digit odometer">0</div>
-              <div id="download-digit-9" class="download-digit odometer">0</div>
-              <span id="app-download-size-mb"> MB</span>
+              <div class="app-download-size-container">
+                <span class="app-download-size-total" title="Total Downloaded">
+                  <span class="app-download-size-icon"><i class="fa-solid fa-database"></i> </span>
+                  <div id="download-digit-1" class="download-digit odometer" style="display: none;">0</div>
+                  <div id="download-digit-2" class="download-digit odometer" style="display: none;">0</div>
+                  <div id="download-digit-3" class="download-digit odometer" style="display: none;">0</div>
+                  <span id="download-digit-separator-1" class="download-digit-separator" style="display: none;">.</span>
+                  <div id="download-digit-4" class="download-digit odometer">0</div>
+                  <div id="download-digit-5" class="download-digit odometer">0</div>
+                  <div id="download-digit-6" class="download-digit odometer">0</div>
+                  <span class="download-digit-separator">.</span>
+                  <div id="download-digit-7" class="download-digit odometer">0</div>
+                  <div id="download-digit-8" class="download-digit odometer">0</div>
+                  <div id="download-digit-9" class="download-digit odometer">0</div>
+                  <span id="app-download-size-mb"> MB</span>
+                </span>
+                <span class="app-download-size-today" title="Downloaded Today">
+                  <i class="fa-solid fa-plus"></i>
+                  <span class="app-download-size-today-odometer">
+                    <div id="today-download-digit-1" class="today-download-digit odometer" style="display: none;">0</div>
+                    <div id="today-download-digit-2" class="today-download-digit odometer" style="display: none;">0</div>
+                    <div id="today-download-digit-3" class="today-download-digit odometer" style="display: none;">0</div>
+                    <span id="today-download-digit-separator-1" class="download-digit-separator" style="display: none;">.</span>
+                    <div id="today-download-digit-4" class="today-download-digit odometer">0</div>
+                    <div id="today-download-digit-5" class="today-download-digit odometer">0</div>
+                    <div id="today-download-digit-6" class="today-download-digit odometer">0</div>
+                    <span class="download-digit-separator">.</span>
+                    <div id="today-download-digit-7" class="today-download-digit odometer">0</div>
+                    <div id="today-download-digit-8" class="today-download-digit odometer">0</div>
+                    <div id="today-download-digit-9" class="today-download-digit odometer">0</div>
+                    <span id="app-today-download-size-mb"> MB</span>
+                  </span>
+                </span>
+              </div>
             </div>
           </div>
           <!-- Toast Notification Container -->
