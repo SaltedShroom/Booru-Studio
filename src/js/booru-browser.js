@@ -9527,7 +9527,7 @@ function renderBooruGallery(posts, append = true, addSeparators = true) {
       const imageElement = createBooruImageElement({ ...post, dataIndex: startIndex + i + 1 });
       booruGallery.appendChild(imageElement);
       lastArtist = post.artist;
-      let visibilityDelay = 1000 * (1 - Math.exp(-0.05 * i));
+      let visibilityDelay = 1000 * ((1 - Math.exp(-0.05 * i)) * 3);
       setTimeout(() => {
         if (imageElement) imageElement.classList.add('visible', 'jg-entry-visible');
       }, visibilityDelay);
