@@ -17,6 +17,7 @@
   --surface-darkest: #171b26;
   --text-primary: #e8e8e8;
   --text-secondary: #a0a0a0;
+  --rating-star-color: #8b8b8b;
   --nav-tab-background: #3a3f52;
   --border: #3a3f52;
   --thumb: #3a3f52;
@@ -59,6 +60,7 @@
   --surface-hover: #f8f8f8;
   --text-primary: #242424;
   --text-secondary: #434343;
+  --rating-star-color: #cbcbcb;
   --nav-tab-background: #ffffff;
   --border: #b5b5b5;
   --thumb: #b5b5b5;
@@ -2527,7 +2529,7 @@ body, html {
 
 .toast {
   background: var(--surface);
-  color: var(--text-primary);
+  color: white;
   padding: 8px 16px;
   border-radius: 2px;
   box-shadow: 0 4px 12px rgba(0, 0, 0, 0.5);
@@ -3529,7 +3531,7 @@ body, html {
   padding: 2px !important;
   border-radius: 50%;
   aspect-ratio: 1 / 1;
-  color: var(--text-primary);
+  color: white;
   cursor: pointer;
   display: flex;
   align-items: center;
@@ -3621,7 +3623,7 @@ body, html {
 .booru-rating-stars .booru-rating-star {
   background: none;
   border: none;
-  color: #999;
+  color: var(--rating-star-color);
   cursor: pointer;
   font-size: calc(var(--booru-image-size) / 220 * 10);
   padding: 0;
@@ -3634,7 +3636,7 @@ body, html {
 
 .booru-rating-star:hover,
 .booru-rating-star.hover {
-  color: rgba(255, 215, 0, 0.6);
+  color: rgba(255, 217, 0, 0.75);
 }
 
 .booru-rating-star.active {
@@ -4053,13 +4055,14 @@ body, html {
 
 .booru-preview-meta-title {
   background-color: var(--border);
-  color: var(--text-primary);
+  color: white !important;
+  border: 2px solid var(--border);
   margin-right: 4px;
 }
 .booru-preview-meta-title:hover {
   cursor: default !important;
   background-color: var(--border) !important;
-  color: var(--text-primary) !important;
+  color: white !important;
   opacity: 1 !important;
 }
 

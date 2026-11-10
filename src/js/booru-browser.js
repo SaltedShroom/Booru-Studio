@@ -11357,6 +11357,7 @@ function setPreviewCustomMeta(booruPreviewCustomMeta, metaTags) {
     titleElem.textContent = decodeHtmlEntities(title);
     if (color) {
       titleElem.style.backgroundColor = color;
+      titleElem.style.borderColor = color;
     }
     container.appendChild(titleElem);
 
@@ -11369,7 +11370,7 @@ function setPreviewCustomMeta(booruPreviewCustomMeta, metaTags) {
       tagElem.className = 'booru-preview-meta-tag booru-tag';
       tagElem.textContent = decodedTag;
       if (color) {
-        tagElem.style.border = `1px solid ${color}`;
+        tagElem.style.border = `2px solid ${color}`;
       }
       
       // Add click handler (only works when preview is frozen)
