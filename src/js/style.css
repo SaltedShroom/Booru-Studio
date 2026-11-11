@@ -5061,6 +5061,12 @@ textarea.settings-input {
   display: flex;
   justify-content: space-between;
   align-items: flex-start;
+  min-width: 0;
+}
+
+.booru-source-card-header > div:first-child {
+  flex: 1 1 auto;
+  min-width: 0;
 }
 
 .booru-source-card-title {
@@ -5068,17 +5074,24 @@ textarea.settings-input {
   font-weight: 600;
   color: var(--text-primary);
   margin: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
 .booru-source-card-id {
   font-size: 12px;
   color: var(--text-secondary);
   margin-top: 4px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
 .booru-source-card-actions {
   display: flex;
   gap: 8px;
+  flex: 0 0 auto;
 }
 
 .btn-icon-small {

@@ -8246,22 +8246,94 @@ async function loadScraperBooru(sourceId, append) {
   document.getElementById('image-size-slider')?.dispatchEvent(new Event('input'));
 
   try {
-    // Build list page URL with search tags
-    let listUrl = scraper.listPageUrl;
-    
-    if (searchTagsArray && searchTagsArray.length > 0) {
-      const tagString = searchTagsArray.join(scraper.searchTagSeparator || '+');
-      const separator = listUrl.includes('?') ? '&' : '?';
-      const tagParam = scraper.searchTagParam || 'tags';
-      listUrl = `${listUrl}${separator}${tagParam}=${encodeURIComponent(tagString)}`;
-    }
+    const configuredPaginationStrategy = scraper.paginationStrategy || 'offset';
+    const looksLikePathList = (() => {
+      try {
+        const pathname = new URL(scraper.listPageUrl).pathname.replace(/\/+$/, '');
+        return /\/post\/list(?:\/|$)/i.test(pathname);
+      } catch (err) {
+        return /\/post\/list(?:\/|$)/i.test((scraper.listPageUrl || '').replace(/\/+$/, ''));
+      }
+    })();
+    const hasQueryInBaseUrl = (() => {
+      try {
+        return new URL(scraper.listPageUrl).search.length > 0;
+      } catch (err) {
+        return (scraper.listPageUrl || '').includes('?');
+      }
+    })();
+    const hasExplicitPagePattern = typeof scraper.paginationParam === 'string' && scraper.paginationParam.includes('{page}');
+    const paginationStrategy = (
+      configuredPaginationStrategy === 'path' ||
+      (configuredPaginationStrategy === 'page-number' && looksLikePathList && !hasQueryInBaseUrl && !hasExplicitPagePattern)
+    ) ? 'path' : configuredPaginationStrategy;
+    const getInitialPathPage = () => {
+      try {
+        const pathname = new URL(scraper.listPageUrl).pathname.replace(/\/+$/, '');
+        const pageMatch = pathname.match(/\/(\d+)$/);
+        if (pageMatch) {
+          const parsed = parseInt(pageMatch[1], 10);
+          if (!Number.isNaN(parsed) && parsed > 0) return parsed;
+        }
+      } catch (err) {
+        // ignore and fall back
+      }
+      return 1;
+    };
+    const buildPathListUrl = (pageNumber) => {
+      const urlObj = new URL(scraper.listPageUrl);
+      const currentPath = urlObj.pathname.replace(/\/+$/, '');
+      const listPrefixMatch = currentPath.match(/^(.*\/list)(?:\/.*)?$/i);
+      const listPrefix = listPrefixMatch ? listPrefixMatch[1] : currentPath.replace(/\/\d+$/, '');
+      const tagString = (searchTagsArray && searchTagsArray.length > 0)
+        ? searchTagsArray.join(scraper.searchTagSeparator || ' ')
+        : '';
+      const pathParts = [listPrefix];
+      if (tagString) {
+        pathParts.push(encodeURIComponent(tagString));
+      }
+      pathParts.push(String(pageNumber));
+      urlObj.pathname = pathParts.join('/');
+      urlObj.search = '';
+      return urlObj.toString();
+    };
 
-    // Add pagination if we're appending (Load More)
-    if (append && booruPaginationToken) {
-      const paginationSeparator = listUrl.includes('?') ? '&' : '?';
-      if (scraper.paginationStrategy === 'offset') {
-        const param = scraper.paginationParam || 'pid';
-        listUrl = `${listUrl}${paginationSeparator}${param}=${booruPaginationToken}`;
+    // Build list page URL with search tags + pagination
+    let listUrl = scraper.listPageUrl;
+    if (paginationStrategy === 'path') {
+      const initialPage = getInitialPathPage();
+      const currentPage = append
+        ? ((booruPaginationToken !== null && typeof booruPaginationToken !== 'undefined')
+          ? parseInt(booruPaginationToken, 10) + 1
+          : initialPage)
+        : initialPage;
+      listUrl = buildPathListUrl(currentPage);
+    } else {
+      if (searchTagsArray && searchTagsArray.length > 0) {
+        const tagString = searchTagsArray.join(scraper.searchTagSeparator || '+');
+        const separator = listUrl.includes('?') ? '&' : '?';
+        const tagParam = scraper.searchTagParam || 'tags';
+        listUrl = `${listUrl}${separator}${tagParam}=${encodeURIComponent(tagString)}`;
+      }
+
+      // Add pagination if we're appending (Load More)
+      if (append && booruPaginationToken !== null && typeof booruPaginationToken !== 'undefined') {
+        const paginationSeparator = listUrl.includes('?') ? '&' : '?';
+        if (paginationStrategy === 'offset') {
+          const param = scraper.paginationParam || 'pid';
+          listUrl = `${listUrl}${paginationSeparator}${param}=${booruPaginationToken}`;
+        } else if (paginationStrategy === 'page-number') {
+          const nextPage = parseInt(booruPaginationToken, 10) + 1;
+          const paginationPattern = (scraper.paginationParam || '').trim();
+          if (paginationPattern && paginationPattern.includes('{page}')) {
+            listUrl = paginationPattern.startsWith('http')
+              ? paginationPattern.replace('{page}', String(nextPage))
+              : `${new URL(scraper.listPageUrl).origin}${paginationPattern.replace('{page}', String(nextPage))}`;
+          } else {
+            const param = paginationPattern || 'page';
+            listUrl = `${listUrl}${paginationSeparator}${param}=${nextPage}`;
+          }
+        }
       }
     }
 
@@ -8286,12 +8358,19 @@ async function loadScraperBooru(sourceId, append) {
           thumbnailWidthAttribute: scraper.thumbnailWidthAttribute || 'width',
           thumbnailHeightAttribute: scraper.thumbnailHeightAttribute || 'height',
           paginationLastPageSelector: scraper.paginationLastPageSelector,
+          paginationStrategy: paginationStrategy,
+          paginationParam: scraper.paginationParam,
           postsPerPage: scraper.postsPerPage || 42,
           // New selectors for initial tags and file type extraction
-          initialTagsAttribute: scraper.initialTagsAttribute,
-          initialFileTypeAttribute: scraper.initialFileTypeAttribute,
+          initialTagsAttribute: scraper.initialTagsAttribute || scraper.listTagsAttribute || scraper.tagsAttribute,
+          initialTagsSelector: scraper.initialTagsSelector || scraper.listTagsSelector,
+          detailTagTextExtraction: scraper.detailTagTextExtraction || 'text',
+          initialFileTypeAttribute: scraper.initialFileTypeAttribute || scraper.listFileTypeAttribute,
           initialFileTypeAttributeValue: scraper.initialFileTypeAttributeValue,
-          initialFileTypeGifTag: scraper.initialFileTypeGifTag
+          initialFileTypeGifTag: scraper.initialFileTypeGifTag,
+          fullImageUrlSelector: scraper.fullImageUrlSelector || scraper.hqUrlSelector || scraper.highQualityUrlSelector,
+          fullImageUrlAttribute: scraper.fullImageUrlAttribute || scraper.hqUrlAttribute || scraper.highQualityUrlAttribute || 'href',
+          fullImageUrlTextFilter: scraper.fullImageUrlTextFilter || scraper.hqUrlTextFilter || scraper.highQualityUrlTextFilter
         }
       }),
       signal: abortSignal
@@ -8307,7 +8386,17 @@ async function loadScraperBooru(sourceId, append) {
     }
 
     const scrapedPosts = scrapeData.data.posts || [];
-    let totalCount = scrapeData.data.totalCount || window.booruPosts.length + scrapedPosts.length;
+    const rawTotalCount = scrapeData.data.totalCount;
+    let totalCount = null;
+    if (rawTotalCount !== undefined && rawTotalCount !== null && rawTotalCount !== '') {
+      if (typeof rawTotalCount === 'string') {
+        const cleaned = rawTotalCount.replace('+', '');
+        const parsed = parseInt(cleaned, 10);
+        totalCount = Number.isNaN(parsed) ? null : parsed;
+      } else if (typeof rawTotalCount === 'number') {
+        totalCount = rawTotalCount;
+      }
+    }
     const postDetailPageUrl = scrapeData.data.postDetailPageUrl;
 
     // Store detail page URL for later use when fetching post details
@@ -8316,44 +8405,33 @@ async function loadScraperBooru(sourceId, append) {
     }
 
     // Update total count if available (including 0 as valid)
-    if (totalCount !== undefined && totalCount !== null) {
-      window.totalResultCount = totalCount;
+    if (rawTotalCount !== undefined && rawTotalCount !== null && rawTotalCount !== '') {
+      window.totalResultCount = rawTotalCount;
     } else if (!append) {
-      // No total count available - set to null so display shows "?"
+      // No total count available from source
       window.totalResultCount = null;
     }
 
     updateTotalCountDisplay();
 
-    totalCount = parseInt(totalCount.toString().replace('+', ''));
-
     if (scrapedPosts.length === 0) {
-      showToast('No matching images', 'error');
+      window.hasMoreResults = false;
+      if (!append) {
+        showToast('No matching images', 'error');
+      }
       if (booruLoading) booruLoading.style.display = 'none';
       return;
     }
 
-    // Check if we got fewer results than expected (possibly end of pagination)
-    // Use offset-aware logic: next offset < total available
+    // Check if we likely have more results
     const postsPerPage = scraper.postsPerPage || 42;
-    
+    const loadedSoFar = append ? (window.booruPosts.length + scrapedPosts.length) : scrapedPosts.length;
     if (scrapedPosts.length === 0) {
-      // No posts returned = definitely end of results
       window.hasMoreResults = false;
-    } else if (totalCount) {
-      // Will set token below, then check if it's less than total
-      if (append) {
-        // Token is being incremented below
-        window.hasMoreResults = (booruPaginationToken + postsPerPage) < totalCount;
-      } else {
-        // First load: token will be set to postsPerPage below
-        window.hasMoreResults = postsPerPage < totalCount;
-      }
-    } else if (scrapedPosts.length > 0) {
-      // No total count available, but we got posts - assume there might be more
-      window.hasMoreResults = true;
+    } else if (totalCount !== null) {
+      window.hasMoreResults = loadedSoFar < totalCount;
     } else {
-      window.hasMoreResults = false;
+      window.hasMoreResults = scrapedPosts.length >= postsPerPage;
     }
 
     // Normalize posts for gallery display
@@ -8395,7 +8473,7 @@ async function loadScraperBooru(sourceId, append) {
         thumbnailUrl: post.thumbnailUrl,
         tags: post.initialTags || [],
         artists: [],
-        imageUrl: post.thumbnailUrl,
+        imageUrl: post.imageUrl || post.thumbnailUrl,
         mediaType: post.initialFileType || 'image',
         _scraperDetailsLoaded: false,
         _isScraperPost: true
@@ -8409,16 +8487,26 @@ async function loadScraperBooru(sourceId, append) {
       normalizedPosts.push(normalizedPost);
     }
 
-    // Update pagination token for next load (offset-based pagination)
-    // Use postsPerPage as the increment, not the actual returned count
-    if (append) {
-      // If we're appending, increment the offset by postsPerPage
-      if (booruPaginationToken !== null && typeof booruPaginationToken !== 'undefined') {
-        booruPaginationToken += postsPerPage;
+    // Update pagination token for next load
+    if (paginationStrategy === 'path' || paginationStrategy === 'page-number') {
+      if (append) {
+        if (booruPaginationToken !== null && typeof booruPaginationToken !== 'undefined') {
+          booruPaginationToken = parseInt(booruPaginationToken, 10) + 1;
+        } else {
+          booruPaginationToken = 1;
+        }
+      } else {
+        booruPaginationToken = paginationStrategy === 'path' ? getInitialPathPage() : 1;
       }
     } else {
-      // First load: set initial offset for next load (postsPerPage, not actual count)
-      booruPaginationToken = postsPerPage;
+      // offset pagination token stores next pid offset
+      if (append) {
+        if (booruPaginationToken !== null && typeof booruPaginationToken !== 'undefined') {
+          booruPaginationToken += postsPerPage;
+        }
+      } else {
+        booruPaginationToken = postsPerPage;
+      }
     }
 
     // Merge downloaded posts from database into freshly loaded posts
@@ -11667,6 +11755,19 @@ async function fetchScraperPostDetails(postId, sourceId, forceFresh = true) {
     }
 
     const scraper = sourceConfig.scraper;
+
+    // Some scraper sources include all required data on the list page already.
+    // In that case, the browser should not force a detail-page fetch.
+    if (!scraper.detailImageSelector && !scraper.detailTagsSelector) {
+      if (previewItem.dataset.tags) {
+        return { tags: previewItem.dataset.tags };
+      }
+      return {
+        imageUrl: previewItem.dataset.imageUrl || mediaElement?.dataset.imageUrl || mediaElement?.src,
+        tags: previewItem.dataset.tags || null
+      };
+    }
+
     const detailResponse = await proxyFetch(postUrl);
     const detailHtml = await detailResponse.text();
 

@@ -1976,11 +1976,22 @@ const server = isWorkerMode ? null : http.createServer((req, res) => {
         }
 
         // Build list page URL with artist tags
+        const paginationStrategy = scraper.paginationStrategy || 'offset';
         let listUrl = scraper.listPageUrl;
         const tagString = artist.artist; // Use artist name as search tag
-        const separator = listUrl.includes('?') ? '&' : '?';
-        const tagParam = scraper.searchTagParam || 'tags';
-        listUrl = `${listUrl}${separator}${tagParam}=${encodeURIComponent(tagString)}`;
+        if (paginationStrategy === 'path') {
+          const urlObj = new URL(scraper.listPageUrl);
+          const currentPath = urlObj.pathname.replace(/\/+$/, '');
+          const listPrefixMatch = currentPath.match(/^(.*\/list)(?:\/.*)?$/i);
+          const listPrefix = listPrefixMatch ? listPrefixMatch[1] : currentPath.replace(/\/\d+$/, '');
+          urlObj.pathname = `${listPrefix}/${encodeURIComponent(tagString)}/1`;
+          urlObj.search = '';
+          listUrl = urlObj.toString();
+        } else {
+          const separator = listUrl.includes('?') ? '&' : '?';
+          const tagParam = scraper.searchTagParam || 'tags';
+          listUrl = `${listUrl}${separator}${tagParam}=${encodeURIComponent(tagString)}`;
+        }
 
         // Fetch the list page HTML via http/https
         const parsedUrl = new URL(listUrl);
@@ -2047,11 +2058,18 @@ const server = isWorkerMode ? null : http.createServer((req, res) => {
                     thumbnailWidthAttribute: scraper.thumbnailWidthAttribute || 'width',
                     thumbnailHeightAttribute: scraper.thumbnailHeightAttribute || 'height',
                     paginationLastPageSelector: scraper.paginationLastPageSelector,
+                    paginationStrategy: scraper.paginationStrategy,
+                    paginationParam: scraper.paginationParam,
                     postsPerPage: scraper.postsPerPage || 42,
                     initialTagsAttribute: scraper.initialTagsAttribute,
+                    initialTagsSelector: scraper.initialTagsSelector || scraper.listTagsSelector,
+                    detailTagTextExtraction: scraper.detailTagTextExtraction || 'text',
                     initialFileTypeAttribute: scraper.initialFileTypeAttribute,
                     initialFileTypeAttributeValue: scraper.initialFileTypeAttributeValue,
-                    initialFileTypeGifTag: scraper.initialFileTypeGifTag
+                    initialFileTypeGifTag: scraper.initialFileTypeGifTag,
+                    fullImageUrlSelector: scraper.fullImageUrlSelector || scraper.hqUrlSelector || scraper.highQualityUrlSelector,
+                    fullImageUrlAttribute: scraper.fullImageUrlAttribute || scraper.hqUrlAttribute || scraper.highQualityUrlAttribute || 'href',
+                    fullImageUrlTextFilter: scraper.fullImageUrlTextFilter || scraper.hqUrlTextFilter || scraper.highQualityUrlTextFilter
                   }
                 }));
                 scrapePostReq.end();
@@ -5333,6 +5351,88 @@ function scrapePageWithSelectors($, selectors) {
     totalCount: null
   };
 
+  const getAttr = ($node, attributeName) => {
+    if (!$node || !$node.length) return null;
+    const value = $node.attr(attributeName);
+    return value && value.trim() ? value.trim() : null;
+  };
+  const extractTagText = ($el, extractionMode) => {
+    if (!$el || !$el.length) return '';
+    const raw = ($el.text() || '').trim();
+    if (!raw) return '';
+    if (extractionMode === 'innerText') {
+      return raw;
+    }
+    if (extractionMode === 'textContent') {
+      return raw.replace(/\s+/g, ' ');
+    }
+    return raw;
+  };
+
+  const getFullImageUrl = ($post, $image, selectors) => {
+    const explicitSelector = selectors.fullImageUrlSelector || selectors.hqUrlSelector || selectors.highQualityUrlSelector;
+    const textFilter = (selectors.fullImageUrlTextFilter || selectors.hqUrlTextFilter || selectors.highQualityUrlTextFilter || '').toLowerCase().trim();
+    const urlSelectors = [];
+    if (explicitSelector) {
+      urlSelectors.push(explicitSelector);
+    } else if (textFilter) {
+      urlSelectors.push('a[href]');
+    }
+    if (selectors.imageUrlSelector) {
+      urlSelectors.push(selectors.imageUrlSelector);
+    }
+
+    const candidates = [];
+    for (const selector of urlSelectors) {
+      const $matches = $post.find(selector);
+      if ($matches && $matches.length) {
+        $matches.each((i, el) => candidates.push($(el)));
+      }
+      if ($post.is(selector)) {
+        candidates.push($post);
+      }
+    }
+
+    const fallbackTextFilters = ['file only', 'download', 'original', 'full size'];
+    const filtersToTry = textFilter ? [textFilter, ...fallbackTextFilters.filter(v => v !== textFilter)] : fallbackTextFilters;
+
+    if (textFilter) {
+      for (const filter of filtersToTry) {
+        const matchingCandidate = candidates.find($candidate => {
+          const candidateText = ($candidate.text() || '').trim().toLowerCase();
+          return candidateText.includes(filter);
+        });
+        if (matchingCandidate) {
+          const attrName = selectors.fullImageUrlAttribute || selectors.hqUrlAttribute || selectors.highQualityUrlAttribute || 'href';
+          const value = getAttr(matchingCandidate, attrName);
+          if (value) return value;
+        }
+      }
+    }
+
+    // If a specific HQ selector was not configured, try the file-only anchor generically
+    if (!explicitSelector && textFilter) {
+      const $fileOnlyLink = $post.find('a').filter((i, el) => {
+        const text = ($(el).text() || '').trim().toLowerCase();
+        return /file only|download|full size|original/i.test(text);
+      }).first();
+      if ($fileOnlyLink && $fileOnlyLink.length) {
+        const href = getAttr($fileOnlyLink, 'href');
+        if (href) return href;
+      }
+    }
+
+    if (explicitSelector) {
+      for (const $candidate of candidates) {
+        const attrName = selectors.fullImageUrlAttribute || selectors.hqUrlAttribute || selectors.highQualityUrlAttribute || 'href';
+        const value = getAttr($candidate, attrName);
+        if (value) return value;
+      }
+    }
+
+    return getAttr($image, selectors.imageUrlAttribute || 'src');
+  };
+
   // If listPageSelector is provided, we're scraping the posts list page
   if (selectors.listPageSelector) {
     
@@ -5345,18 +5445,20 @@ function scrapePageWithSelectors($, selectors) {
       
       // Get thumbnail image URL
       const $image = $post.find(selectors.imageUrlSelector || 'img').first();
-      const imageUrl = $image.attr(selectors.imageUrlAttribute || 'src');
+      const imageUrl = getAttr($image, selectors.imageUrlAttribute || 'src') || getAttr($post, selectors.imageUrlAttribute || 'src');
+      const fullImageUrl = getFullImageUrl($post, $image, selectors);
       
-      if (postUrl && imageUrl) {
+      if (postUrl && (imageUrl || fullImageUrl)) {
         const post = {
           url: postUrl,
-          thumbnailUrl: imageUrl
+          thumbnailUrl: imageUrl || fullImageUrl,
+          imageUrl: fullImageUrl || imageUrl
         };
         
         // Extract thumbnail dimensions if specified
         if (selectors.thumbnailWidthAttribute || selectors.thumbnailHeightAttribute) {
-          const width = selectors.thumbnailWidthAttribute ? $image.attr(selectors.thumbnailWidthAttribute) : null;
-          const height = selectors.thumbnailHeightAttribute ? $image.attr(selectors.thumbnailHeightAttribute) : null;
+          const width = getAttr($image, selectors.thumbnailWidthAttribute) || getAttr($post, selectors.thumbnailWidthAttribute);
+          const height = getAttr($image, selectors.thumbnailHeightAttribute) || getAttr($post, selectors.thumbnailHeightAttribute);
           
           if (width && height) {
             const w = parseInt(width, 10);
@@ -5369,16 +5471,30 @@ function scrapePageWithSelectors($, selectors) {
           }
         }
         
-        // Extract initial tags from attribute if specified (e.g., from title attribute)
-        if (selectors.initialTagsAttribute) {
-          const tagsString = $image.attr(selectors.initialTagsAttribute);
+        // Extract initial tags from configured attribute and/or selector
+        const collectedTags = [];
+        const tagsAttribute = selectors.initialTagsAttribute || selectors.listTagsAttribute || selectors.tagsAttribute;
+        if (tagsAttribute) {
+          const tagsString = getAttr($post, tagsAttribute) || getAttr($image, tagsAttribute);
           if (tagsString) {
-            // Parse comma-separated tags and split by spaces within underscores
-            post.initialTags = tagsString
-              .split(',')
+            collectedTags.push(...tagsString
+              .split(/[\s,]+/)
               .map(tag => tag.trim().replace(/\s+/g, '_'))
-              .filter(tag => tag.length > 0);
+              .filter(tag => tag.length > 0));
           }
+        }
+        const tagsSelector = selectors.initialTagsSelector || selectors.listTagsSelector;
+        if (tagsSelector) {
+          $post.find(tagsSelector).each((i, el) => {
+            const extracted = extractTagText($(el), selectors.detailTagTextExtraction || 'text')
+              .replace(/\s+/g, '_');
+            if (extracted) {
+              collectedTags.push(extracted);
+            }
+          });
+        }
+        if (collectedTags.length > 0) {
+          post.initialTags = Array.from(new Set(collectedTags));
         }
         
         // Determine initial file type (image, gif, video)
@@ -5387,7 +5503,7 @@ function scrapePageWithSelectors($, selectors) {
         
         // Check for video indicator in image element attributes
         if (selectors.initialFileTypeAttribute && selectors.initialFileTypeAttributeValue) {
-          const attrValue = $image.attr(selectors.initialFileTypeAttribute);
+          const attrValue = getAttr($image, selectors.initialFileTypeAttribute) || getAttr($post, selectors.initialFileTypeAttribute);
           if (attrValue && attrValue.includes(selectors.initialFileTypeAttributeValue)) {
             post.initialFileType = 'video';
           }
@@ -5411,11 +5527,31 @@ function scrapePageWithSelectors($, selectors) {
     if ($lastPageLink && $lastPageLink.length > 0) {
       const href = $lastPageLink.attr('href');
       if (href) {
-        // Extract pid parameter from href
-        const pidMatch = href.match(/pid=(\d+)/);
-        if (pidMatch) {
-          const lastPagePid = parseInt(pidMatch[1], 10);
-          results.totalCount = lastPagePid + 1 + "+";
+        const strategy = selectors.paginationStrategy || 'offset';
+        if (strategy === 'path') {
+          const pageMatch = href.match(/\/(\d+)(?:\/)?(?:[?#].*)?$/);
+          if (pageMatch) {
+            const lastPage = parseInt(pageMatch[1], 10);
+            if (!Number.isNaN(lastPage) && lastPage > 0) {
+              results.totalCount = (lastPage * selectors.postsPerPage) + "+";
+            }
+          }
+        } else if (strategy === 'page-number') {
+          const pageParam = selectors.paginationParam || 'page';
+          const pageMatch = href.match(new RegExp(`[?&]${pageParam}=([0-9]+)`));
+          if (pageMatch) {
+            const lastPage = parseInt(pageMatch[1], 10);
+            if (!Number.isNaN(lastPage) && lastPage > 0) {
+              results.totalCount = (lastPage * selectors.postsPerPage) + "+";
+            }
+          }
+        } else {
+          // Offset style pagination (pid=0, pid=42...)
+          const pidMatch = href.match(/pid=(\d+)/);
+          if (pidMatch) {
+            const lastPagePid = parseInt(pidMatch[1], 10);
+            results.totalCount = lastPagePid + 1 + "+";
+          }
         }
       }
     }
@@ -5483,7 +5619,7 @@ function scrapePageWithSelectors($, selectors) {
     // Get general tags
     if (selectors.detailGeneralTagsSelector) {
       $tagsContainer.find(selectors.detailGeneralTagsSelector).each((i, el) => {
-        const text = $(el).text().trim().replace(/\s+/g, '_');
+        const text = extractTagText($(el), selectors.detailTagTextExtraction || 'text').replace(/\s+/g, '_');
         if (text) results_tags.general.push(text);
       });
     }
@@ -5499,7 +5635,7 @@ function scrapePageWithSelectors($, selectors) {
         const found = $tagsContainer.find(selector).length;
         
         $tagsContainer.find(selector).each((i, el) => {
-          const text = $(el).text().trim().replace(/\s+/g, '_');
+          const text = extractTagText($(el), selectors.detailTagTextExtraction || 'text').replace(/\s+/g, '_');
           if (text && !results_tags.artists.includes(text)) {
             results_tags.artists.push(text);
           }

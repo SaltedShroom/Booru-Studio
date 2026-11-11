@@ -848,11 +848,16 @@ class BooruSourcesManager {
       if (!obj.scraper || typeof obj.scraper !== 'object') {
         errors.push('Missing field: scraper (must be an object with selectors)');
       } else {
-        const requiredSelectors = ['listPageSelector', 'postLinkSelector', 'imageUrlSelector'];
+        const requiredSelectors = ['listPageUrl', 'listPageSelector', 'postLinkSelector', 'imageUrlSelector'];
         for (const selector of requiredSelectors) {
           if (!obj.scraper[selector] || typeof obj.scraper[selector] !== 'string') {
             errors.push(`Missing or invalid field: scraper.${selector} (must be a non-empty string)`);
           }
+        }
+
+        // Detail-page selectors are optional for list-only sources.
+        if (obj.scraper.detailImageSelector !== undefined && obj.scraper.detailImageSelector !== null && typeof obj.scraper.detailImageSelector !== 'string') {
+          errors.push('scraper.detailImageSelector must be a string when provided');
         }
       }
     } else {
@@ -1161,9 +1166,13 @@ class BooruSourcesManager {
       document.getElementById('scraper-thumbnailWidthAttribute').value = source.scraper.thumbnailWidthAttribute || 'width';
       document.getElementById('scraper-thumbnailHeightAttribute').value = source.scraper.thumbnailHeightAttribute || 'height';
       document.getElementById('scraper-initialTagsAttribute').value = source.scraper.initialTagsAttribute || '';
+      document.getElementById('scraper-initialTagsSelector').value = source.scraper.initialTagsSelector || source.scraper.listTagsSelector || '';
       document.getElementById('scraper-initialFileTypeAttribute').value = source.scraper.initialFileTypeAttribute || '';
       document.getElementById('scraper-initialFileTypeAttributeValue').value = source.scraper.initialFileTypeAttributeValue || '';
       document.getElementById('scraper-initialFileTypeGifTag').value = source.scraper.initialFileTypeGifTag || '';
+      document.getElementById('scraper-fullImageUrlSelector').value = source.scraper.fullImageUrlSelector || source.scraper.hqUrlSelector || source.scraper.highQualityUrlSelector || '';
+      document.getElementById('scraper-fullImageUrlAttribute').value = source.scraper.fullImageUrlAttribute || source.scraper.hqUrlAttribute || source.scraper.highQualityUrlAttribute || 'href';
+      document.getElementById('scraper-fullImageUrlTextFilter').value = source.scraper.fullImageUrlTextFilter || source.scraper.hqUrlTextFilter || source.scraper.highQualityUrlTextFilter || '';
       document.getElementById('scraper-detailImageSelector').value = source.scraper.detailImageSelector || '';
       document.getElementById('scraper-detailImageAttribute').value = source.scraper.detailImageAttribute || 'src';
       document.getElementById('scraper-detailTagsSelector').value = source.scraper.detailTagsSelector || '';
@@ -1283,9 +1292,13 @@ class BooruSourcesManager {
         thumbnailWidthAttribute: document.getElementById('scraper-thumbnailWidthAttribute').value.trim() || 'width',
         thumbnailHeightAttribute: document.getElementById('scraper-thumbnailHeightAttribute').value.trim() || 'height',
         initialTagsAttribute: document.getElementById('scraper-initialTagsAttribute').value.trim() || undefined,
+        initialTagsSelector: document.getElementById('scraper-initialTagsSelector').value.trim() || undefined,
         initialFileTypeAttribute: document.getElementById('scraper-initialFileTypeAttribute').value.trim() || undefined,
         initialFileTypeAttributeValue: document.getElementById('scraper-initialFileTypeAttributeValue').value.trim() || undefined,
         initialFileTypeGifTag: document.getElementById('scraper-initialFileTypeGifTag').value.trim() || undefined,
+        fullImageUrlSelector: document.getElementById('scraper-fullImageUrlSelector').value.trim() || undefined,
+        fullImageUrlAttribute: document.getElementById('scraper-fullImageUrlAttribute').value.trim() || 'href',
+        fullImageUrlTextFilter: document.getElementById('scraper-fullImageUrlTextFilter').value.trim() || undefined,
         detailImageSelector: document.getElementById('scraper-detailImageSelector').value.trim(),
         detailImageAttribute: document.getElementById('scraper-detailImageAttribute').value.trim() || 'src',
         detailTagsSelector: document.getElementById('scraper-detailTagsSelector').value.trim(),
@@ -1374,11 +1387,16 @@ class BooruSourcesManager {
       if (!data.scraper) {
         errors.push('Scraper configuration is required');
       } else {
-        const required = ['listPageUrl', 'listPageSelector', 'postLinkSelector', 'imageUrlSelector', 'detailImageSelector', 'detailTagsSelector', 'detailGeneralTagsSelector'];
+        const required = ['listPageUrl', 'listPageSelector', 'postLinkSelector', 'imageUrlSelector'];
         for (const field of required) {
           if (!data.scraper[field]) {
             errors.push(`Scraper field "${field}" is required`);
           }
+        }
+
+        // Detail-page selectors are optional; only validate them if present.
+        if (data.scraper.detailImageSelector && typeof data.scraper.detailImageSelector !== 'string') {
+          errors.push('Scraper field "detailImageSelector" must be a string when provided');
         }
       }
     } else {
@@ -1676,8 +1694,19 @@ class BooruSourcesManager {
                 imageUrlAttribute: source.scraper.imageUrlAttribute || 'src',
                 thumbnailWidthAttribute: source.scraper.thumbnailWidthAttribute || 'width',
                 thumbnailHeightAttribute: source.scraper.thumbnailHeightAttribute || 'height',
+                initialTagsAttribute: source.scraper.initialTagsAttribute || source.scraper.listTagsAttribute || source.scraper.tagsAttribute,
+                initialTagsSelector: source.scraper.initialTagsSelector || source.scraper.listTagsSelector,
+                detailTagTextExtraction: source.scraper.detailTagTextExtraction || 'text',
                 paginationLastPageSelector: source.scraper.paginationLastPageSelector,
-                postsPerPage: source.scraper.postsPerPage || 42
+                paginationStrategy: source.scraper.paginationStrategy,
+                paginationParam: source.scraper.paginationParam,
+                postsPerPage: source.scraper.postsPerPage || 42,
+                initialFileTypeAttribute: source.scraper.initialFileTypeAttribute || source.scraper.listFileTypeAttribute,
+                initialFileTypeAttributeValue: source.scraper.initialFileTypeAttributeValue,
+                initialFileTypeGifTag: source.scraper.initialFileTypeGifTag,
+                fullImageUrlSelector: source.scraper.fullImageUrlSelector || source.scraper.hqUrlSelector || source.scraper.highQualityUrlSelector,
+                fullImageUrlAttribute: source.scraper.fullImageUrlAttribute || source.scraper.hqUrlAttribute || source.scraper.highQualityUrlAttribute || 'href',
+                fullImageUrlTextFilter: source.scraper.fullImageUrlTextFilter || source.scraper.hqUrlTextFilter || source.scraper.highQualityUrlTextFilter
               }
             })
           });
@@ -1718,7 +1747,8 @@ class BooruSourcesManager {
                     detailImageAttribute: source.scraper.detailImageAttribute || 'src',
                     detailTagsSelector: source.scraper.detailTagsSelector,
                     detailGeneralTagsSelector: source.scraper.detailGeneralTagsSelector,
-                    detailArtistTagsSelector: source.scraper.detailArtistTagsSelector
+                    detailArtistTagsSelector: source.scraper.detailArtistTagsSelector,
+                    detailTagTextExtraction: source.scraper.detailTagTextExtraction
                   }
                 })
               });
@@ -2228,7 +2258,7 @@ class BooruSourcesManager {
 
     if (type === 'scraper') {
       const scraper = source.scraper || {};
-      const required = ['listPageUrl', 'listPageSelector', 'postLinkSelector', 'imageUrlSelector', 'detailImageSelector'];
+      const required = ['listPageUrl', 'listPageSelector', 'postLinkSelector', 'imageUrlSelector'];
       required.forEach((field) => {
         if (!scraper[field]) issues.push(`Missing scraper field: ${field}`);
       });
@@ -2526,7 +2556,18 @@ class BooruSourcesManager {
           imageUrlAttribute: source.scraper.imageUrlAttribute || 'src',
           thumbnailWidthAttribute: source.scraper.thumbnailWidthAttribute || 'width',
           thumbnailHeightAttribute: source.scraper.thumbnailHeightAttribute || 'height',
+          initialTagsAttribute: source.scraper.initialTagsAttribute || source.scraper.listTagsAttribute || source.scraper.tagsAttribute,
+          initialTagsSelector: source.scraper.initialTagsSelector || source.scraper.listTagsSelector,
+          detailTagTextExtraction: source.scraper.detailTagTextExtraction || 'text',
+          initialFileTypeAttribute: source.scraper.initialFileTypeAttribute || source.scraper.listFileTypeAttribute,
+          initialFileTypeAttributeValue: source.scraper.initialFileTypeAttributeValue,
+          initialFileTypeGifTag: source.scraper.initialFileTypeGifTag,
+          fullImageUrlSelector: source.scraper.fullImageUrlSelector || source.scraper.hqUrlSelector || source.scraper.highQualityUrlSelector,
+          fullImageUrlAttribute: source.scraper.fullImageUrlAttribute || source.scraper.hqUrlAttribute || source.scraper.highQualityUrlAttribute || 'href',
+          fullImageUrlTextFilter: source.scraper.fullImageUrlTextFilter || source.scraper.hqUrlTextFilter || source.scraper.highQualityUrlTextFilter,
           paginationLastPageSelector: source.scraper.paginationLastPageSelector,
+          paginationStrategy: source.scraper.paginationStrategy,
+          paginationParam: source.scraper.paginationParam,
           postsPerPage: source.scraper.postsPerPage || 42
         }
       })
@@ -2554,8 +2595,8 @@ class BooruSourcesManager {
 
   async runSourceScraperDetailTest(source, logger) {
     if (!source.scraper?.detailImageSelector) {
-      logger('❌ Detail scraper test cannot run without a detailImageSelector.', null, 'error');
-      return false;
+      logger('ℹ️ No detailImageSelector is configured for this source, so the detail-page check is skipped.', null, 'info');
+      return true;
     }
 
     const response = await this.fetchConfiguredUrl(source, source.scraper.listPageUrl, { method: 'GET' });
@@ -2586,7 +2627,18 @@ class BooruSourcesManager {
           imageUrlAttribute: source.scraper.imageUrlAttribute || 'src',
           thumbnailWidthAttribute: source.scraper.thumbnailWidthAttribute || 'width',
           thumbnailHeightAttribute: source.scraper.thumbnailHeightAttribute || 'height',
+          initialTagsAttribute: source.scraper.initialTagsAttribute || source.scraper.listTagsAttribute || source.scraper.tagsAttribute,
+          initialTagsSelector: source.scraper.initialTagsSelector || source.scraper.listTagsSelector,
+          detailTagTextExtraction: source.scraper.detailTagTextExtraction || 'text',
+          initialFileTypeAttribute: source.scraper.initialFileTypeAttribute || source.scraper.listFileTypeAttribute,
+          initialFileTypeAttributeValue: source.scraper.initialFileTypeAttributeValue,
+          initialFileTypeGifTag: source.scraper.initialFileTypeGifTag,
+          fullImageUrlSelector: source.scraper.fullImageUrlSelector || source.scraper.hqUrlSelector || source.scraper.highQualityUrlSelector,
+          fullImageUrlAttribute: source.scraper.fullImageUrlAttribute || source.scraper.hqUrlAttribute || source.scraper.highQualityUrlAttribute || 'href',
+          fullImageUrlTextFilter: source.scraper.fullImageUrlTextFilter || source.scraper.hqUrlTextFilter || source.scraper.highQualityUrlTextFilter,
           paginationLastPageSelector: source.scraper.paginationLastPageSelector,
+          paginationStrategy: source.scraper.paginationStrategy,
+          paginationParam: source.scraper.paginationParam,
           postsPerPage: source.scraper.postsPerPage || 42
         }
       })
@@ -2635,7 +2687,8 @@ class BooruSourcesManager {
           detailImageAttribute: source.scraper.detailImageAttribute || 'src',
           detailTagsSelector: source.scraper.detailTagsSelector,
           detailGeneralTagsSelector: source.scraper.detailGeneralTagsSelector,
-          detailArtistTagsSelector: source.scraper.detailArtistTagsSelector
+          detailArtistTagsSelector: source.scraper.detailArtistTagsSelector,
+          detailTagTextExtraction: source.scraper.detailTagTextExtraction
         }
       })
     });

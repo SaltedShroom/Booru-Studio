@@ -1336,9 +1336,9 @@
                 <small>HTML attribute on thumbnail image to extract height (optional)</small>
               </div>
               <div class="form-group">
-                <label>Post Detail Page - Image/Video Selector <span class="required">*</span></label>
+                <label>Post Detail Page - Image/Video Selector</label>
                 <input type="text" id="scraper-detailImageSelector" placeholder="e.g., #image, #gelcomVideoPlayer" />
-                <small>CSS selector for the main image or video element on post detail page</small>
+                <small>CSS selector for the main image or video element on post detail page (optional for list-only sources)</small>
               </div>
               <div class="form-group">
                 <label>Post Detail Page - Image Attribute</label>
@@ -1366,9 +1366,29 @@
                 <small>HTML attribute on thumbnail to extract initial tags (optional, for list page extraction)</small>
               </div>
               <div class="form-group">
+                <label>Initial Tags Selector (List Page)</label>
+                <input type="text" id="scraper-initialTagsSelector" placeholder="e.g., .tag-list a" />
+                <small>CSS selector for tag elements inside each list item (optional)</small>
+              </div>
+              <div class="form-group">
                 <label>Initial File Type Attribute (List Page)</label>
                 <input type="text" id="scraper-initialFileTypeAttribute" placeholder="e.g., style or class" />
                 <small>HTML attribute to check for file type detection (optional)</small>
+              </div>
+              <div class="form-group">
+                <label>Full Image URL Selector (List Page)</label>
+                <input type="text" id="scraper-fullImageUrlSelector" placeholder="e.g., a.file-link or a[href]" />
+                <small>CSS selector for full-quality file URL on list page (optional)</small>
+              </div>
+              <div class="form-group">
+                <label>Full Image URL Attribute (List Page)</label>
+                <input type="text" id="scraper-fullImageUrlAttribute" placeholder="e.g., href" value="href" />
+                <small>Attribute to read from the full image URL element (usually href)</small>
+              </div>
+              <div class="form-group">
+                <label>Full Image URL Text Filter (List Page)</label>
+                <input type="text" id="scraper-fullImageUrlTextFilter" placeholder="e.g., file only" />
+                <small>Optional text that must appear inside the full image URL element</small>
               </div>
               <div class="form-group">
                 <label>Initial File Type Attribute Value</label>
@@ -1398,6 +1418,7 @@
                 <label>Pagination Strategy</label>
                 <select id="scraper-paginationStrategy">
                   <option value="offset">Offset (pid=0, pid=42, pid=84...)</option>
+                  <option value="path">Path Page (/list/tag/1, /list/tag/2...)</option>
                   <option value="next-link">Next Link (find next page link in HTML)</option>
                   <option value="page-number">Page Number (?page=1, ?page=2...)</option>
                 </select>
