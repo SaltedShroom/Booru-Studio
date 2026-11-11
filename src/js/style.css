@@ -5271,6 +5271,8 @@ textarea.settings-input {
 
 #import-booru-source-btn {
   background: #5ec25e;
+  border-color: #5ec25e;
+  color: white;
 }
 
 /* Source Test Modal */
