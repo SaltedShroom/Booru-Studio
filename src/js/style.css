@@ -5275,6 +5275,10 @@ textarea.settings-input {
   color: white;
 }
 
+#update-btn {
+  color: white !important;
+}
+
 /* Source Test Modal */
 .source-test-modal-content {
   max-width: 1100px;
