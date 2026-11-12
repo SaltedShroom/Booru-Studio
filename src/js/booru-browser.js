@@ -11195,8 +11195,6 @@ document.addEventListener('mousemove', (e) => {
       e.clientY >= selectRect.top && e.clientY <= selectRect.bottom ||
       suppportRect && e.clientX >= suppportRect.left && e.clientX <= suppportRect.right &&
       e.clientY >= suppportRect.top && e.clientY <= suppportRect.bottom ||
-      downloadStatsContainer && e.clientX >= downloadStatsContainer.left && e.clientX <= downloadStatsContainer.right &&
-      e.clientY >= downloadStatsContainer.top && e.clientY <= downloadStatsContainer.bottom ||
       booruPanel && e.clientX >= booruPanel.left && e.clientX <= booruPanel.right &&
       e.clientY >= booruPanel.top && e.clientY <= booruPanel.bottom ||
       booruPanelToggle && e.clientX >= booruPanelToggle.left && e.clientX <= booruPanelToggle.right &&
@@ -13221,35 +13219,34 @@ if (galleryWrapper) {
     }
     
     if (booruHoverPreview.classList.contains('active') && !previewFrozen) {
-      const offset = 40;
+      const offset = 30;
+      const viewportPadding = 10;
       const previewRect = booruHoverPreview.getBoundingClientRect();
-      
-      // Calculate position, defaulting to right and below cursor
-      let x = e.clientX + offset;
-      let y = e.clientY + offset;
-      
-      // Prevent horizontal overflow
-      if (x + previewRect.width > window.innerWidth - 100) {
+
+      const validPositions = ['top-left', 'top-right', 'bottom-left', 'bottom-right', 'centered'];
+      const preferredPosition = validPositions.includes(window.booruHoverPreviewPosition)
+        ? window.booruHoverPreviewPosition
+        : 'top-left';
+
+      let x = e.clientX - previewRect.width - offset;
+      let y = e.clientY - previewRect.height - offset;
+
+      if (preferredPosition === 'top-right') {
+        x = e.clientX + offset;
+        y = e.clientY - previewRect.height - offset;
+      } else if (preferredPosition === 'bottom-left') {
         x = e.clientX - previewRect.width - offset;
-      }
-      // If still overflows on left, clamp to screen
-      if (x < 0) {
-        x = 10;
+        y = e.clientY + offset;
+      } else if (preferredPosition === 'bottom-right') {
+        x = e.clientX + offset;
+        y = e.clientY + offset;
+      } else if (preferredPosition === 'centered') {
+        x = e.clientX - (previewRect.width / 2);
+        y = e.clientY - (previewRect.height / 2);
       }
 
-      // set it to the left side of the cursor if it would overflow the right edge just a tiny bit
-      if (x + previewRect.width > window.innerWidth) {
-        x = window.innerWidth - previewRect.width - 10;
-      }
-      
-      // Prevent vertical overflow
-      if (y + previewRect.height > window.innerHeight) {
-        y = e.clientY - previewRect.height - offset;
-      }
-      // If still overflows on top, clamp to screen
-      if (y < 0) {
-        y = 10;
-      }
+      x = Math.max(viewportPadding, Math.min(x, window.innerWidth - previewRect.width - viewportPadding));
+      y = Math.max(viewportPadding, Math.min(y, window.innerHeight - previewRect.height - viewportPadding));
       
       booruHoverPreview.style.left = x + 'px';
       booruHoverPreview.style.top = y + 'px';

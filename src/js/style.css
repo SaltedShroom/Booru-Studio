@@ -3964,15 +3964,15 @@ body, html {
 
 .preview-progress-circle {
   position: absolute;
-  top: 0;
-  left: 0;
-  width: 35px;
-  height: 35px;
+  top: 1px;
+  left: 1px;
+  width: 33px;
+  height: 33px;
 }
 
 .preview-progress-bg {
   fill: none;
-  stroke: rgba(0, 0, 0, 0.7);
+  stroke: rgba(0, 0, 0, 0.4);
   stroke-width: 10;
 }
 
@@ -6014,22 +6014,20 @@ textarea.settings-input {
   color: var(--text-primary) !important;
 }
 
-#app-download-size-mb {
-  font-family: 'Press Start 2P', monospace;
-  font-size: 12px;
-  font-weight: normal;
-  color: var(--text-primary) !important;
-  margin-left: 6px;
-  transform: translateY(-1px);
-}
-
-#app-today-download-size-mb {
+.download-size-unit {
   font-family: 'Press Start 2P', monospace;
   font-size: 10px;
   font-weight: normal;
+  color: var(--text-primary) !important;
+  margin-left: 2px;
+  margin-right: 12px;
+  transform: translateY(2.5px);
+}
+
+.app-download-size-today .download-size-unit {
+  font-size: 8px;
   color: #00d000 !important;
-  margin-left: 6px;
-  transform: translateY(-1px);
+  transform: translateY(0.5px);
 }
 
 .download-digit {
@@ -6047,10 +6045,6 @@ textarea.settings-input {
   align-items: center;
   gap: 6px;
   color: #00d000;
-}
-
-.app-download-size-today .download-digit-separator {
-  color: #00d000 !important;
 }
 
 .app-download-size-today i {

@@ -1446,6 +1446,28 @@ function persistTodayDownloadedMB(value) {
 
 window.sessionDownloadedMB = getTodayDownloadedMB();
 
+function updateThreeDigitOdometer(prefix, value) {
+  const valueString = String(Math.max(0, Number(value) || 0)).padStart(3, '0');
+  for (let i = 1; i <= 3; i++) {
+    const digitEl = document.getElementById(`${prefix}-${i}`);
+    if (!digitEl) continue;
+    const digit = Number(valueString[i - 1]);
+    if (digitEl.odometer) {
+      digitEl.odometer.update(digit);
+    } else {
+      digitEl.odometer = new Odometer({ el: digitEl, value: digit });
+    }
+  }
+}
+
+function updateGbMbOdometers(totalMb, groupPrefix) {
+  const normalizedMb = Math.max(0, Math.round(Number(totalMb) || 0));
+  const gb = Math.floor(normalizedMb / 1000);
+  const mbRemainder = normalizedMb % 1000;
+  updateThreeDigitOdometer(`${groupPrefix}-gb-digit`, gb);
+  updateThreeDigitOdometer(`${groupPrefix}-mb-digit`, mbRemainder);
+}
+
 window.updateSessionDownloadedSizeOdometer = function(deltaMB) {
   if (typeof deltaMB === 'number' && deltaMB > 0) {
     window.sessionDownloadedMB = (window.sessionDownloadedMB || 0) + deltaMB;
@@ -1455,29 +1477,7 @@ window.updateSessionDownloadedSizeOdometer = function(deltaMB) {
     persistTodayDownloadedMB(window.sessionDownloadedMB);
   }
 
-  const mb = Math.max(0, Math.round(window.sessionDownloadedMB || 0));
-  const digitString = String(mb).padStart(9, '0');
-  const digits = digitString.split('');
-  const hasTB = mb >= 1000000;
-
-  for (let i = 1; i <= 9; i++) {
-    const digitEl = document.getElementById(`today-download-digit-${i}`);
-    if (!digitEl) continue;
-    digitEl.style.display = (i <= 3 && !hasTB) ? 'none' : 'block';
-    if (i >= 4 || hasTB) {
-      const digit = Number(digits[i - 1]);
-      if (digitEl.odometer) {
-        digitEl.odometer.update(digit);
-      } else {
-        digitEl.odometer = new Odometer({ el: digitEl, value: digit });
-      }
-    }
-  }
-
-  const separator = document.getElementById('today-download-digit-separator-1');
-  if (separator) {
-    separator.style.display = hasTB ? 'inline' : 'none';
-  }
+  updateGbMbOdometers(window.sessionDownloadedMB || 0, 'today-download');
 };
 
 window.updateSessionDownloadedSizeOdometer(0);
@@ -1488,36 +1488,9 @@ window.updateDownloadFolderSizeOdometer = async function() {
     const data = await response.json();
     
     if (typeof data.bytes === 'number') {
-      const mb = Math.round(data.bytes / (1024 * 1024));
-      
-      // Pad to 9 digits (XXX.XXX.XXX)
-      const digitString = String(mb).padStart(9, '0');
-      
-      // Extract each digit
-      const digits = digitString.split('');
-      
-      // Show/hide TB section (first 3 digits) based on whether >= 1TB (1,000,000 MB)
-      const hasTB = mb >= 1000000;
-      document.getElementById('download-digit-1').style.display = hasTB ? 'block' : 'none';
-      document.getElementById('download-digit-2').style.display = hasTB ? 'block' : 'none';
-      document.getElementById('download-digit-3').style.display = hasTB ? 'block' : 'none';
-      document.getElementById('download-digit-separator-1').style.display = hasTB ? 'inline' : 'none';
-      
-      // Update each odometer digit (1-9)
-      for (let i = 1; i <= 9; i++) {
-        const digitEl = document.getElementById(`download-digit-${i}`);
-        if (digitEl) {
-          const digit = digits[i - 1];
-          if (digitEl.odometer) {
-            digitEl.odometer.update(Number(digit));
-          } else {
-            digitEl.odometer = new Odometer({
-              el: digitEl,
-              value: Number(digit)
-            });
-          }
-        }
-      }
+      const totalMb = Math.round(data.bytes / (1024 * 1024));
+      window.totalDownloadedFolderMB = Math.max(0, totalMb);
+      updateGbMbOdometers(window.totalDownloadedFolderMB, 'download');
     }
   } catch (error) {
     console.warn('Failed to fetch download folder size:', error);
@@ -1535,52 +1508,12 @@ window.incrementDownloadFolderSizeOdometer = function(downloadedBytes) {
     if (changeMB > 0) {
       window.updateSessionDownloadedSizeOdometer(changeMB);
     }
-    
-    // Get current total from odometer digits
-    let currentMB = 0;
-    for (let i = 1; i <= 9; i++) {
-      const digitEl = document.getElementById(`download-digit-${i}`);
-      if (digitEl) {
-        // Read from odometer value, or textContent, or default to 0
-        const digitValue = (digitEl.odometer && digitEl.odometer.value !== undefined) ? digitEl.odometer.value : (parseInt(digitEl.textContent, 10) || 0);
-        currentMB = currentMB * 10 + digitValue;
-      }
+
+    if (typeof window.totalDownloadedFolderMB !== 'number' || Number.isNaN(window.totalDownloadedFolderMB)) {
+      window.totalDownloadedFolderMB = 0;
     }
-    
-    // Add or subtract MB to current (changeMB can be negative for deletions)
-    let totalMB = currentMB + changeMB;
-    
-    // Ensure total doesn't go below 0
-    if (totalMB < 0) totalMB = 0;
-    
-    // Pad to 9 digits (XXX.XXX.XXX)
-    const digitString = String(totalMB).padStart(9, '0');
-    
-    // Extract each digit
-    const digits = digitString.split('');
-    
-    // Show/hide TB section based on whether >= 1TB (1,000,000 MB)
-    const hasTB = totalMB >= 1000000;
-    document.getElementById('download-digit-1').style.display = hasTB ? 'block' : 'none';
-    document.getElementById('download-digit-2').style.display = hasTB ? 'block' : 'none';
-    document.getElementById('download-digit-3').style.display = hasTB ? 'block' : 'none';
-    document.getElementById('download-digit-separator-1').style.display = hasTB ? 'inline' : 'none';
-    
-    // Update each odometer digit (1-9)
-    for (let i = 1; i <= 9; i++) {
-      const digitEl = document.getElementById(`download-digit-${i}`);
-      if (digitEl) {
-        const digit = Number(digits[i - 1]);
-        if (digitEl.odometer) {
-          digitEl.odometer.update(digit);
-        } else {
-          digitEl.odometer = new Odometer({
-            el: digitEl,
-            value: digit
-          });
-        }
-      }
-    }
+    window.totalDownloadedFolderMB = Math.max(0, window.totalDownloadedFolderMB + changeMB);
+    updateGbMbOdometers(window.totalDownloadedFolderMB, 'download');
   } catch (error) {
     console.warn('Failed to update download folder size:', error);
   }
@@ -1880,6 +1813,7 @@ if (blacklistTagsInput) {
 
 // HQ hover delay input
 const hqHoverDelayInput = document.getElementById('hq-hover-delay-input');
+const booruHoverPreviewPositionSelect = document.getElementById('booru-hover-preview-position-select');
 const tallImageScrollSpeedMultiplierInput = document.getElementById('tall-image-scroll-speed-multiplier-input');
 if (hqHoverDelayInput) {
   hqHoverDelayInput.addEventListener('input', () => {
@@ -1892,6 +1826,20 @@ if (hqHoverDelayInput) {
   window.hqHoverDelay = parseInt(hqHoverDelayInput.value, 10) || 150;
 } else {
   window.hqHoverDelay = window.hqHoverDelay || 150;
+}
+
+if (booruHoverPreviewPositionSelect) {
+  booruHoverPreviewPositionSelect.addEventListener('change', () => {
+    const value = booruHoverPreviewPositionSelect.value;
+    const validPositions = ['top-left', 'top-right', 'bottom-left', 'bottom-right', 'centered'];
+    window.booruHoverPreviewPosition = validPositions.includes(value) ? value : 'top-left';
+    debouncedSettingsSave();
+  });
+  const initialValue = booruHoverPreviewPositionSelect.value;
+  const validPositions = ['top-left', 'top-right', 'bottom-left', 'bottom-right', 'centered'];
+  window.booruHoverPreviewPosition = validPositions.includes(initialValue) ? initialValue : 'top-left';
+} else {
+  window.booruHoverPreviewPosition = window.booruHoverPreviewPosition || 'top-left';
 }
 
 if (tallImageScrollSpeedMultiplierInput) {
@@ -1999,6 +1947,7 @@ async function saveSession() {
       downloadConcurrency: (document.getElementById('download-concurrency-input') && parseInt(document.getElementById('download-concurrency-input').value, 10)) || 3,
       imageLoadConcurrency: (document.getElementById('image-load-concurrency-input') && parseInt(document.getElementById('image-load-concurrency-input').value, 10)) || 3,
       hqHoverDelay: (document.getElementById('hq-hover-delay-input') && parseInt(document.getElementById('hq-hover-delay-input').value, 10)) ?? 150,
+      booruHoverPreviewPosition: document.getElementById('booru-hover-preview-position-select') ? document.getElementById('booru-hover-preview-position-select').value : (window.booruHoverPreviewPosition || 'top-left'),
       tallImageScrollSpeedMultiplier: (document.getElementById('tall-image-scroll-speed-multiplier-input') && parseFloat(document.getElementById('tall-image-scroll-speed-multiplier-input').value)) || 1.1,
       downloadsSortByArtist: window.sessionSortByArtist || false,
       sidebarOpen: window.sidebarOpen !== undefined ? window.sidebarOpen : true
@@ -2122,6 +2071,14 @@ async function loadSession() {
       window.hqHoverDelay = parseInt(session.hqHoverDelay, 10) ?? 150;
     } else {
       window.hqHoverDelay = window.hqHoverDelay || 150;
+    }
+    if (document.getElementById('booru-hover-preview-position-select')) {
+      const validPositions = ['top-left', 'top-right', 'bottom-left', 'bottom-right', 'centered'];
+      const restoredPosition = validPositions.includes(session.booruHoverPreviewPosition) ? session.booruHoverPreviewPosition : 'top-left';
+      document.getElementById('booru-hover-preview-position-select').value = restoredPosition;
+      window.booruHoverPreviewPosition = restoredPosition;
+    } else {
+      window.booruHoverPreviewPosition = window.booruHoverPreviewPosition || 'top-left';
     }
     // Restore tall image scroll speed multiplier
     if (session.tallImageScrollSpeedMultiplier !== undefined && document.getElementById('tall-image-scroll-speed-multiplier-input')) {
